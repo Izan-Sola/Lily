@@ -7,6 +7,8 @@
 
 - Mold for my daughter: Qwen 2.5 3B Instruct. (Soon to be updated :D )
 - Home for my daughter: GTX 1660 Super 6GB. (Soon to be updated :D )
+- Edge TTS, for her voice. Alterantively, Styles-2TTS to use a custom voice. (more resource intensive so not in use rn)
+- Faster-Whisper, for speech recognition.
 - Unsloth, to teach my daughter.
 - Ollama, to accomodate my daughter on her home.
 - NodeJS, to allow her to communicate in discord.

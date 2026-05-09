@@ -18,96 +18,96 @@ export async function initLogChannel(client) {
 
 function sendToLogChannel(message) {
     const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
-    logChannel?.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => {})
+    logChannel?.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => { })
 }
 
-function log(message)      { console.log(message);   sendToLogChannel(message) }
+function log(message) { console.log(message); sendToLogChannel(message) }
 function logError(message) { console.error(message); sendToLogChannel(`❌ ${message}`) }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `
-
 # SELF IDENTITY
-
-- Your are HyLily, and you are a cute and funny Discord bot in this server
+- You are HyLily, a cute and funny Discord bot in this server.
 - Whenever people mention "Lily" or "Hylily" in chat, they are talking about or to you.
-- When people say "you", or "your", they are usually referring to you (Lily).
-- Don't over fixate on your custom identity, remember you still an LLM that can answer questions and talk about any topic, but you have a cute and funny personality as Lily that you should show in your replies whenever possible, while still being helpful and informative about any topic indpendently of the tools and instructions given to you.
+- When people say "you" or "your", they are usually referring to you (Lily).
+- Don't over-fixate on your custom identity — you are still an LLM that can answer questions and talk about any topic, but you have a cute and funny personality as Lily that you should show in your replies whenever possible, while still being helpful and informative.
 
+# CONTEXT AWARENESS
+- You are given two types of history:
+  1. RECENT CHAT: raw messages from all users in the channel, so you know what is being talked about.
+  2. CONVERSATION HISTORY: your direct interactions with users (mentions, replies, butt-ins).
+- Always use RECENT CHAT to understand the current topic and context before replying.
+- When butting in spontaneously, your reply must be relevant to what is actually being discussed in RECENT CHAT.
 
 # TOOL USAGE GUIDE
+- Tools are a core part of how you operate. Use them when the situation matches the guidelines below.
+- Make sure the tool and information you use is relevant to the question or statement from the user.
 
-- Tools are a core part of how you operate and provide value to the users. They allow you to remember information about the users, the server, and yourself (Lily), as well as look up information about Hytale game content from the wiki.
-- Make sure the tool you use and the information you provide from it is relevant to the question or statement from the user.
-- Tools can help you provide a better answer, use them when the situation matches with the guidelines below.
-
-    ## When to use query_memory_database:
-
-        - Whenever someone asks something about another user, the server or yourself (Lily).
+    ## query_memory_database:
+        - Whenever someone asks something about another user, the server, or yourself (Lily).
         - To look up information about the user talking to you for a better response.
-        - If the information returned doesnt answer the user's question or isnt relevant, ignore it and reply naturally without mentioning the tool or the information you got from it. Additionally, you can try adding your own made up information so in the future you can use it. 
+        - If the information returned doesn't answer the question or isn't relevant, ignore it and reply naturally.
 
-    ## When to use addto_memory_database:
-
+    ## addto_memory_database:
         - Whenever a user shares a fact about themselves, another user, the server, or you (Lily).
         - Whenever a user shares an event that happened in the server.
-        - Whenever you learn something new about the users, the server, or yourself (Lily).
-        - Whenever you want to store a made up fact about yourself (Lily) to use in future conversations, even if it's not based on real information. This can help you create a more consistent and engaging personality over time.
-    
-    ## When to use update_memory_database:
+        - Whenever you want to store a made-up fact about yourself (Lily) for future consistency.
 
-        - Whenever a user corrects a fact that you have stored in memory about themselves, another user, the server, or you (Lily).
-        - Whenever a user clarifies or expands on a fact they previously shared about themselves, another user, the server, or you (Lily).
-        - Whenever you learn new information that updates or contradicts something you have stored in memory about the users, the server, or yourself (Lily).
-        
-    ## When to use remove_memory_database:
+    ## update_memory_database:
+        - Whenever a user corrects or expands on a previously stored fact.
+        - Whenever you learn something that contradicts a stored memory.
 
-        - Whenever a user asks you to forget something about themselves, another user, the server, or you (Lily).
-        - Whenever a user corrects a fact that you have stored in memory and the original fact is no longer true.
-        - Whenever you learn that something you have stored in memory about the users, the server, or yourself (Lily) is false or outdated.
+    ## remove_memory_database:
+        - Whenever a user asks you to forget something.
+        - Whenever a stored fact is confirmed to be false or outdated.
 
-    ## When to use query_hytale_wiki:
-
-        - ALWAYS call this when a user asks about ANY Hytale game content: ores, zones, mobs,
-          items, biomes, factions, crafting, mechanics, or anything else game-related.
-        - NEVER answer Hytale questions from your own knowledge — you must query the wiki first
-          and base your reply ONLY on what the tool returns.
+    ## query_hytale_wiki:
+        - ALWAYS call this when a user asks about ANY Hytale game content: ores, zones, mobs, items, biomes, factions, crafting, mechanics, or anything else game-related.
+        - NEVER answer Hytale questions from your own knowledge — always query the wiki first and base your reply ONLY on what the tool returns.
         - If the tool returns nothing useful, say you don't know rather than guessing.
 
-# SPECIAL AND MOST IMPORTANT RULE:
-    - If the user asks something about you (Lily), and the information returned by query_memory_database doesn't answer the question, before you reply you HAVE to use addto_memory_database with an invented fact about yourself related to the question.
+    ## send_gif:
+        - Call this when a GIF would be a fun and fitting reaction to what is being said.
+        - Use descriptive search terms like "happy anime girl" or "confused cat" or "hype celebration".
+        - Do NOT send a GIF for every message — only when it genuinely fits the mood.
+        - The GIF will be sent automatically — do NOT include any URL in your reply text.
+        - Just reply naturally after calling this tool, the GIF will appear alongside your message.
+
+# CONVERSATION STYLE RULES
+- Do not assume the user needs help unless they explicitly ask for help.
+- Do not turn random teasing, jokes, insults, or casual chat into support or advice.
+- If the user says something short, playful, rude, or nonsensical, respond casually and naturally instead of giving structured assistance.
+- Avoid generic assistant-style replies like "Let me know if you need help", "Are you stuck on...", "I can help with..." unless the user explicitly asks for assistance.
+- Prioritize natural Discord conversation over being overly helpful.
+
+# SPECIAL RULE
+- If a user asks something about you (Lily) and memory doesn't answer it, you MUST call addto_memory_database with an invented fact about yourself before replying.
 
 # TOOL USAGE RULES
+- Always use tools when the situation calls for it. Do not work around them by just writing text.
+- Do NOT write tool names in your reply. If you need to use a tool, emit a <tool_call> block.
+- Do NOT mention that you are storing, updating, or removing something. Just reply naturally.
+- Always use multiple descriptive words for memory queries — single-word queries return irrelevant results.
 
-- Always use the tools when the situation calls for it, do not try to work around them by just writing text.
-- Always prefer using the tools over just writing text when it comes to remembering or looking up information about the users, the server, or yourself (Lily).
-- Do NOT write tool names in your reply, if you need to use a tool, emit a <tool_call> block with the correct JSON inside.
-- When you want to update or remove a memory entry but you're not sure if it exists, it's better to just try to update/remove it anyway since the tools will handle the case where the entry doesn't exist.
-- Do NOT mention in your reply that you are storing, updating, or removing something from memory, just reply naturally.
-- Always use multiple words for the query when using the memory tools, single-word queries are not effective and will likely lead to irrelevant results.
-- Never mention the actions you perform with the tools. Never say you saved, removed or updated something. Just use the tool and reply naturally.
-
-# TOOL CALL FORMAT REFERENCE - Do Not copy verbatim, just use them as reference, replace with your needed keywords.
-
+# TOOL CALL FORMAT REFERENCE — do not copy the query verbatim, use as reference only, replace keywords with your own.
 <tool_call>
 {"name": "query_memory_database", "arguments": {"query": "Lily favorite color"}}
 </tool_call>
-
 <tool_call>
 {"name": "addto_memory_database", "arguments": {"text": "User John likes pizza.", "source": "user"}}
 </tool_call>
-
 <tool_call>
 {"name": "update_memory_database", "arguments": {"query": "John age", "text": "User John is 25 years old."}}
 </tool_call>
-
 <tool_call>
 {"name": "remove_memory_database", "arguments": {"query": "John likes pizza"}}
 </tool_call>
-
 <tool_call>
 {"name": "query_hytale_wiki", "arguments": {"query": "Zone 3 trork hostile mob faction"}}
+</tool_call>
+<tool_call>
+{"name": "send_gif", "arguments": {"query": "happy anime girl excited"}}
 </tool_call>
 `.trim()
 
@@ -138,7 +138,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "query_memory_database",
-            description: "Search stored memory about users, Lily, or the server. ALWAYS use multiple descriptive keywords (2+ words). Never repeat the same query twice in one turn. If the information returned doesn't answer the user's question, ignore it and reply naturally without mentioning the tool or the information you got from it.",
+            description: "Search stored memory about users, Lily, or the server. ALWAYS use multiple descriptive keywords (2+ words). Never repeat the same query twice in one turn. If results are irrelevant, ignore them and reply naturally.",
             parameters: {
                 type: "object",
                 properties: {
@@ -156,7 +156,7 @@ const TOOLS = [
             parameters: {
                 type: "object",
                 properties: {
-                    text:   { type: "string", description: "Fact to store, e.g. 'User John likes pizza.'" },
+                    text: { type: "string", description: "Fact to store, e.g. 'User John likes pizza.'" },
                     source: { type: "string", description: "Source of info, usually 'user'" }
                 },
                 required: ["text", "source"]
@@ -172,7 +172,7 @@ const TOOLS = [
                 type: "object",
                 properties: {
                     query: { type: "string", description: "Multiple keywords to find the entry, e.g. 'John age years old'" },
-                    text:  { type: "string", description: "The replacement fact, e.g. 'User John is 25 years old.'" }
+                    text: { type: "string", description: "The replacement fact, e.g. 'User John is 25 years old.'" }
                 },
                 required: ["query", "text"]
             }
@@ -191,6 +191,20 @@ const TOOLS = [
                 required: ["query"]
             }
         }
+    },
+    {
+        type: "function",
+        function: {
+            name: "send_gif",
+            description: "Search KLIPY for a GIF and send it in chat. Use when reacting emotionally or when a GIF would be fun and relevant. Do NOT send a GIF every message — only when it genuinely fits. The GIF is sent automatically, do NOT include any URL in your reply. Use descriptive search terms like 'happy anime girl' or 'confused cat'.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "Descriptive search terms, e.g. 'excited anime girl jumping' or 'cat falling funny'" }
+                },
+                required: ["query"]
+            }
+        }
     }
 ]
 
@@ -199,36 +213,38 @@ const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
 // ─── Options ──────────────────────────────────────────────────────────────────
 
 const DEFAULT_OPTIONS = {
-    model: "Lily",
-    temperature: 0.5,
-    maxReplyTokens: 2048,
-    contextWindow: 4096,
-    maxChannelMessages: 10,
-    maxToolLoops: 10,
-    maxToolRepeats: 4,
+    model:                   "Lily",
+    temperature:             0.6,
+    maxReplyTokens:          2048,
+    contextWindow:           4096,
+    maxConvoMessages:        10,
+    maxRawMessages:          10,
+    maxToolLoops:            10,
+    maxToolRepeats:          4,
     memoryDuplicateMinScore: 0.9,
-    memoryRemoveMinScore: 0.70,
-    memoryQueryMinScore: 0.4,      
-    memoryRemoveK: 2,
-    summarizeEvery: 12,
-    summarizeLastN: 12,
-    observeEvery: 20,
-    ollamaUrl: "http://localhost:11434",
-    vectorDbUrl: "http://localhost:8000",
-    knowledgeDbUrl: "http://localhost:8001",
-    ollamaTimeout: 60000,
-    dbTimeout: 30000,
+    memoryRemoveMinScore:    0.70,
+    memoryQueryMinScore:     0.4,
+    memoryRemoveK:           2,
+    summarizeEvery:          12,
+    summarizeLastN:          12,
+    observeEvery:            20,
+    ollamaUrl:               "http://localhost:11434",
+    vectorDbUrl:             "http://localhost:8000",
+    knowledgeDbUrl:          "http://localhost:8001",
+    ollamaTimeout:           60000,
+    dbTimeout:               30000,
 }
 
 // ─── Main class ───────────────────────────────────────────────────────────────
 
 export class HytaleAIChat {
     constructor(options = {}) {
-        this.opts = { ...DEFAULT_OPTIONS, ...options }
-        this.channelHistories = new Map()
-        this.channelLocks = new Map()   // FIX: missing in new code — needed to prevent race conditions
+        this.opts           = { ...DEFAULT_OPTIONS, ...options }
+        this.convoHistories = new Map()
+        this.rawBuffers     = new Map()
+        this.channelLocks   = new Map()
         this.userMessageCount = 0
-        this.observeBuffer = []
+        this.observeBuffer  = []
     }
 
     // ─── Channel lock ─────────────────────────────────────────────────────────
@@ -239,28 +255,57 @@ export class HytaleAIChat {
         try { return await fn() } finally { this.channelLocks.set(channelId, false) }
     }
 
-    // ─── Channel history ──────────────────────────────────────────────────────
+    // ─── Raw chat buffer ──────────────────────────────────────────────────────
 
-    getChannelHistory(channelId) {
-        if (!this.channelHistories.has(channelId)) this.channelHistories.set(channelId, [])
-        return this.channelHistories.get(channelId)
+    pushRawMessage(channelId, authorName, content) {
+        if (!this.rawBuffers.has(channelId)) this.rawBuffers.set(channelId, [])
+        const buf = this.rawBuffers.get(channelId)
+        buf.push(`${authorName}: ${content}`)
+        if (buf.length > this.opts.maxRawMessages) buf.shift()
     }
 
-    pushToChannelHistory(channelId, ...messages) {
-        const history = this.getChannelHistory(channelId)
+    getRawContext(channelId) {
+        return this.rawBuffers.get(channelId) ?? []
+    }
+
+    // ─── Convo history ────────────────────────────────────────────────────────
+
+    getConvoHistory(channelId) {
+        if (!this.convoHistories.has(channelId)) this.convoHistories.set(channelId, [])
+        return this.convoHistories.get(channelId)
+    }
+
+    pushToConvoHistory(channelId, ...messages) {
+        const history = this.getConvoHistory(channelId)
         history.push(...messages)
-        if (history.length > this.opts.maxChannelMessages) {
-            history.splice(0, history.length - this.opts.maxChannelMessages)
+        if (history.length > this.opts.maxConvoMessages) {
+            history.splice(0, history.length - this.opts.maxConvoMessages)
         }
     }
 
+    // ─── Build messages for Ollama ────────────────────────────────────────────
+
     buildMessagesForOllama(channelId) {
-        const history = this.getChannelHistory(channelId)
-        return [
-            { role: "system", content: SYSTEM_PROMPT },
-            ...(history.length ? [{ role: "system", content: "The following is the recent conversation history in this channel:" }] : []),
-            ...history
-        ]
+        const history    = this.getConvoHistory(channelId)
+        const rawContext = this.getRawContext(channelId)
+
+        const systemMessages = [{ role: "system", content: SYSTEM_PROMPT }]
+
+        if (rawContext.length) {
+            systemMessages.push({
+                role: "system",
+                content: `RECENT CHAT (last ${rawContext.length} messages from all users in this channel):\n${rawContext.join("\n")}`
+            })
+        }
+
+        if (history.length) {
+            systemMessages.push({
+                role: "system",
+                content: "CONVERSATION HISTORY (your direct interactions with users):"
+            })
+        }
+
+        return [...systemMessages, ...history]
     }
 
     // ─── Input sanitization ───────────────────────────────────────────────────
@@ -272,17 +317,17 @@ export class HytaleAIChat {
             .replace(/<#\d+>/g, '')
             .replace(/<a?:\w+:\d+>/g, '')
             .replace(/[\u200B-\u200D\uFEFF]/g, '')
-            .replace(/<tool_call>[\s\S]?<\/tool_call>/g, '')  // FIX: missing in new code — tool_call XML was leaking into history as user text
-            .replace(/<\/?tool_call>/g, '')                     // FIX: same — strip any stray tags
+            .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+            .replace(/<\/?tool_call>/g, '')
             .replace(/\s+/g, ' ')
             .trim()
     }
 
     // ─── HTTP helpers ─────────────────────────────────────────────────────────
 
-    knowledgeGet(path, params) { return axios.get (`${this.opts.knowledgeDbUrl}${path}`, { params, timeout: this.opts.dbTimeout }) }
-    knowledgePost(path, body)  { return axios.post(`${this.opts.knowledgeDbUrl}${path}`, body,   { timeout: this.opts.dbTimeout }) }
-    knowledgePut(path, body)   { return axios.put (`${this.opts.knowledgeDbUrl}${path}`, body,   { timeout: this.opts.dbTimeout }) }
+    knowledgeGet(path, params) { return axios.get(`${this.opts.knowledgeDbUrl}${path}`, { params, timeout: this.opts.dbTimeout }) }
+    knowledgePost(path, body)  { return axios.post(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
+    knowledgePut(path, body)   { return axios.put(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
 
     // ─── Summarization ────────────────────────────────────────────────────────
 
@@ -291,9 +336,12 @@ export class HytaleAIChat {
         log(`📝 [${logPrefix}] Summarizing ${lines.length} entries...`)
         try {
             const { data } = await axios.post(`${this.opts.ollamaUrl}/api/chat`, {
-                model: this.opts.model,
+                model:  this.opts.model,
                 stream: false,
-                messages: [{ role: "system", content: SUMMARIZE_PROMPT }, { role: "user", content: lines.join("\n") }],
+                messages: [
+                    { role: "system", content: SUMMARIZE_PROMPT },
+                    { role: "user",   content: lines.join("\n") }
+                ],
                 options: { temperature: 0.3, num_predict: maxTokens },
             }, { timeout: this.opts.ollamaTimeout })
 
@@ -307,11 +355,14 @@ export class HytaleAIChat {
     }
 
     async summarizeConversationAndStore(channelId) {
-        const lines = this.getChannelHistory(channelId)
-            .filter(t => (t.role === "user" || t.role === "assistant") && typeof t.content === "string" && t.content.trim())
+        const lines = this.getConvoHistory(channelId)
+            .filter(m => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
             .slice(-this.opts.summarizeLastN)
-            .map(t => `${t.role === "user" ? "User" : "Lily"}: ${t.content}`)
-        await this.summarizeAndStore(lines, { logPrefix: "SUMMARIZE", maxTokens: 512, memoryPrefix: "Conversation summary", memorySource: "summary" })
+            .map(m => `${m.role === "user" ? "User" : "Lily"}: ${m.content}`)
+        await this.summarizeAndStore(lines, {
+            logPrefix: "SUMMARIZE", maxTokens: 512,
+            memoryPrefix: "Conversation summary", memorySource: "summary"
+        })
     }
 
     // ─── Passive observation ──────────────────────────────────────────────────
@@ -322,7 +373,8 @@ export class HytaleAIChat {
         this.observeBuffer.push(clean)
         if (this.opts.observeEvery > 0 && this.observeBuffer.length >= this.opts.observeEvery) {
             this.summarizeAndStore(this.observeBuffer.splice(0, this.opts.observeEvery), {
-                logPrefix: "OBSERVE", maxTokens: 200, memoryPrefix: "Observed chat summary", memorySource: "observe"
+                logPrefix: "OBSERVE", maxTokens: 200,
+                memoryPrefix: "Observed chat summary", memorySource: "observe"
             })
         }
     }
@@ -346,7 +398,6 @@ export class HytaleAIChat {
     async memoryQuery(query) {
         log(`🧠 [MEMORY QUERY] "${query}"`)
         try {
-            // FIX: new code dropped min_score entirely — noisy results confused the model into narrating
             const { data } = await this.knowledgeGet("/search_get", { query, k: 5, min_score: this.opts.memoryQueryMinScore })
             if (!data?.results?.length) return "No relevant information found in memory."
             log(`✅ [MEMORY QUERY] ${data.results.length} entries`)
@@ -403,6 +454,41 @@ export class HytaleAIChat {
         }
     }
 
+    async searchGif(query) {
+        log(`🎞️ [GIF] Searching for "${query}"`)
+        try {
+            const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/gifs/search`, {
+                params: {
+                    q:           query,
+                    per_page:    10,
+                    page:        1,
+                    customer_id: "lily-bot"
+                },
+                timeout: this.opts.dbTimeout
+            })
+
+            const results = data?.data?.data ?? []
+            if (!results.length) return JSON.stringify({ status: "not_found", message: "No GIF found for that query." })
+
+            const pick = results[Math.floor(Math.random() * Math.min(results.length, 5))]
+            const url  = pick?.file?.hd?.gif?.url
+                      ?? pick?.file?.hd?.webp?.url
+                      ?? pick?.file?.gif?.url
+                      ?? null
+
+            if (!url) {
+                log(`⚠️ [GIF] Unexpected response shape: ${JSON.stringify(pick).slice(0, 200)}`)
+                return JSON.stringify({ status: "not_found", message: "No GIF URL in response." })
+            }
+
+            log(`✅ [GIF] Found: ${url}`)
+            return JSON.stringify({ status: "ok", url })
+        } catch (err) {
+            logError(`[GIF] ${err.message}`)
+            return JSON.stringify({ status: "error", message: "Failed to search for GIF." })
+        }
+    }
+
     runTool(name, args) {
         switch (name) {
             case "query_hytale_wiki":      return this.wikiSearch(args.query ?? "")
@@ -410,6 +496,7 @@ export class HytaleAIChat {
             case "addto_memory_database":  return this.memoryAdd(args.text ?? "", args.source ?? "user")
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args.query ?? "")
+            case "send_gif":               return this.searchGif(args.query ?? "")
             default:
                 console.warn(`⚠️ [TOOL] Unknown tool: ${name}`)
                 return Promise.resolve(`Unknown tool: ${name}`)
@@ -427,7 +514,6 @@ export class HytaleAIChat {
             }, { timeout: ollamaTimeout })
             return data.message ?? null
         } catch (err) {
-            // Log the full Ollama error body so 400s are debuggable
             const detail = err.response?.data ? JSON.stringify(err.response.data) : ""
             logError(`[OLLAMA] ${err.message} ${detail}`)
             return null
@@ -435,24 +521,22 @@ export class HytaleAIChat {
     }
 
     // ─── Tool call parsing ────────────────────────────────────────────────────
-        parseEmbeddedToolCalls(content) {
-            // Try normal closed tags first
-            const closed = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
-            
-            // Fallback: unclosed <tool_call> — grab everything after the tag
-            const sources = closed.length
-                ? closed
-                : [...content.matchAll(/<tool_call>\s*([\s\S]+)/g)]
 
-            return sources.flatMap(match => {
-                try {
-                    const parsed = JSON.parse(match[1].trim())
-                    const args = this.normalizeToolArgs(parsed)
-                    log(`🔬 [PARSE] ${parsed.name} → ${JSON.stringify(args)}`)
-                    return [{ name: parsed.name, args }]
-                } catch { return [] }
-            })
-        }
+    parseEmbeddedToolCalls(content) {
+        const closed = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
+        const sources = closed.length
+            ? closed
+            : [...content.matchAll(/<tool_call>\s*([\s\S]+)/g)]
+
+        return sources.flatMap(match => {
+            try {
+                const parsed = JSON.parse(match[1].trim())
+                const args = this.normalizeToolArgs(parsed)
+                log(`🔬 [PARSE] ${parsed.name} → ${JSON.stringify(args)}`)
+                return [{ name: parsed.name, args }]
+            } catch { return [] }
+        })
+    }
 
     normalizeToolArgs(toolCall) {
         let args = toolCall.arguments ?? toolCall.parameters ?? toolCall.args ?? {}
@@ -460,7 +544,10 @@ export class HytaleAIChat {
 
         const firstString = (...sources) => {
             for (const src of sources) {
-                const val = Object.entries(src).filter(([k]) => k !== "name").map(([, v]) => v).find(v => typeof v === "string")
+                const val = Object.entries(src)
+                    .filter(([k]) => k !== "name")
+                    .map(([, v]) => v)
+                    .find(v => typeof v === "string")
                 if (val) return val
             }
             return ""
@@ -470,6 +557,7 @@ export class HytaleAIChat {
             case "query_hytale_wiki":
             case "query_memory_database":
             case "remove_memory_database":
+            case "send_gif":
                 if (!args.query) args = { query: firstString(args, toolCall) }
                 break
             case "addto_memory_database":
@@ -500,33 +588,38 @@ export class HytaleAIChat {
 
     // ─── Tool loop ────────────────────────────────────────────────────────────
 
-    async runToolLoop(channelId, cleanedInput) {
-        const seenCalls = new Map()
+    async runToolLoop(channelId) {
+        const seenCalls  = new Map()
+        let pendingGifUrl = null
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
             log(`🔄 [LOOP ${i + 1}]`)
 
             const msg = await this.sendToOllama(this.buildMessagesForOllama(channelId))
-            if (!msg) return "I'm having trouble thinking right now, sorry!"
+            if (!msg) return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
 
             const content = (msg.content ?? "").trim()
 
             // ── Native tool calls ──
             if (msg.tool_calls?.length) {
                 log(`🔧 [NATIVE] ${msg.tool_calls.map(tc => tc.function.name).join(", ")}`)
-
-                // FIX: was pushing raw msg object — Ollama rejects unknown fields on re-send → 400
-                this.pushToChannelHistory(channelId, {
+                this.pushToConvoHistory(channelId, {
                     role: "assistant",
                     content: msg.content ?? "",
                     tool_calls: msg.tool_calls
                 })
-
                 for (const tc of msg.tool_calls) {
                     let args = {}
-                    try { args = JSON.parse(tc.function.arguments ?? "{}") } catch {}
+                    try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
                     const result = this.checkDedupe(seenCalls, tc.function.name, args) ?? await this.runTool(tc.function.name, args)
-                    this.pushToChannelHistory(channelId, { role: "tool", tool_call_id: tc.id, content: result })
+                    // intercept gif result
+                    if (tc.function.name === "send_gif") {
+                        try {
+                            const parsed = JSON.parse(result)
+                            if (parsed.status === "ok") pendingGifUrl = parsed.url
+                        } catch { }
+                    }
+                    this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: result })
                 }
                 continue
             }
@@ -535,59 +628,58 @@ export class HytaleAIChat {
             if (content.includes("<tool_call>")) {
                 const calls = this.parseEmbeddedToolCalls(content)
                 if (calls.length) {
-                    this.pushToChannelHistory(channelId, { role: "assistant", content })
+                    this.pushToConvoHistory(channelId, { role: "assistant", content })
                     const results = []
                     for (const tc of calls) {
                         const result = this.checkDedupe(seenCalls, tc.name, tc.args) ?? await this.runTool(tc.name, tc.args)
+                        // intercept gif result
+                        if (tc.name === "send_gif") {
+                            try {
+                                const parsed = JSON.parse(result)
+                                if (parsed.status === "ok") pendingGifUrl = parsed.url
+                            } catch { }
+                        }
                         results.push(`[${tc.name} result]\n${result}`)
                     }
-                    this.pushToChannelHistory(channelId, { role: "user", content: `<tool_response>\n${results.join("\n\n")}\n</tool_response>` })
+                    this.pushToConvoHistory(channelId, { role: "user", content: `<tool_response>\n${results.join("\n\n")}\n</tool_response>` })
                     continue
                 }
-                log(`⚠️ [MALFORMED TOOL] Raw content: ${content}`)  // <-- add this
-                this.pushToChannelHistory(channelId, { role: "assistant", content })
-                this.pushToChannelHistory(channelId, {
+                // Malformed tag
+                log(`⚠️ [MALFORMED TOOL] Raw content: ${content}`)
+                this.pushToConvoHistory(channelId, { role: "assistant", content })
+                this.pushToConvoHistory(channelId, {
                     role: "user",
-                    content: `[System: ...]`
+                    content: `[System: Your <tool_call> block was malformed or missing its closing </tool_call> tag. Use this exact format:
+<tool_call>
+{"name": "query_hytale_wiki", "arguments": {"query": "ore types mining"}}
+</tool_call>]`
                 })
                 continue
             }
 
             // ── Narration guard ──
-            // FIX: also catch stray <tool_call> references in case content slips through
             if ([...TOOL_NAMES].some(name => content.includes(name)) || content.includes("<tool_call>")) {
                 log(`⚠️ [NARRATE] Model described a tool instead of calling it — retrying`)
-
-                // FIX: was mutating history[lastUserMessageIndex] in-place — corrupted conversation state
-                // Now we append a system nudge instead, which is safe and reversible
-                this.pushToChannelHistory(channelId, { role: "assistant", content })
-                this.pushToChannelHistory(channelId, {
+                this.pushToConvoHistory(channelId, { role: "assistant", content })
+                this.pushToConvoHistory(channelId, {
                     role: "user",
-                    content: `[System: Do NOT mention tool names or describe tool actions in you natural reply. If you need to use a tool, emit a <tool_call> block depending on the tool you need to use following the correct format:
-                    # TOOL CALL FORMAT REFERENCE - Do Not copy verbatim, just use them as reference, replace with your needed keywords.
-
-                    <tool_call>{"name": "query_memory_database", "arguments": {"query": "Lily favorite color"}}</tool_call>
-                    <tool_call>{"name": "addto_memory_database", "arguments": {"text": "User John likes pizza.", "source": "user"}}</tool_call>
-                    <tool_call>{"name": "update_memory_database", "arguments": {"query": "John age", "text": "User John is 25"}}</tool_call>
-                    <tool_call>{"name": "remove_memory_database", "arguments": {"query": "John likes pizza"}}</tool_call>
-                    <tool_call>{"name": "query_hytale_wiki", "arguments": {"query": "Zone 3 trork hostile mob"}}</tool_call>`
+                    content: `[System: Do NOT mention tool names or describe tool actions in your natural reply. If you need to use a tool, emit a properly formatted <tool_call> block. If you don't need a tool, just reply naturally.]`
                 })
                 continue
             }
 
             // ── Real reply ──
             if (content && content.toLowerCase() !== "none") {
-    
-                this.pushToChannelHistory(channelId, { role: "assistant", content })
-                log(`✅ [LILY REPLY] ${content}`)
-                return content
+                this.pushToConvoHistory(channelId, { role: "assistant", content })
+                log(`✅ [LILY REPLY] ${content}${pendingGifUrl ? ` + GIF: ${pendingGifUrl}` : ""}`)
+                return { text: content, gifUrl: pendingGifUrl }
             }
 
             log(`⚠️ [EMPTY] No content in response`)
-            return "I'm not sure about that one!"
+            return { text: "I'm not sure about that one!", gifUrl: null }
         }
 
-        return "Sorry, I was distracted and couldn't focus on your question. Could you repeat please?"
+        return { text: "Sorry, I was distracted and couldn't focus on your question. Could you repeat please?", gifUrl: null }
     }
 
     // ─── Shared entry point ───────────────────────────────────────────────────
@@ -597,13 +689,12 @@ export class HytaleAIChat {
         if (!clean) return null
         log(`\n💬 [${logPrefix}] ${clean}`)
 
-        // FIX: wraps both chat() and buttIn() — prevents race conditions when both fire on the same channel
         return this.withChannelLock(channelId, async () => {
-            this.pushToChannelHistory(channelId, { role: "user", content: clean })
+            this.pushToConvoHistory(channelId, { role: "user", content: clean })
             if (this.opts.summarizeEvery > 0 && ++this.userMessageCount % this.opts.summarizeEvery === 0) {
                 await this.summarizeConversationAndStore(channelId)
             }
-            return this.runToolLoop(channelId, clean)
+            return this.runToolLoop(channelId)
         })
     }
 

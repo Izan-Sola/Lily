@@ -1,6 +1,5 @@
 import { Client, Collection, GatewayIntentBits } from "discord.js"
 import {
-    joinVoiceChannel,
     createAudioPlayer,
     createAudioResource,
     AudioPlayerStatus,
@@ -18,16 +17,15 @@ import { config } from "./utils/config.js"
 import { getPrefs } from "./utils/userPreferences.js"
 
 const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-const execAsync = promisify(exec)
-const ai = new HytaleAIChat({ model: config.modelName })
+const __dirname  = path.dirname(__filename)
+const execAsync  = promisify(exec)
+const ai         = new HytaleAIChat({ model: config.modelName })
 
 // ─── Voice helpers ────────────────────────────────────────────────────────────
 
-const PYTHON_BIN = process.env.PYTHON_BIN || "python3"
+const PYTHON_BIN   = process.env.PYTHON_BIN   || "python3"
 const EDGE_TTS_BIN = process.env.EDGE_TTS_BIN || "edge-tts"
 
-// Player state per guild (includes isProcessingAudio to avoid global state)
 const guildPlayers = new Map()  // guildId → { player, isProcessing }
 
 export async function transcribe(audioPath) {
@@ -66,13 +64,13 @@ function sanitizeInput(text) {
 }
 
 export async function speak(text) {
-    const clean = sanitizeInput(text)
+    const clean   = sanitizeInput(text)
     const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
     const wavPath = "/tmp/lily_response.wav"
     const oggPath = "/tmp/lily_response.ogg"
     await execAsync(`${EDGE_TTS_BIN} --text "${escaped}" --voice en-US-AnaNeural --write-media ${wavPath}`)
     await execAsync(`ffmpeg -y -i ${wavPath} -c:a libopus ${oggPath}`)
-    fs.unlink(wavPath, () => {})
+    fs.unlink(wavPath, () => { })
     return oggPath
 }
 
@@ -83,56 +81,65 @@ export async function playInGuild(guildId, text) {
         console.log("🔇 [VOICE] Skipping — already processing audio")
         return
     }
-
     state.isProcessing = true
     const audioPath = await speak(text)
-    const resource = createAudioResource(audioPath)
+    const resource  = createAudioResource(audioPath)
     state.player.play(resource)
     state.player.once(AudioPlayerStatus.Idle, () => {
         state.isProcessing = false
-        fs.unlink(audioPath, () => {})
+        fs.unlink(audioPath, () => { })
     })
 }
 
-// ─── Shared reply helper ──────────────────────────────────────────────────────
+// ─── Shared reply helpers ─────────────────────────────────────────────────────
 
-// Sends a text reply and also plays it in voice if the bot is in a voice channel
-async function sendReply(message, reply) {
-    const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
-    await message.reply(cleanReply)
-    if (guildPlayers.has(message.guild.id)) {
-        await playInGuild(message.guild.id, cleanReply)
-    }
-    return cleanReply
+// normalizes reply to { text, gifUrl } whether ollama returned a string or object
+function parseReply(reply) {
+    if (typeof reply === "object" && reply !== null) return reply
+    return { text: reply ?? "", gifUrl: null }
 }
 
-// Sends without pinging the original message author
-async function sendNoReply(message, reply) {
-    const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
-    await message.channel.send(cleanReply)
-    if (guildPlayers.has(message.guild.id)) {
-        await playInGuild(message.guild.id, cleanReply)
+async function sendReply(message, reply) {
+    const { text, gifUrl } = parseReply(reply)
+    const clean = text.replace(/\/\w+.*$/s, "").trim()
+    await message.reply({
+        content: clean || undefined,
+        files:   gifUrl ? [{ attachment: gifUrl, name: "lily.gif" }] : []
+    })
+    if (guildPlayers.has(message.guild.id) && clean) {
+        await playInGuild(message.guild.id, clean)
     }
-    return cleanReply
+}
+
+async function sendNoReply(message, reply) {
+    const { text, gifUrl } = parseReply(reply)
+    const clean = text.replace(/\/\w+.*$/s, "").trim()
+    await message.channel.send({
+        content: clean || undefined,
+        files:   gifUrl ? [{ attachment: gifUrl, name: "lily.gif" }] : []
+    })
+    if (guildPlayers.has(message.guild.id) && clean) {
+        await playInGuild(message.guild.id, clean)
+    }
 }
 
 // ─── Voice listening ──────────────────────────────────────────────────────────
 
 function listenAndTranscribe(connection, userId) {
     return new Promise((resolve, reject) => {
-        const receiver = connection.receiver
+        const receiver    = connection.receiver
         const audioStream = receiver.subscribe(userId, {
             end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
         })
 
-        const sessionId = `${userId}_${Date.now()}`
-        const pcmPath = `/tmp/lily_input_${sessionId}.pcm`
-        const wavPath = `/tmp/lily_input_${sessionId}.wav`
+        const sessionId  = `${userId}_${Date.now()}`
+        const pcmPath    = `/tmp/lily_input_${sessionId}.pcm`
+        const wavPath    = `/tmp/lily_input_${sessionId}.wav`
 
-        const decoder = new prism.opus.Decoder({ rate: 48000, channels: 1, frameSize: 960 })
+        const decoder    = new prism.opus.Decoder({ rate: 48000, channels: 1, frameSize: 960 })
         const fileStream = fs.createWriteStream(pcmPath)
 
-        decoder.on("error", err => console.warn(`[VOICE] Opus decode error for ${userId}:`, err.message))
+        decoder.on("error",     err => console.warn(`[VOICE] Opus decode error for ${userId}:`, err.message))
         audioStream.on("error", err => console.warn(`[VOICE] Audio stream error for ${userId}:`, err.message))
 
         audioStream.pipe(decoder).pipe(fileStream)
@@ -141,10 +148,10 @@ function listenAndTranscribe(connection, userId) {
             fileStream.end()
             try {
                 await execAsync(`ffmpeg -y -f s16le -ar 48000 -ac 1 -i ${pcmPath} -af "adelay=400|400" ${wavPath}`)
-                fs.unlink(pcmPath, () => {})
+                fs.unlink(pcmPath, () => { })
                 resolve(wavPath)
             } catch (err) {
-                fs.unlink(pcmPath, () => {})
+                fs.unlink(pcmPath, () => { })
                 reject(err)
             }
         })
@@ -160,7 +167,7 @@ export function startVoiceSession(connection, guild, channelId) {
     console.log("🔊 [VOICE] Audio player subscribed")
 
     const processingUsers = new Set()
-    const speakingTimers = new Map()
+    const speakingTimers  = new Map()
 
     connection.receiver.speaking.on("start", async (userId) => {
         const member = guild.members.cache.get(userId)
@@ -179,28 +186,25 @@ export function startVoiceSession(connection, guild, channelId) {
 
             try {
                 const prefs = getPrefs(userId)
-
-                // User opted out of voice recording entirely
                 if (!prefs.voiceProcess) return
 
-                const wavPath = await listenAndTranscribe(connection, userId)
+                const wavPath    = await listenAndTranscribe(connection, userId)
                 const transcript = await transcribe(wavPath)
-                fs.unlink(wavPath, () => {})
+                fs.unlink(wavPath, () => { })
 
                 if (!transcript || transcript.length < 2) return
 
                 const normalized = transcript.toLowerCase().replace(/[^a-z\s]/g, "").trim()
                 console.log(`📝 [STT] ${memberName} said: "${normalized}"`)
 
-                const words = normalized.split(" ")
+                const words       = normalized.split(" ")
                 const hasWakeWord = words.some(w =>
                     w === "lily" || w === "lili" || w === "really" || w === "lillie" || w === "lele"
                 )
 
-                // Check wake word preference
                 if (!hasWakeWord) {
                     if (prefs.wakeWordRequired) return
-                    if (Math.random() > 0.25) return  // 25% chance to butt in even without wake word
+                    if (Math.random() > 0.15) return
                 }
 
                 const formattedMessage = hasWakeWord
@@ -208,7 +212,10 @@ export function startVoiceSession(connection, guild, channelId) {
                     : `[${memberName}] said nearby: ${transcript}`
 
                 const reply = await ai.chat(channelId, formattedMessage)
-                await playInGuild(guild.id, reply)
+                // voice can't send files, just play the text
+                const { text } = parseReply(reply)
+                const clean = text.replace(/\/\w+.*$/s, "").trim()
+                await playInGuild(guild.id, clean || text)
             } catch (err) {
                 console.error("Voice pipeline error:", err)
             } finally {
@@ -282,8 +289,8 @@ export async function createBot() {
 
         if (!authorName || authorName === "pikarohan") return
 
-        const channelId = message.channel.id
-        const isMentioned = message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")
+        const channelId    = message.channel.id
+        const isMentioned  = message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")
         const isReplyToBot = message.reference?.messageId
             ? (await message.channel.messages.fetch(message.reference.messageId).catch(() => null))?.author?.id === client.user.id
             : false
@@ -292,6 +299,9 @@ export async function createBot() {
             .replace(`<@${client.user.id}>`, "")
             .replace(`<@!${client.user.id}>`, "")
             .trim()
+
+        // ── Always push to raw buffer first ──
+        if (userInput) ai.pushRawMessage(channelId, authorName, userInput)
 
         // ─── Spontaneous butt-in ──────────────────────────────────────────────
         if (!isMentioned && !isReplyToBot) {
@@ -302,7 +312,7 @@ export async function createBot() {
                 if (prefs.spontaneousReplies) {
                     try {
                         await message.channel.sendTyping()
-                        const reply = await ai.buttIn(channelId, `${authorName} said to other person: ${userInput}`)
+                        const reply = await ai.buttIn(channelId, `${authorName} said: ${userInput}`)
                         if (reply) {
                             if (prefs.pingOnSpontaneous) {
                                 await sendReply(message, reply)
@@ -330,16 +340,16 @@ export async function createBot() {
             if (audioAttachment) {
                 await message.channel.sendTyping()
                 try {
-                    const res = await fetch(audioAttachment.url)
-                    const tmpInPath = `/tmp/lily_voicemsg_${message.id}.ogg`
+                    const res        = await fetch(audioAttachment.url)
+                    const tmpInPath  = `/tmp/lily_voicemsg_${message.id}.ogg`
                     const tmpWavPath = `/tmp/lily_voicemsg_${message.id}.wav`
                     fs.writeFileSync(tmpInPath, Buffer.from(await res.arrayBuffer()))
 
-                    await execAsync(`ffmpeg -y -i ${tmpInPath} ${tmpWavPath}`).catch(() => {})
-                    fs.unlink(tmpInPath, () => {})
+                    await execAsync(`ffmpeg -y -i ${tmpInPath} ${tmpWavPath}`).catch(() => { })
+                    fs.unlink(tmpInPath, () => { })
 
                     const transcript = await transcribe(tmpWavPath)
-                    fs.unlink(tmpWavPath, () => {})
+                    fs.unlink(tmpWavPath, () => { })
 
                     if (!transcript || transcript.length < 2) {
                         await message.reply("I couldn't make out what you said! 🍓")
@@ -347,15 +357,16 @@ export async function createBot() {
                     }
 
                     console.log(`📝 [VOICE MSG] ${authorName} said: "${transcript}"`)
-                    const reply = await ai.chat(channelId, `[${authorName}] says to you in a voice message: ${transcript}`)
-                    const cleanReply = reply.replace(/\/\w+.*$/s, "").trim()
+                    const reply      = await ai.chat(channelId, `[${authorName}] says to you in a voice message: ${transcript}`)
+                    const { text }   = parseReply(reply)
+                    const cleanReply = text.replace(/\/\w+.*$/s, "").trim()
 
                     const oggPath = await speak(cleanReply)
                     await message.reply({
                         content: `💬 *"${cleanReply}"*`,
-                        files: [{ attachment: oggPath, name: "lily_response.ogg" }]
+                        files:   [{ attachment: oggPath, name: "lily_response.ogg" }]
                     })
-                    fs.unlink(oggPath, () => {})
+                    fs.unlink(oggPath, () => { })
 
                     if (guildPlayers.has(message.guild.id)) {
                         await playInGuild(message.guild.id, cleanReply)
@@ -384,11 +395,11 @@ export async function createBot() {
                         formattedMessage = `[${authorName}] says to you: ${userInput}`
                     } else {
                         const repliedUser = referenced.member?.displayName || referenced.author.username
-                        const quoted = referenced.content?.replace(/\n/g, " ").slice(0, 120)
-                        formattedMessage = `[${authorName}] says to you, replying to ${repliedUser} who said "${quoted}": ${userInput}`
+                        const quoted      = referenced.content?.replace(/\n/g, " ").slice(0, 120)
+                        formattedMessage  = `[${authorName}] says to you, replying to ${repliedUser} who said "${quoted}": ${userInput}`
                     }
                 }
-            } catch {}
+            } catch { }
         }
 
         if (!formattedMessage && message.mentions.users.size > 1) {

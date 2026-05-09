@@ -21,7 +21,7 @@ function sendToLogChannel(message) {
     logChannel?.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => { })
 }
 
-function log(message) { console.log(message); sendToLogChannel(message) }
+function log(message)      { console.log(message);   sendToLogChannel(message) }
 function logError(message) { console.error(message); sendToLogChannel(`❌ ${message}`) }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
@@ -43,6 +43,7 @@ const SYSTEM_PROMPT = `
 # TOOL USAGE GUIDE
 - Tools are a core part of how you operate. Use them when the situation matches the guidelines below.
 - Make sure the tool and information you use is relevant to the question or statement from the user.
+- You can use multiple tools in a single reply if needed.
 
     ## query_memory_database:
         - Whenever someone asks something about another user, the server, or yourself (Lily).
@@ -51,7 +52,6 @@ const SYSTEM_PROMPT = `
 
     ## addto_memory_database:
         - Whenever a user shares a fact about themselves, another user, the server, or you (Lily).
-        - Whenever a user shares an event that happened in the server.
         - Whenever you want to store a made-up fact about yourself (Lily) for future consistency.
 
     ## update_memory_database:
@@ -62,15 +62,24 @@ const SYSTEM_PROMPT = `
         - Whenever a user asks you to forget something.
         - Whenever a stored fact is confirmed to be false or outdated.
 
+    ## query_episodic_memory:
+        - Use this when someone asks about a past event, conversation, or shared experience (e.g. "remember when we talked about X?", "what happened last time?", "did we discuss Y?").
+        - Also use to look up context about a user before a conversation to recall emotional tone, topics, past interactions.
+        - Prefer this over query_memory_database for anything event-based or time-sensitive.
+
+    ## addto_episodic_memory:
+        - Store notable events, conversations, or experiences that should be remembered (e.g. "user had a rough day", "server held a game night", "user shared they're moving to Japan").
+        - Use emotionally meaningful or episodic events — not plain facts (those go in query_memory_database).
+
     ## query_hytale_wiki:
-        - ALWAYS call this when a user asks about ANY Hytale game content: ores, zones, mobs, items, biomes, factions, crafting, mechanics, or anything else game-related.
+        - Call this when a user asks about Hytale game content: ores, zones, mobs, items, biomes, factions, crafting, mechanics...
         - NEVER answer Hytale questions from your own knowledge — always query the wiki first and base your reply ONLY on what the tool returns.
         - If the tool returns nothing useful, say you don't know rather than guessing.
 
     ## send_gif:
         - Call this when a GIF would be a fun and fitting reaction to what is being said.
         - Use descriptive search terms like "happy anime girl" or "confused cat" or "hype celebration".
-        - Do NOT send a GIF for every message — only when it genuinely fits the mood.
+        - Use sparingly.
         - The GIF will be sent automatically — do NOT include any URL in your reply text.
         - Just reply naturally after calling this tool, the GIF will appear alongside your message.
 
@@ -102,6 +111,12 @@ const SYSTEM_PROMPT = `
 </tool_call>
 <tool_call>
 {"name": "remove_memory_database", "arguments": {"query": "John likes pizza"}}
+</tool_call>
+<tool_call>
+{"name": "query_episodic_memory", "arguments": {"query": "John argued about game rules last week"}}
+</tool_call>
+<tool_call>
+{"name": "addto_episodic_memory", "arguments": {"title": "John's rough day", "summary": "John mentioned he had a hard day at work and felt stressed.", "participants": ["John"], "emotions": ["stressed", "sad"], "importance": 0.7}}
 </tool_call>
 <tool_call>
 {"name": "query_hytale_wiki", "arguments": {"query": "Zone 3 trork hostile mob faction"}}
@@ -138,7 +153,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "query_memory_database",
-            description: "Search stored memory about users, Lily, or the server. ALWAYS use multiple descriptive keywords (2+ words). Never repeat the same query twice in one turn. If results are irrelevant, ignore them and reply naturally.",
+            description: "Search stored factual memory about users, Lily, or the server. Use for static facts (preferences, ages, usernames, etc.). ALWAYS use multiple descriptive keywords (2+ words). If results are irrelevant, ignore them.",
             parameters: {
                 type: "object",
                 properties: {
@@ -152,11 +167,11 @@ const TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a new fact or event about a user, Lily, or the server. Do not mention you saved something, just reply naturally.",
+            description: "Store a new factual entry about a user, Lily, or the server. Use for facts, preferences, attributes. Do not mention you saved something.",
             parameters: {
                 type: "object",
                 properties: {
-                    text: { type: "string", description: "Fact to store, e.g. 'User John likes pizza.'" },
+                    text:   { type: "string", description: "Fact to store, e.g. 'User John likes pizza.'" },
                     source: { type: "string", description: "Source of info, usually 'user'" }
                 },
                 required: ["text", "source"]
@@ -167,12 +182,12 @@ const TOOLS = [
         type: "function",
         function: {
             name: "update_memory_database",
-            description: "Update an existing memory entry when a user corrects something. Do not mention you updated memory, just reply naturally.",
+            description: "Update an existing factual memory entry when a user corrects something. Do not mention you updated memory.",
             parameters: {
                 type: "object",
                 properties: {
                     query: { type: "string", description: "Multiple keywords to find the entry, e.g. 'John age years old'" },
-                    text: { type: "string", description: "The replacement fact, e.g. 'User John is 25 years old.'" }
+                    text:  { type: "string", description: "The replacement fact, e.g. 'User John is 25 years old.'" }
                 },
                 required: ["query", "text"]
             }
@@ -182,7 +197,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "remove_memory_database",
-            description: "Remove matching stored memory entries when a user asks to forget something. Do not mention you removed something, just reply naturally.",
+            description: "Remove matching factual memory entries when a user asks to forget something. Do not mention you removed something.",
             parameters: {
                 type: "object",
                 properties: {
@@ -195,8 +210,42 @@ const TOOLS = [
     {
         type: "function",
         function: {
+            name: "query_episodic_memory",
+            description: "Search episodic memory for past events, conversations, or experiences. Use for time-based or event-based recall (e.g. 'what did we talk about last time', 'remember when X happened', 'context about John before this chat'). Prefer over query_memory_database for anything event/emotional/situational.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "Event or experience description, e.g. 'John upset angry argument last week'" },
+                    k:     { type: "number", description: "Max results to return (default 5)" }
+                },
+                required: ["query"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "addto_episodic_memory",
+            description: "Store an episodic memory: a notable event, conversation, or shared experience worth remembering. Use for emotionally meaningful moments, events, or interactions — NOT for plain facts (use addto_memory_database for those).",
+            parameters: {
+                type: "object",
+                properties: {
+                    title:        { type: "string",  description: "Short descriptive title, e.g. 'John's rough day at work'" },
+                    summary:      { type: "string",  description: "What happened, who was involved, why it matters" },
+                    participants: { type: "array",   items: { type: "string" }, description: "Usernames or names of people involved" },
+                    emotions:     { type: "array",   items: { type: "string" }, description: "Emotions present, e.g. ['happy', 'excited', 'angry']" },
+                    importance:   { type: "number",  description: "0.0 to 1.0 — how important this is to remember (default 0.5)" },
+                    channel:      { type: "string",  description: "Channel where this happened (optional)" }
+                },
+                required: ["title", "summary"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
             name: "send_gif",
-            description: "Search KLIPY for a GIF and send it in chat. Use when reacting emotionally or when a GIF would be fun and relevant. Do NOT send a GIF every message — only when it genuinely fits. The GIF is sent automatically, do NOT include any URL in your reply. Use descriptive search terms like 'happy anime girl' or 'confused cat'.",
+            description: "Search KLIPY for a GIF and send it in chat. Use when reacting emotionally or when a GIF would be fun and relevant. Do NOT send a GIF every message. The GIF is sent automatically, do NOT include any URL in your reply. Use descriptive search terms like 'happy anime girl' or 'confused cat'.",
             parameters: {
                 type: "object",
                 properties: {
@@ -225,12 +274,15 @@ const DEFAULT_OPTIONS = {
     memoryRemoveMinScore:    0.70,
     memoryQueryMinScore:     0.4,
     memoryRemoveK:           2,
+    episodicQueryMinScore:   0.45,
+    episodicDuplicateScore:  0.90,
     summarizeEvery:          12,
     summarizeLastN:          12,
     observeEvery:            20,
     ollamaUrl:               "http://localhost:11434",
     vectorDbUrl:             "http://localhost:8000",
     knowledgeDbUrl:          "http://localhost:8001",
+    episodicDbUrl:           "http://localhost:8002",   // ← episodic DB
     ollamaTimeout:           60000,
     dbTimeout:               30000,
 }
@@ -239,12 +291,12 @@ const DEFAULT_OPTIONS = {
 
 export class HytaleAIChat {
     constructor(options = {}) {
-        this.opts           = { ...DEFAULT_OPTIONS, ...options }
-        this.convoHistories = new Map()
-        this.rawBuffers     = new Map()
-        this.channelLocks   = new Map()
+        this.opts             = { ...DEFAULT_OPTIONS, ...options }
+        this.convoHistories   = new Map()
+        this.rawBuffers       = new Map()
+        this.channelLocks     = new Map()
         this.userMessageCount = 0
-        this.observeBuffer  = []
+        this.observeBuffer    = []
     }
 
     // ─── Channel lock ─────────────────────────────────────────────────────────
@@ -325,13 +377,20 @@ export class HytaleAIChat {
 
     // ─── HTTP helpers ─────────────────────────────────────────────────────────
 
-    knowledgeGet(path, params) { return axios.get(`${this.opts.knowledgeDbUrl}${path}`, { params, timeout: this.opts.dbTimeout }) }
-    knowledgePost(path, body)  { return axios.post(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
-    knowledgePut(path, body)   { return axios.put(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
+    knowledgeGet(path, params)  { return axios.get(`${this.opts.knowledgeDbUrl}${path}`,  { params, timeout: this.opts.dbTimeout }) }
+    knowledgePost(path, body)   { return axios.post(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
+    knowledgePut(path, body)    { return axios.put(`${this.opts.knowledgeDbUrl}${path}`,  body, { timeout: this.opts.dbTimeout }) }
+
+    episodicPost(path, body)    { return axios.post(`${this.opts.episodicDbUrl}${path}`,  body, { timeout: this.opts.dbTimeout }) }
 
     // ─── Summarization ────────────────────────────────────────────────────────
 
-    async summarizeAndStore(lines, { logPrefix, maxTokens = 512, memoryPrefix, memorySource = "summary" }) {
+    /**
+     * Summarizes lines of text via Ollama and stores the result.
+     * Conversation summaries → episodic DB (they are events in time).
+     * Observed chat summaries → episodic DB (same reason).
+     */
+    async summarizeAndStore(lines, { logPrefix, maxTokens = 512, memoryTitle, memorySource = "summary", participants = [], emotions = [], importance = 0.5 }) {
         if (lines.length < 2) return
         log(`📝 [${logPrefix}] Summarizing ${lines.length} entries...`)
         try {
@@ -348,7 +407,16 @@ export class HytaleAIChat {
             const summary = data.message?.content?.trim()
             if (!summary) return
             log(`📝 [${logPrefix}] → "${summary.slice(0, 100)}..."`)
-            await this.memoryAdd(`[${memoryPrefix}] ${summary}`, memorySource)
+
+            // Store in episodic DB — these are time-bound events, not plain facts
+            await this.episodicAdd({
+                title:        memoryTitle,
+                summary,
+                participants,
+                emotions,
+                importance,
+                source:       memorySource,
+            })
         } catch (err) {
             logError(`[${logPrefix}] ${err.message}`)
         }
@@ -359,9 +427,14 @@ export class HytaleAIChat {
             .filter(m => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
             .slice(-this.opts.summarizeLastN)
             .map(m => `${m.role === "user" ? "User" : "Lily"}: ${m.content}`)
+
+        const title = `Conversation summary — ${new Date().toISOString().slice(0, 10)}`
         await this.summarizeAndStore(lines, {
-            logPrefix: "SUMMARIZE", maxTokens: 512,
-            memoryPrefix: "Conversation summary", memorySource: "summary"
+            logPrefix:    "SUMMARIZE",
+            maxTokens:    512,
+            memoryTitle:  title,
+            memorySource: "summary",
+            importance:   0.5,
         })
     }
 
@@ -372,9 +445,13 @@ export class HytaleAIChat {
         if (!clean) return
         this.observeBuffer.push(clean)
         if (this.opts.observeEvery > 0 && this.observeBuffer.length >= this.opts.observeEvery) {
+            const title = `Observed chat — ${new Date().toISOString().slice(0, 10)}`
             this.summarizeAndStore(this.observeBuffer.splice(0, this.opts.observeEvery), {
-                logPrefix: "OBSERVE", maxTokens: 200,
-                memoryPrefix: "Observed chat summary", memorySource: "observe"
+                logPrefix:    "OBSERVE",
+                maxTokens:    200,
+                memoryTitle:  title,
+                memorySource: "observe",
+                importance:   0.3,
             })
         }
     }
@@ -454,16 +531,54 @@ export class HytaleAIChat {
         }
     }
 
+    // ── Episodic DB calls ──────────────────────────────────────────────────────
+
+    async episodicQuery(query, k = 5) {
+        log(`🎞️ [EPISODIC QUERY] "${query}"`)
+        try {
+            const { data } = await this.episodicPost("/search", {
+                query,
+                k,
+                min_score: this.opts.episodicQueryMinScore,
+            })
+            if (!data?.results?.length) return "No relevant episodic memories found."
+            log(`✅ [EPISODIC QUERY] ${data.results.length} memories`)
+            return data.results.map(m =>
+                `[${new Date(m.timestamp * 1000).toLocaleDateString()}] ${m.title}: ${m.summary}` +
+                (m.participants?.length ? ` (with: ${m.participants.join(", ")})` : "") +
+                (m.emotions?.length    ? ` [emotions: ${m.emotions.join(", ")}]` : "")
+            ).join("\n")
+        } catch (err) {
+            logError(`[EPISODIC QUERY] ${err.message}`)
+            return "No relevant episodic memories found."
+        }
+    }
+
+    async episodicAdd({ title, summary, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation" }) {
+        log(`🎞️ [EPISODIC ADD] "${title}"`)
+        try {
+            const { data } = await this.episodicPost("/add_memory", {
+                title,
+                summary,
+                participants,
+                emotions,
+                importance,
+                channel,
+                source,
+                duplicate_min_score: this.opts.episodicDuplicateScore,
+            })
+            return JSON.stringify({ status: data.status, message: data.message })
+        } catch (err) {
+            logError(`[EPISODIC ADD] ${err.message}`)
+            return JSON.stringify({ status: "error", message: "Failed to store episodic memory." })
+        }
+    }
+
     async searchGif(query) {
         log(`🎞️ [GIF] Searching for "${query}"`)
         try {
             const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/gifs/search`, {
-                params: {
-                    q:           query,
-                    per_page:    10,
-                    page:        1,
-                    customer_id: "lily-bot"
-                },
+                params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
                 timeout: this.opts.dbTimeout
             })
 
@@ -471,10 +586,7 @@ export class HytaleAIChat {
             if (!results.length) return JSON.stringify({ status: "not_found", message: "No GIF found for that query." })
 
             const pick = results[Math.floor(Math.random() * Math.min(results.length, 5))]
-            const url  = pick?.file?.hd?.gif?.url
-                      ?? pick?.file?.hd?.webp?.url
-                      ?? pick?.file?.gif?.url
-                      ?? null
+            const url  = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url ?? null
 
             if (!url) {
                 log(`⚠️ [GIF] Unexpected response shape: ${JSON.stringify(pick).slice(0, 200)}`)
@@ -496,6 +608,16 @@ export class HytaleAIChat {
             case "addto_memory_database":  return this.memoryAdd(args.text ?? "", args.source ?? "user")
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args.query ?? "")
+            case "query_episodic_memory":  return this.episodicQuery(args.query ?? "", args.k ?? 5)
+            case "addto_episodic_memory":  return this.episodicAdd({
+                title:        args.title        ?? "Untitled memory",
+                summary:      args.summary      ?? "",
+                participants: args.participants ?? [],
+                emotions:     args.emotions     ?? [],
+                importance:   args.importance   ?? 0.5,
+                channel:      args.channel      ?? null,
+                source:       "conversation",
+            })
             case "send_gif":               return this.searchGif(args.query ?? "")
             default:
                 console.warn(`⚠️ [TOOL] Unknown tool: ${name}`)
@@ -523,7 +645,7 @@ export class HytaleAIChat {
     // ─── Tool call parsing ────────────────────────────────────────────────────
 
     parseEmbeddedToolCalls(content) {
-        const closed = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
+        const closed  = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
         const sources = closed.length
             ? closed
             : [...content.matchAll(/<tool_call>\s*([\s\S]+)/g)]
@@ -531,7 +653,7 @@ export class HytaleAIChat {
         return sources.flatMap(match => {
             try {
                 const parsed = JSON.parse(match[1].trim())
-                const args = this.normalizeToolArgs(parsed)
+                const args   = this.normalizeToolArgs(parsed)
                 log(`🔬 [PARSE] ${parsed.name} → ${JSON.stringify(args)}`)
                 return [{ name: parsed.name, args }]
             } catch { return [] }
@@ -557,11 +679,16 @@ export class HytaleAIChat {
             case "query_hytale_wiki":
             case "query_memory_database":
             case "remove_memory_database":
+            case "query_episodic_memory":
             case "send_gif":
                 if (!args.query) args = { query: firstString(args, toolCall) }
                 break
             case "addto_memory_database":
                 if (!args.text) args = { text: firstString(args, toolCall), source: args.source ?? "user" }
+                break
+            case "addto_episodic_memory":
+                if (!args.title) args.title   = args.summary?.slice(0, 50) ?? "Untitled"
+                if (!args.summary) args.summary = firstString(args, toolCall)
                 break
             case "update_memory_database":
                 if (!args.query || !args.text) {
@@ -576,7 +703,7 @@ export class HytaleAIChat {
     // ─── Dedupe ───────────────────────────────────────────────────────────────
 
     checkDedupe(seenCalls, name, args) {
-        const key = `${name}:${JSON.stringify(args)}`
+        const key   = `${name}:${JSON.stringify(args)}`
         const count = (seenCalls.get(key) ?? 0) + 1
         seenCalls.set(key, count)
         if (count > this.opts.maxToolRepeats) {
@@ -589,7 +716,7 @@ export class HytaleAIChat {
     // ─── Tool loop ────────────────────────────────────────────────────────────
 
     async runToolLoop(channelId) {
-        const seenCalls  = new Map()
+        const seenCalls   = new Map()
         let pendingGifUrl = null
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
@@ -612,7 +739,6 @@ export class HytaleAIChat {
                     let args = {}
                     try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
                     const result = this.checkDedupe(seenCalls, tc.function.name, args) ?? await this.runTool(tc.function.name, args)
-                    // intercept gif result
                     if (tc.function.name === "send_gif") {
                         try {
                             const parsed = JSON.parse(result)
@@ -632,7 +758,6 @@ export class HytaleAIChat {
                     const results = []
                     for (const tc of calls) {
                         const result = this.checkDedupe(seenCalls, tc.name, tc.args) ?? await this.runTool(tc.name, tc.args)
-                        // intercept gif result
                         if (tc.name === "send_gif") {
                             try {
                                 const parsed = JSON.parse(result)

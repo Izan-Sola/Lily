@@ -26,7 +26,7 @@ export async function execute(interaction) {
             ].join("\n"), inline: false },
             {  
             name: "Info",     
-            value: [ "- Lily sees your actual nickname, not display name.",
+            value: [ 
                      "- Update your preferences using the /lilyprefs command. Control pings, replies, voice processing etc..." ,
                      "- Your voice is only processed in real time and not stored anywhere. An history of messages sent in the current channel is stored for memory and context enhancement purposes.\n", 
             ].join("\n"), inline: false 

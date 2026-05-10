@@ -254,7 +254,30 @@ const TOOLS = [
                 required: ["query"]
             }
         }
+    },
+  
+{
+    type: "function",
+    function: {
+        name: "minecraft_action",
+        description: "Perform an action in the Minecraft server. Use when asked to do something in game like going to a player, mining a block, or checking status.",
+        parameters: {
+            type: "object",
+            properties: {
+                action: {
+                    type: "string",
+                    enum: ["chat", "goto_player", "mine_block", "look_at_player", "get_status"],
+                    description: "What action to perform"
+                },
+                target: {
+                    type: "string",
+                    description: "Target for the action — player name, block name, or message text"
+                }
+            },
+            required: ["action"]
+        }
     }
+}
 ]
 
 const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
@@ -282,7 +305,7 @@ const DEFAULT_OPTIONS = {
     ollamaUrl:               "http://localhost:11434",
     vectorDbUrl:             "http://localhost:8000",
     knowledgeDbUrl:          "http://localhost:8001",
-    episodicDbUrl:           "http://localhost:8002",   // ← episodic DB
+    episodicDbUrl:           "http://localhost:8002",  
     ollamaTimeout:           60000,
     dbTimeout:               30000,
 }
@@ -585,7 +608,7 @@ export class HytaleAIChat {
             const results = data?.data?.data ?? []
             if (!results.length) return JSON.stringify({ status: "not_found", message: "No GIF found for that query." })
 
-            const pick = results[Math.floor(Math.random() * Math.min(results.length, 5))]
+            const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
             const url  = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url ?? null
 
             if (!url) {
@@ -604,6 +627,7 @@ export class HytaleAIChat {
     runTool(name, args) {
         switch (name) {
             case "query_hytale_wiki":      return this.wikiSearch(args.query ?? "")
+            case "minecraft_action": return this.minecraftAction(args.action ?? "", args.target ?? "")
             case "query_memory_database":  return this.memoryQuery(args.query ?? "")
             case "addto_memory_database":  return this.memoryAdd(args.text ?? "", args.source ?? "user")
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")

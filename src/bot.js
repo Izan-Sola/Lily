@@ -19,8 +19,7 @@ import { getPrefs } from "./utils/userPreferences.js"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname  = path.dirname(__filename)
 const execAsync  = promisify(exec)
-const ai         = new HytaleAIChat({ model: config.modelName })
-
+export const ai         = new HytaleAIChat({ model: config.modelName }) // export the AI instance for use in other modules like the Minecraft bot
 // ─── Voice helpers ────────────────────────────────────────────────────────────
 
 const PYTHON_BIN   = process.env.PYTHON_BIN   || "python3"
@@ -181,7 +180,7 @@ export function startVoiceSession(connection, guild, channelId) {
             if (processingUsers.has(userId)) return
             processingUsers.add(userId)
 
-            const memberName = member.displayName || member.user.username
+            const memberName = member.displayName
             console.log(`🎙️ [VOICE] Processing audio from ${memberName}...`)
 
             try {
@@ -284,7 +283,7 @@ export async function createBot() {
                 if (match?.[1]) authorName = sanitizeInput(match[1].trim())
             } else return
         } else {
-            authorName = sanitizeInput(message.author.username) || message.member.displayName
+            authorName = sanitizeInput(message.member.displayName)
         }
 
         if (!authorName || authorName === "pikarohan") return
@@ -307,7 +306,7 @@ export async function createBot() {
         if (!isMentioned && !isReplyToBot) {
             ai.observe(`${authorName} said ${userInput}`)
 
-            if (Math.random() < 0.05) {
+            if (Math.random() < 0.03) {
                 const prefs = getPrefs(message.author.id)
                 if (prefs.spontaneousReplies) {
                     try {

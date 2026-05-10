@@ -1,0 +1,173 @@
+import { WebSocket } from "ws"
+import { LilyStateMachine } from "./states.js"
+
+let ws = null
+let stateMachine = null
+let aiInstance = null
+let reconnectTimer = null
+let wsHost = null
+let wsPort = null
+
+export function startMinecraftBot({ host = "localhost", port = 8765, ai }) {
+    aiInstance = ai
+    wsHost = host
+    wsPort = port
+    _connect()
+}
+
+function _connect() {
+    ws = new WebSocket(`ws://${wsHost}:${wsPort}`)
+
+    ws.on("open", () => {
+        console.log("⛏️ [MC] Connected to LilyBotBridge")
+        clearTimeout(reconnectTimer)
+
+        // init state machine on connect
+        if (!stateMachine) {
+            stateMachine = new LilyStateMachine({
+                followTarget: process.env.MC_FOLLOW_TARGET ?? "shinyshadow_",
+                followDistance: 3,
+                attackRange: 4,
+                lowHpThreshold: 6,
+                tickMs: 500,
+            })
+        }
+        stateMachine.start()
+    })
+
+    ws.on("message", async (data) => {
+        try {
+            const event = JSON.parse(data.toString())
+            await _handleEvent(event)
+        } catch (err) {
+            console.error("⛏️ [MC] Message error:", err.message)
+        }
+    })
+
+    ws.on("close", () => {
+        console.log("⛏️ [MC] Disconnected, reconnecting in 5s...")
+        stateMachine?.stop()
+        reconnectTimer = setTimeout(_connect, 5000)
+    })
+
+    ws.on("error", err => {
+        console.error("⛏️ [MC] WS error:", err.message)
+    })
+}
+
+async function _handleEvent(event) {
+    switch (event.type) {
+
+        case "chat": {
+            console.log(`⛏️ [MC CHAT] ${event.player}: ${event.message}`)
+            aiInstance?.pushRawMessage("minecraft", event.player, event.message)
+
+            const lower = event.message.toLowerCase()
+            const addressed = lower.includes("lily") || lower.includes("hylily")
+
+            if (addressed || Math.random() < 0.05) {
+                try {
+                    const formatted = addressed
+                        ? `[${event.player}] says to you in Minecraft: ${event.message}`
+                        : `[${event.player}] said in Minecraft nearby: ${event.message}`
+                    const reply = await aiInstance?.chat("minecraft", formatted)
+                    const text = typeof reply === "object" ? reply?.text : reply
+                    if (text) _splitMessage(text).forEach(chunk => mcChat(chunk))
+                } catch (err) {
+                    console.error("⛏️ [MC] Chat handler error:", err.message)
+                }
+            }
+            break
+        }
+
+        case "players_list": {
+            // format: "name:x,y,z,hp=N;name:x,y,z,hp=N;"
+            const players = {}
+            if (event.players) {
+                event.players.split(";").filter(Boolean).forEach(entry => {
+                    try {
+                        const colonIdx = entry.indexOf(":")
+                        const name = entry.slice(0, colonIdx)
+                        const parts = entry.slice(colonIdx + 1).split(",")
+                        players[name] = {
+                            x: parseFloat(parts[0]),
+                            y: parseFloat(parts[1]),
+                            z: parseFloat(parts[2]),
+                            hp: parseFloat((parts[3] ?? "hp=20").split("=")[1] ?? "20")
+                        }
+                    } catch { /* malformed entry, skip */ }
+                })
+            }
+            stateMachine?.updatePlayers(players)
+            break
+        }
+
+        case "lily_state": {
+            stateMachine?.updateLilyState(
+                { x: event.x, y: event.y, z: event.z },
+                event.hp ?? 20
+            )
+            break
+        }
+        case "hostiles": {
+            const hostiles = event.hostiles ?? []
+            stateMachine?.updateHostiles(hostiles)
+            break
+        }
+
+        case "player_join":
+            console.log(`⛏️ [MC] ${event.player} joined`)
+            break
+
+        case "player_leave":
+            console.log(`⛏️ [MC] ${event.player} left`)
+            break
+
+        case "player_death":
+            console.log(`⛏️ [MC] ${event.player} died: ${event.cause}`)
+            break
+    }
+}
+
+// ─── Send helpers ─────────────────────────────────────────────────────────────
+
+export function mcSend(type, data = {}) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn(`⛏️ [MC] WS not ready, dropping: ${type}`)
+        return
+    }
+    ws.send(JSON.stringify({ type, ...data }))
+}
+
+export function mcChat(message) { mcSend("chat", { message }) }
+export function mcCommand(cmd) { mcSend("run_command", { command: cmd }) }
+export function mcGetPlayers() { mcSend("get_players") }
+export function mcGetScoreboard() { mcSend("get_scoreboard") }
+
+export function stopMinecraftBot() {
+    clearTimeout(reconnectTimer)
+    stateMachine?.stop()
+    ws?.close()
+    ws = null
+    stateMachine = null
+}
+
+export function getStateMachine() { return stateMachine }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function _splitMessage(text, limit = 250) {
+    const words = text.split(" ")
+    const chunks = []
+    let current = ""
+    for (const word of words) {
+        if ((current + " " + word).trim().length > limit) {
+            if (current) chunks.push(current.trim())
+            current = word
+        } else {
+            current = current ? current + " " + word : word
+        }
+    }
+    if (current) chunks.push(current.trim())
+    return chunks
+}

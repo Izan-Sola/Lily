@@ -20,7 +20,7 @@ export async function execute(interaction) {
     await interaction.deferReply()
 
     const userMessage = interaction.options.getString("message")
-    const authorName  = interaction.member?.displayName || interaction.user.username
+    const authorName  = message.author.displayName
 
     try {
         // Get Lily's text response

@@ -16,7 +16,7 @@
 ## Features
 
 - Chat with Lily by pinging her or replying to one of her messages. She may rarely respond spontaneously to a message without being directly addressed.
-- She can send audio messages, talk in voice calls, and listen to your voice.
+- She can send gifs, audio messages, talk in voice calls, and listen to your voice.
 - She has access to a vectorized database containing the scrapped Hytale Wiki that she can query using a tool.
 - She has a memory database that she can query, add, update and remove memory from using tools.
 - ( more coming soon herhehrehreherhre )
@@ -30,5 +30,4 @@
 
 ## Info
 
-- Lily sees your actual nickname, not display name.
 - Your voice is only processed in real time and not stored anywhere. An history of messages sent in the current channel is stored for memory and context enhancement purposes.

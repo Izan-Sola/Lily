@@ -11,7 +11,8 @@ export class LilyStateMachine {
     constructor(opts = {}) {
         this.state        = State.IDLE
         this.tickInterval = null
-        this.lastMove     = null   // current movement direction to avoid redundant sends
+        this.lastMove     = null 
+        this.attackInterval = null  
 
         this.opts = {
             followTarget:    "shinyshadow_",
@@ -105,7 +106,7 @@ export class LilyStateMachine {
             if (hostile) {
                 if (this.state !== State.ATTACKING) {
                     this._transition(State.ATTACKING)
-                    mcSend("attack", { mode: "continue" })
+                     this.attackInterval = setInterval(() =>  mcSend("attack", { mode: "once" }), 1200)
                     console.log(`⚙️ [STATE] Attacking ${hostile.type ?? "hostile"} at ${Math.floor(hostile.x)} ${Math.floor(hostile.y)} ${Math.floor(hostile.z)}`)
                 }
 
@@ -126,8 +127,8 @@ export class LilyStateMachine {
             // ── No hostiles — clean up attack state ──
             if (this.state === State.ATTACKING) {
                 console.log("⚙️ [STATE] No more hostiles, returning to follow")
-                this._sendStop()
-                mcSend("attack", { mode: "stop" })
+                this._sendStop()        
+                // this.attackInterval = setInterval(() =>  mcSend("attack", { mode: "once" }), 200)
                 this._transition(State.IDLE)
             }
 
@@ -166,12 +167,12 @@ export class LilyStateMachine {
 
         // pick the dominant axis
         let direction
-        if (Math.abs(dx) >= Math.abs(dz)) {
-            direction = dx > 0 ? "right" : "left"
-        } else {
-            direction = dz > 0 ? "forward" : "back"
-        }
-
+        // if (Math.abs(dx) >= Math.abs(dz)) {
+        //     direction = dx > 0 ? "right" : "left"
+        // } else {
+        //     direction = dz > 0 ? "forward" : "back"
+        // }
+        direction = "forward"
         // only send if direction changed — avoid spamming identical commands
         if (this.lastMove !== direction) {
             // stop previous direction first
@@ -193,6 +194,7 @@ export class LilyStateMachine {
     _transition(newState) {
         if (this.state === newState) return
         console.log(`⚙️ [STATE] ${this.state} → ${newState}`)
+        clearInterval(this.attackInterval)
         this.state = newState
     }
 

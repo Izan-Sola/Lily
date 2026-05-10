@@ -19,7 +19,7 @@ export class LilyStateMachine {
         this.tickInterval = null
 
         this.opts = {
-            followDistance: 3,     // stay this many blocks away when following
+            followDistance: 2,     // stay this many blocks away when following
             attackRange: 4,     // attack if hostile within this range
             lowHpThreshold: 6,     // recover if hp drops below this (out of 20)
             tickMs: 1000,  // how often the state machine runs (ms)

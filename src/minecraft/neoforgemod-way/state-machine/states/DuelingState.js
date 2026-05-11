@@ -42,6 +42,10 @@ export class DuelingState {
             const prompt = buildDuelPrompt(this.ctx, targetName);
             console.log('[DUEL PROMPT]\n', prompt);
             // TODO: send to AI
+//             aiInstance.chat("duel", duelPrompt, DUEL_SYSTEM_PROMPT, { 
+            //     skipHistory: true, 
+            //     skipRawContext: true 
+            // })
         }
     }
 

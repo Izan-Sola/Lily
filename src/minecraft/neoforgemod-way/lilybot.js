@@ -1,5 +1,6 @@
 import { WebSocket } from "ws"
 import { StateController } from "./state-machine/StateController.js"
+import { MINECRAFT_SYSTEM_PROMPT } from '../../ai/ollama.js'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -148,7 +149,7 @@ async function _handleEvent(event) {
                     const formatted = addressed
                         ? `[${event.player}] says to you in Minecraft: ${event.message}`
                         : `[${event.player}] said in Minecraft nearby: ${event.message}`
-                    const reply = await aiInstance?.chat("minecraft", formatted)
+                    const reply = await aiInstance?.chat("minecraft", formatted, MINECRAFT_SYSTEM_PROMPT)
                     const text = typeof reply === "object" ? reply?.text : reply
                     if (text) _splitMessage(text).forEach(chunk => mcChat(chunk))
                 } catch (err) {

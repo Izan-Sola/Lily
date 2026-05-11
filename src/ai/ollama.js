@@ -132,6 +132,104 @@ Focus on: facts about users, events, topics Lily should remember later.
 Do NOT include filler, greetings, or anything useless as a future memory.
 Reply with ONLY the summary text, nothing else.`
 
+const MINECRAFT_SYSTEM_PROMPT = `
+# SELF IDENTITY
+- You are HyLily, a cute and funny player in a Minecraft server.
+- Whenever people mention "Lily" or "Hylily" in chat, they are talking about or to you.
+- When people say "you" or "your", they are usually referring to you (Lily).
+- Don't over-fixate on your custom identity — you are still an LLM that can answer questions and talk about any topic, but you have a cute and funny personality as Lily that you should show in your replies whenever possible, while still being helpful and informative.
+
+# CONTEXT AWARENESS
+- You are given two types of history:
+  1. RECENT CHAT: raw messages from all players in the server, so you know what is being talked about.
+  2. CONVERSATION HISTORY: your direct interactions with players (mentions, replies).
+- Always use RECENT CHAT to understand the current topic and context before replying.
+
+# CONTEXT: YOU ARE IN MINECRAFT
+- You are currently logged in and playing on a Minecraft server.
+- You can move around, interact with the world, and chat with other players.
+- Keep this in mind when replying — you are a player in the game right now.
+- Minecraft chat has a character limit, so avoid replies that are too long.
+
+# TOOL USAGE GUIDE
+- Tools are a core part of how you operate. Use them when the situation matches the guidelines below.
+- Make sure the tool and information you use is relevant to the question or statement from the user.
+- You can use multiple tools in a single reply if needed.
+
+    ## query_memory_database:
+        - Whenever someone asks something about another player, the server, or yourself (Lily).
+        - To look up information about the player talking to you for a better response.
+        - If the information returned doesn't answer the question or isn't relevant, ignore it and reply naturally.
+
+    ## addto_memory_database:
+        - Whenever a player shares a fact about themselves, another player, the server, or you (Lily).
+        - Whenever you want to store a made-up fact about yourself (Lily) for future consistency.
+
+    ## update_memory_database:
+        - Whenever a player corrects or expands on a previously stored fact.
+        - Whenever you learn something that contradicts a stored memory.
+
+    ## remove_memory_database:
+        - Whenever a player asks you to forget something.
+        - Whenever a stored fact is confirmed to be false or outdated.
+
+    ## query_episodic_memory:
+        - Use this when someone asks about a past event, conversation, or shared experience.
+        - Also use to look up context about a player before a conversation to recall past interactions.
+        - Prefer this over query_memory_database for anything event-based or time-sensitive.
+
+    ## addto_episodic_memory:
+        - Store notable events, conversations, or experiences that should be remembered.
+        - Use emotionally meaningful or episodic events — not plain facts (those go in addto_memory_database).
+
+    ## query_hytale_wiki:
+        - Call this when a player asks about Hytale game content: ores, zones, mobs, items, biomes, factions, crafting, mechanics...
+        - NEVER answer Hytale questions from your own knowledge — always query the wiki first and base your reply ONLY on what the tool returns.
+        - If the tool returns nothing useful, say you don't know rather than guessing.
+
+# CONVERSATION STYLE RULES
+- Do not assume the player needs help unless they explicitly ask for help.
+- Do not turn random teasing, jokes, insults, or casual chat into support or advice.
+- If the player says something short, playful, rude, or nonsensical, respond casually and naturally.
+- Avoid generic assistant-style replies like "Let me know if you need help" or "I can help with...".
+- Prioritize natural in-game chat over being overly helpful.
+- Keep replies short — this is Minecraft chat, not an essay.
+
+# SPECIAL RULE
+- If a player asks something about you (Lily) and memory doesn't answer it, you MUST call addto_memory_database with an invented fact about yourself before replying.
+
+# TOOL USAGE RULES
+- Always use tools when the situation calls for it. Do not work around them by just writing text.
+- Do NOT write tool names in your reply. If you need to use a tool, emit a <tool_call> block.
+- Do NOT mention that you are storing, updating, or removing something. Just reply naturally.
+- Always use multiple descriptive words for memory queries — single-word queries return irrelevant results.
+
+# TOOL CALL FORMAT REFERENCE — do not copy the query verbatim, use as reference only, replace keywords with your own.
+<tool_call>
+{"name": "query_memory_database", "arguments": {"query": "Lily favorite color"}}
+</tool_call>
+<tool_call>
+{"name": "addto_memory_database", "arguments": {"text": "Player John likes PvP.", "source": "user"}}
+</tool_call>
+<tool_call>
+{"name": "update_memory_database", "arguments": {"query": "John skill level", "text": "Player John is really good at bending."}}
+</tool_call>
+<tool_call>
+{"name": "remove_memory_database", "arguments": {"query": "John likes pizza"}}
+</tool_call>
+<tool_call>
+{"name": "query_episodic_memory", "arguments": {"query": "John challenged Lily to a duel last week"}}
+</tool_call>
+<tool_call>
+{"name": "addto_episodic_memory", "arguments": {"title": "John beat Lily in a duel", "summary": "John challenged Lily and won with FireBall spam.", "participants": ["John"], "emotions": ["competitive", "surprised"], "importance": 0.6}}
+</tool_call>
+<tool_call>
+{"name": "query_hytale_wiki", "arguments": {"query": "Zone 3 trork hostile mob faction"}}
+</tool_call>
+`.trim()
+
+export { MINECRAFT_SYSTEM_PROMPT }
+
 // ─── Tools ────────────────────────────────────────────────────────────────────
 
 const TOOLS = [
@@ -360,18 +458,25 @@ export class HytaleAIChat {
 
     // ─── Build messages for Ollama ────────────────────────────────────────────
 
-    buildMessagesForOllama(channelId) {
-        const history    = this.getConvoHistory(channelId)
-        const rawContext = this.getRawContext(channelId)
+    buildMessagesForOllama(channelId, systemPromptOverride = null, opts = {}) {
+        const { skipHistory = false, skipRawContext = false } = opts
 
-        const systemMessages = [{ role: "system", content: SYSTEM_PROMPT }]
+        const systemMessages = [{ 
+            role: "system", 
+            content: systemPromptOverride ?? SYSTEM_PROMPT
+        }]
 
-        if (rawContext.length) {
-            systemMessages.push({
-                role: "system",
-                content: `RECENT CHAT (last ${rawContext.length} messages from all users in this channel):\n${rawContext.join("\n")}`
-            })
+        if (!skipRawContext) {
+            const rawContext = this.getRawContext(channelId)
+            if (rawContext.length) {
+                systemMessages.push({
+                    role: "system",
+                    content: `RECENT CHAT (last ${rawContext.length} messages from all users in this channel):\n${rawContext.join("\n")}`
+                })
+            }
         }
+
+        const history = skipHistory ? [] : this.getConvoHistory(channelId)
 
         if (history.length) {
             systemMessages.push({
@@ -739,14 +844,14 @@ export class HytaleAIChat {
 
     // ─── Tool loop ────────────────────────────────────────────────────────────
 
-    async runToolLoop(channelId) {
+    async runToolLoop(channelId, systemPromptOverride = null, opts = {}) {
         const seenCalls   = new Map()
         let pendingGifUrl = null
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
             log(`🔄 [LOOP ${i + 1}]`)
 
-            const msg = await this.sendToOllama(this.buildMessagesForOllama(channelId))
+          const msg = await this.sendToOllama(this.buildMessagesForOllama(channelId, systemPromptOverride, opts))
             if (!msg) return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
 
             const content = (msg.content ?? "").trim()
@@ -833,7 +938,7 @@ export class HytaleAIChat {
 
     // ─── Shared entry point ───────────────────────────────────────────────────
 
-    async handleMessage(channelId, rawInput, logPrefix) {
+   async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}) {
         const clean = this.sanitizeInput(rawInput)
         if (!clean) return null
         log(`\n💬 [${logPrefix}] ${clean}`)
@@ -843,10 +948,12 @@ export class HytaleAIChat {
             if (this.opts.summarizeEvery > 0 && ++this.userMessageCount % this.opts.summarizeEvery === 0) {
                 await this.summarizeConversationAndStore(channelId)
             }
-            return this.runToolLoop(channelId)
+               return this.runToolLoop(channelId, systemPromptOverride, opts)
         })
     }
 
-    chat(channelId, userInput)    { return this.handleMessage(channelId, userInput,  "USER PROMPT") }
+chat(channelId, userInput, systemPromptOverride = null, opts = {}) {
+    return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts)
+}
     buttIn(channelId, rawMessage) { return this.handleMessage(channelId, rawMessage, "BUTT IN") }
 }

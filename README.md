@@ -1,7 +1,7 @@
-# DiscordHyLily
+# My Daughter Lily (WIP)
 
-- Discord bot to talk with my daughter Lily!
-<sub><sup>initially supposed to be a Hytale bot thats why the Hy in her name.</sup></sub>
+- My daughter Lily, capable of using discord, playing minecraft, and beating your ahh.
+- Related: https://github.com/Izan-Sola/Lily-Minecraft
 
 ## Stuff used
 

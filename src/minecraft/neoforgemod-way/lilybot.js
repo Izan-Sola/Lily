@@ -1,8 +1,8 @@
 import { WebSocket } from "ws"
-import { LilyStateMachine } from "./states.js"
+import { StateController } from "./state-machine/StateController.js"
 
 let ws = null
-let stateMachine = null
+let stateController = null
 let aiInstance = null
 let reconnectTimer = null
 let wsHost = null
@@ -22,17 +22,16 @@ function _connect() {
         console.log("⛏️ [MC] Connected to LilyBotBridge")
         clearTimeout(reconnectTimer)
 
-        // init state machine on connect
-        if (!stateMachine) {
-            stateMachine = new LilyStateMachine({
+        if (!stateController) {
+            stateController = new StateController(mcSend, {
                 followTarget: process.env.MC_FOLLOW_TARGET ?? "shinyshadow_",
                 followDistance: 3,
                 attackRange: 4,
                 lowHpThreshold: 6,
-                tickMs: 500,
+                tickMs: 150,
             })
         }
-        stateMachine.start()
+        stateController.start()
     })
 
     ws.on("message", async (data) => {
@@ -45,9 +44,9 @@ function _connect() {
     })
 
     ws.on("close", () => {
-        console.log("⛏️ [MC] Disconnected, reconnecting in 5s...")
-        stateMachine?.stop()
-        reconnectTimer = setTimeout(_connect, 5000)
+        console.log("⛏️ [MC] Disconnected, reconnecting in 15s...")
+        stateController?.stop()
+        reconnectTimer = setTimeout(_connect, 15000)
     })
 
     ws.on("error", err => {
@@ -57,7 +56,6 @@ function _connect() {
 
 async function _handleEvent(event) {
     switch (event.type) {
-
         case "chat": {
             console.log(`⛏️ [MC CHAT] ${event.player}: ${event.message}`)
             aiInstance?.pushRawMessage("minecraft", event.player, event.message)
@@ -81,7 +79,6 @@ async function _handleEvent(event) {
         }
 
         case "players_list": {
-            // format: "name:x,y,z,hp=N;name:x,y,z,hp=N;"
             const players = {}
             if (event.players) {
                 event.players.split(";").filter(Boolean).forEach(entry => {
@@ -95,23 +92,33 @@ async function _handleEvent(event) {
                             z: parseFloat(parts[2]),
                             hp: parseFloat((parts[3] ?? "hp=20").split("=")[1] ?? "20")
                         }
-                    } catch { /* malformed entry, skip */ }
+                    } catch { /* skip malformed */ }
                 })
             }
-            stateMachine?.updatePlayers(players)
+            stateController?.updatePlayers(players)
             break
         }
 
         case "lily_state": {
-            stateMachine?.updateLilyState(
+            stateController?.updateLilyState(
                 { x: event.x, y: event.y, z: event.z },
                 event.hp ?? 20
             )
             break
         }
+
         case "hostiles": {
-            const hostiles = event.hostiles ?? []
-            stateMachine?.updateHostiles(hostiles)
+            stateController?.updateHostiles(event.hostiles ?? [])
+            break
+        }
+
+        case "set_duel_target": {
+            stateController?.setDuelTarget(event.target)
+            break
+        }
+
+        case "set_follow_target": {
+            stateController?.setFollowTarget(event.target)
             break
         }
 
@@ -130,7 +137,6 @@ async function _handleEvent(event) {
 }
 
 // ─── Send helpers ─────────────────────────────────────────────────────────────
-
 export function mcSend(type, data = {}) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn(`⛏️ [MC] WS not ready, dropping: ${type}`)
@@ -146,16 +152,15 @@ export function mcGetScoreboard() { mcSend("get_scoreboard") }
 
 export function stopMinecraftBot() {
     clearTimeout(reconnectTimer)
-    stateMachine?.stop()
+    stateController?.stop()
     ws?.close()
     ws = null
-    stateMachine = null
+    stateController = null
 }
 
-export function getStateMachine() { return stateMachine }
+export function getStateController() { return stateController }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function _splitMessage(text, limit = 250) {
     const words = text.split(" ")
     const chunks = []

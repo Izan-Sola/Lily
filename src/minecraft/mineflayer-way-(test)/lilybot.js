@@ -37,14 +37,14 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
         mcBot.pathfinder.goals = goals
 
         // start state machine
-        stateMachine = new LilyStateMachine(mcBot, {
-            followTarget: "ShinyShadow_",
+        const stateController = new StateController(mcSend, {
+            followTarget: 'shinyshadow_',
             followDistance: 3,
-            attackRange: 5,
+            attackRange: 4,
             lowHpThreshold: 6,
-            tickMs: 1000,
-        }, goals)
-        stateMachine.start()
+            tickMs: 500
+        })
+        stateController.start()
     })
 
     mcBot.on("chat", async (sender, message) => {
@@ -72,11 +72,11 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
             }
         }
     })
-mcBot.on("kicked", reason => {
-    console.error("⛏️ [MC] Kicked:", JSON.stringify(reason, null, 2))
-    stateMachine?.stop()
-    mcBot = null
-})
+    mcBot.on("kicked", reason => {
+        console.error("⛏️ [MC] Kicked:", JSON.stringify(reason, null, 2))
+        stateMachine?.stop()
+        mcBot = null
+    })
     mcBot.on("death", () => {
         console.log("⛏️ [MC] Bot died, respawning...")
         mcBot.respawn()

@@ -79,7 +79,7 @@ export class DuelingState {
         }
 
         // Don't send a new prompt while waiting for ability to finish or AI to respond
-        if (this.busy || now < this.nextPromptAt / 2) return;
+        if (this.busy || now < this.nextPromptAt / 1.25) return;
 
         this.busy = true;
         this._sendPrompt(targetName).finally(() => {

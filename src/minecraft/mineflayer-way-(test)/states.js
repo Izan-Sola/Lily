@@ -124,7 +124,7 @@ export class LilyStateMachine {
         const dist = this.bot.entity.position.distanceTo(this.target.position)
 
         // look at target always
-        await this.bot.lookAt(this.target.position.offset(0, this.target.height ?? 1.6, 0))
+        await this.bot.lookAt(this.target.position.offset(0, this.target.height + 1 ?? 1.6, 0))
 
         if (dist <= 2.5) {
             // close enough — swing

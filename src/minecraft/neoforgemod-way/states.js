@@ -28,7 +28,7 @@ export class LilyStateMachine {
             followDistance:  3,
             attackRange:     4,
             lowHpThreshold:  6,
-            tickMs:          500,
+            tickMs:          150,
             ...opts
         }
 
@@ -108,7 +108,7 @@ export class LilyStateMachine {
                         const target = this.players[this.duelTarget]
                         if (target) {
                             // Only look at the target – no movement, no attacking, no sneaking
-                            mcSend("look_at", { x: target.x, y: target.y + 1, z: target.z })
+                            mcSend("look_at", { x: target.x, y: target.y + 1.5, z: target.z })
                             // Ensure we aren't moving or sneaking
                             if (this.lastMove) this._sendStop()
                             if (this._isSneaking) this._setSneaking(false)
@@ -132,7 +132,7 @@ export class LilyStateMachine {
                 // flee toward follow target while recovering
                 const target = this._getFollowTarget()
                 if (target) {
-                    mcSend("look_at", { x: target.x, y: target.y + 1, z: target.z })
+                    mcSend("look_at", { x: target.x, y: target.y + 1.5, z: target.z })
                     this._moveToward(target)
                 }
                 return
@@ -155,7 +155,7 @@ export class LilyStateMachine {
             if (hostile) {
                 if (this.state !== State.ATTACKING) {
                     this._transition(State.ATTACKING)
-                    //  this.attackInterval = setInterval(() =>  mcSend("attack", { mode: "once" }), 1200)
+                    this.attackInterval = setInterval(() =>  mcSend("attack", { mode: "once" }), 1200)
                 //     mcSend("attack", { mode: "once" })
                 //     setTimeout(() => mcSend("attack", { mode: "once" }), 500)
                 //     // mcSend("sneak")
@@ -168,7 +168,7 @@ export class LilyStateMachine {
                 }
 
                 // always track the hostile with look
-                mcSend("look_at", { x: hostile.x, y: hostile.y + 1, z: hostile.z })
+                mcSend("look_at", { x: hostile.x, y: hostile.y + 1.5, z: hostile.z })
 
                 const dist = this._dist(this.lilyPos, hostile)
                 if (dist > 2.5) {
@@ -200,7 +200,7 @@ export class LilyStateMachine {
                 if (this.state !== State.FOLLOWING) {
                     this._transition(State.FOLLOWING)
                 }
-                mcSend("look_at", { x: target.x, y: target.y + 1, z: target.z })
+                mcSend("look_at", { x: target.x, y: target.y + 1.5, z: target.z })
                 this._moveToward(target)
             } else {
                 // close enough — idle
@@ -309,7 +309,7 @@ _setSneaking(value) {
     _transition(newState) {
         if (this.state === newState) return
         console.log(`⚙️ [STATE] ${this.state} → ${newState}`)
-        // clearInterval(this.attackInterval)
+        clearInterval(this.attackInterval)
         this.state = newState
     }
 

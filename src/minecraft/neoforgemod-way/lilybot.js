@@ -103,6 +103,7 @@ function _connect() {
                 attackRange: 4,
                 lowHpThreshold: 6,
                 tickMs: 150,
+                ai: aiInstance
             })
             // IMPORTANT: Load the ability stats from our JSON into the controller
             stateController.updateAbilityStats(staticAbilities)
@@ -112,7 +113,6 @@ function _connect() {
 
         // Request ability data from the mod after connection
         requestAbilityData()
-        // REMOVED: loadAbilityStatsFromFile() – that function does not exist
     })
 
     ws.on("message", async (data) => {
@@ -219,9 +219,8 @@ async function _handleEvent(event) {
         case "ability_data": {
             mergeAbilityData(event.abilities)
             if (stateController?.updateAbilityStats) {
-                stateController.updateAbilityStats(event.abilities)
+                stateController.updateAbilityStats(staticAbilities)  // pass the fully merged static data
             }
-            break
         }
 
         case "set_duel_target": {

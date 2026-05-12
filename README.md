@@ -1,6 +1,6 @@
 # My Daughter Lily (WIP)
 
-- My daughter Lily, capable of using discord, playing minecraft, and beating your ahh.
+- My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
 - Related: https://github.com/Izan-Sola/Lily-Minecraft
 
 ## Stuff used

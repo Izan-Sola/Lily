@@ -22,7 +22,7 @@ export class StateController {
             followDistance:  3,
             attackRange:     4,
             lowHpThreshold:  6,
-            tickMs:          500,
+            tickMs:          150,
             ...opts
         }
 
@@ -32,7 +32,7 @@ export class StateController {
         this.lilyHp     = 20
         this.hostiles   = []
         this.duelTarget = null
-
+        this.ai = opts.ai
         // Ability tracking
         this.bindings         = {}        // slot -> ability name
         this.abilityCooldowns = {}        // ability name -> expiry timestamp (ms)
@@ -127,7 +127,7 @@ export class StateController {
     // Ability-related methods
     bindAbility(slot, abilityName) {
         this.bindings[slot] = abilityName
-        console.log(`[BIND] Bound ${abilityName} to slot ${slot}`)
+        // console.log(`[BIND] Bound ${abilityName} to slot ${slot}`)
     }
 
     setAbilityCooldown(abilityName, durationMs) {

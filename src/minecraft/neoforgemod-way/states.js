@@ -116,13 +116,14 @@ export class LilyStateMachine {
                         } else {
                             // Target vanished – end duel automatically
                             console.log(`⚔️ [DUEL] Target ${this.duelTarget} left, ending duel`)
+                            this.ctx.mcSend('unsprint', {});
                             this.setDuelTarget(null)
                             return
                         }
                     }
             // ── Low HP — stop everything and recover ──
             if (this.lilyHp <= this.opts.lowHpThreshold) {
-                if (this.state !== State.RECOVERING) {
+                if (this.state !== State.RECOVERING && this.state !== State.DUELING) {
                     this._transition(State.RECOVERING)
                     this._cancelSneakHold()
                     this._setSneaking(false)

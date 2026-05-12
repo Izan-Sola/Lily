@@ -1,39 +1,86 @@
-// duelPromptBuilder.js
 function cleanName(raw) {
-    return raw.replace(/§[0-9a-fk-orxA-FK-ORX]/g, '').replace(/^[>\s]+/, '').trim();
+    return raw
+        .replace(/§[0-9a-fk-orxA-FK-ORX]/g, '')
+        .replace(/^[>\s]+/, '')
+        .trim()
 }
 
 export function buildDuelPrompt(ctx, opponentName) {
+
     const opponent = ctx.players[opponentName]
-    if (!opponent) return "Opponent not found."
 
-    const now = Date.now()
-    const lilyPos = ctx.lilyPos
-    if (!lilyPos) return "Lily position unknown."
-
-    const dist = Math.hypot(lilyPos.x - opponent.x, lilyPos.z - opponent.z)
-    const distInt = Math.floor(dist)
-
-    let abilitiesText = ""
-    for (let slot = 1; slot <= 9; slot++) {
-        const raw = ctx.bindings[slot]
-        if (!raw) continue
-        const ability = cleanName(raw)  // clean before lookup
-        const stats = ctx.abilityStats[ability] || { range: 10, cooldown: 0 }
-        // console.log(`[DEBUG] ${ability}:`, ctx.abilityStats[ability])
-        const remaining = ctx.abilityCooldowns[ability] ? Math.max(0, ctx.abilityCooldowns[ability] - now) : 0
-        const remainingSec = (remaining / 1000).toFixed(1)
-        const cooldownStatus = remaining > 0 ? `${remainingSec}s` : "ready"
-        abilitiesText += `Slot ${slot}: ${ability} - Range: ${stats.range}, Cooldown: ${cooldownStatus}\n`
+    if (!opponent) {
+        return "Opponent not found."
     }
 
+    const now = Date.now()
+
+    const lilyPos = ctx.lilyPos
+
+    if (!lilyPos) {
+        return "Lily position unknown."
+    }
+
+    const dist = Math.hypot(
+        lilyPos.x - opponent.x,
+        lilyPos.z - opponent.z
+    )
+
+    const distInt = Math.floor(dist)
+
     const opponentHp = opponent.hp
-    const oppX = opponent.x, oppY = opponent.y, oppZ = opponent.z
-    const lilyHp = ctx.lilyHp
+
+    const oppX = opponent.x
+    const oppY = opponent.y
+    const oppZ = opponent.z
+
+    const lilyHp = ctx.lilyHp ?? 20
+
+    let abilitiesText = ""
+
+    for (let slot = 1; slot <= 9; slot++) {
+
+        const raw = ctx.bindings[slot]
+
+        if (!raw) continue
+
+        const ability = cleanName(raw)
+
+        const stats =
+            ctx.abilityStats[ability] || {
+                range: 10,
+                cooldown: 0,
+                description: "No description."
+            }
+
+        const remaining =
+            ctx.abilityCooldowns[ability]
+                ? Math.max(
+                    0,
+                    ctx.abilityCooldowns[ability] - now
+                )
+                : 0
+
+        const remainingSec =
+            (remaining / 1000).toFixed(1)
+
+        const cooldownStatus =
+            remaining > 0
+                ? `${remainingSec}s`
+                : "ready"
+
+        abilitiesText +=
+            `Slot ${slot}: ${ability} - ` +
+            `Range: ${stats.range}, ` +
+            `Cooldown: ${cooldownStatus}, ` +
+            `Description: ${stats.description}\n`
+    }
 
     return `
 You are currently in a bending duel with ${opponentName}.
 
+# DIFFICULTY
+${ctx.duelDifficulty || "medium"}
 # AVAILABLE ABILITIES
 ${abilitiesText}
 
@@ -47,13 +94,27 @@ ${abilitiesText}
 ## Your Status
 - Health: ${lilyHp}/20
 - Location: (${Math.floor(lilyPos.x)}, ${Math.floor(lilyPos.y)}, ${Math.floor(lilyPos.z)})
+    # INSTRUCTIONS
+    - Based on the above information, decide your next action.
+    - You may use 1, 2, or 3 abilities in a single turn (depending on difficulty: easy=1, medium=2, hard=3).
+    - Reply ONLY with JSON in this format:
 
-# INSTRUCTIONS
-- Based on the above information, decide your next action. You can choose to use an ability (if off cooldown).
-- Reply ONLY with the specified JSON format:
-  { "slot": slot_number, "move_to": { "x": new_x, "z": new_z } }
-        - "slot" is the number of the ability slot you want to use (from 1 to 9).
-        - "move_to" is the coordinate you want to move toward (or same as current to stay in place).
+    For a single ability:  { "slot": slot_number, "move_to": {"x": 100, "z": 200} }
+    For two abilities:     { "slot": [slot_number, another_slot_number], "move_to": {"x": 100, "z": 200} }
+    For three abilities:   { "slot": [slot_number, another_slot_number, yet_another_slot_number], "move_to": {"x": 100, "z": 200} }
+
+    - "slot" is a number or an array of numbers (1 to 9).
+    - "move_to" is the coordinate you want to move toward (or same as current to stay in place).
+    - All abilities you list will be executed in that order.
+    - If an ability is on cooldown, do NOT include it.
+    - Do not add any extra text, only the JSON object.
+
+# STRATEGY TIPS
+- Prioritize abilities when opponent is far, close-range when near.
+- Don't use the same slot repeatedly; mix them.
+- Circle to the left or right, keep 5‑10 blocks distance.
+- If your health is low, retreat while waiting for cooldowns.
+
 # STRATEGY TIPS
 - Use long-range abilities when opponent is far, close-range when near.
 - Dont use same slot over and over, use variety to keep opponent guessing.

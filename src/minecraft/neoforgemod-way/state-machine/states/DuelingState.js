@@ -52,6 +52,8 @@ export class DuelingState {
         this.ctx.move.stop();
         this.nextPromptAt = 0;
         this.busy = false;
+        this.moveTarget = null;
+        this.lastMoveUpdate = 0;
     }
 
     onTick() {
@@ -70,16 +72,33 @@ export class DuelingState {
         const now = Date.now();
 
         // Always look at opponent
-        this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1.5, z: target.z });
+        this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1, z: target.z });
+
+        // Continuously update movement direction toward moveTarget every second
+        if (this.moveTarget && this.ctx.lilyPos && now - this.lastMoveUpdate >= 1000) {
+            this.lastMoveUpdate = now;
+            const dx = this.moveTarget.x - this.ctx.lilyPos.x;
+            const dz = this.moveTarget.z - this.ctx.lilyPos.z;
+            const distToTarget = Math.hypot(dx, dz);
+
+            if (distToTarget < 1.0) {
+                // Reached destination, stop moving
+                this.ctx.mcSend('move', { direction: 'stop' });
+                this.moveTarget = null;
+            } else {
+                const dir = this._getMoveDirection(this.ctx.lilyPos, this.moveTarget, target);
+                if (dir) this.ctx.mcSend('move', { direction: dir });
+            }
+        }
 
         // Keep duel data fresh
-        if (now - this.lastRequest >= this.requestInterval) {
+        const requestInterval = this.lastAbilityDuration ? this.lastAbilityDuration / 2 : 1000;
+        if (now - this.lastRequest >= requestInterval) {
             this.lastRequest = now;
             this.ctx.mcSend('get_duel_data', { opponent: targetName });
         }
 
-        // Don't send a new prompt while waiting for ability to finish or AI to respond
-        if (this.busy || now < this.nextPromptAt / 1.25) return;
+        if (this.busy || now < this.nextPromptAt) return;
 
         this.busy = true;
         this._sendPrompt(targetName).finally(() => {
@@ -133,23 +152,53 @@ export class DuelingState {
                 const distToGoal = Math.hypot(dx, dz);
 
                 if (distToGoal <= 0.75) {
+                    // Already close enough – stop moving
                     this.ctx.mcSend('move', { direction: 'stop' });
+                    this.moveTarget = null;
                 } else {
-                    const dir = this._getMoveDirection(this.ctx.lilyPos, action.move_to, target);
-                    if (dir) {
-                        this.ctx.mcSend('move', { direction: dir });
-                    }
+                    // Send target coordinates – Java will continuously adjust
+                    this.ctx.mcSend('move_to', { x: action.move_to.x, z: action.move_to.z });
+                    this.moveTarget = action.move_to;   // store for local use (optional)
                 }
             }
 
             // Use ability slot
-            const slot = action.slot;
-            if (slot) {
-                triggerCooldown(this.ctx, slot);
-                this._executeAbility(slot);
-                this.nextPromptAt = Date.now() + this._getAbilityDuration(slot);
+            // const slot = action.slot;
+            // if (slot) {
+            //     triggerCooldown(this.ctx, slot);
+            //     this._executeAbility(slot);
+            //     this.nextPromptAt = Date.now() + this._getAbilityDuration(slot);
+            // } else {
+            //     this.nextPromptAt = Date.now() + this._getAbilityDuration(slot);
+            // }
+            const slots = Array.isArray(action.slot)
+                ? action.slot
+                : action.slot
+                    ? [action.slot]
+                    : []
+
+            if (slots.length > 0) {
+                let maxDuration = 0
+                let accumulatedDelay = 0;
+
+                for (const slot of slots) {
+                    const duration =
+                        this._getAbilityDuration(slot);
+                    setTimeout(() => {
+                        triggerCooldown(this.ctx, slot);
+                        this._executeAbility(slot);
+
+                    }, accumulatedDelay);
+                    accumulatedDelay += duration + 650;
+                    if (accumulatedDelay > maxDuration) {
+                        maxDuration = accumulatedDelay;
+                    }
+                }
+                this.nextPromptAt =
+                    Date.now() + maxDuration
             } else {
-               this.nextPromptAt = Date.now() + this._getAbilityDuration(slot);
+                this.nextPromptAt =
+                    Date.now() + 1000
             }
 
         } catch (err) {
@@ -223,6 +272,7 @@ export class DuelingState {
 
     onExit() {
         console.log('[Dueling] Duel ended');
+        this.ctx.mcSend('unsprint', {});
         this.busy = false;
     }
 }

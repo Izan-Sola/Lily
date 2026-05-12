@@ -14,6 +14,7 @@ export class IdleState {
         // 1. Duel target exists?
         if (this.ctx.duelTarget && this.ctx.players[this.ctx.duelTarget]) {
             this.ctx.transitionTo('DUELING')
+            this.ctx.mcSend('sprint', {});
             return
         }
 

@@ -98,6 +98,7 @@ export class StateController {
                 this.duelTarget = null
                 if (this.currentStateName === State.DUELING) this.transitionTo(State.IDLE)
                 console.log('[DUEL] Duel ended')
+                this.ctx.mcSend('unsprint', {});
             }
             return
         }

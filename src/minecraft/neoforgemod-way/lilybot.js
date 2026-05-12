@@ -1,7 +1,7 @@
 import { WebSocket } from "ws"
 import { StateController } from "./state-machine/StateController.js"
 import { MINECRAFT_SYSTEM_PROMPT } from '../../ai/ollama.js'
-import fs from 'fs'
+import fs, { stat } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -144,7 +144,7 @@ async function _handleEvent(event) {
             const lower = event.message.toLowerCase()
             const addressed = lower.includes("lily") || lower.includes("hylily")
 
-            if (addressed || Math.random() < 0.05) {
+            if (addressed || Math.random() < 0.05 && stateController?.currentStateName !== State.DUELING) {
                 try {
                     const formatted = addressed
                         ? `[${event.player}] says to you in Minecraft: ${event.message}`
@@ -224,7 +224,16 @@ async function _handleEvent(event) {
         }
 
         case "set_duel_target": {
+
             stateController?.setDuelTarget(event.target)
+
+            stateController.duelDifficulty =
+                event.difficulty || "medium"
+
+            console.log(
+                `[DUEL] Difficulty: ${stateController.duelDifficulty}`
+            )
+
             break
         }
 

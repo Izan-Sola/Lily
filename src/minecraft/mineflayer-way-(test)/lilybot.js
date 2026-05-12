@@ -42,7 +42,7 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
             followDistance: 3,
             attackRange: 4,
             lowHpThreshold: 6,
-            tickMs: 500
+            tickMs: 150
         })
         stateController.start()
     })

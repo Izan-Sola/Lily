@@ -22,7 +22,7 @@ export class StateController {
             followDistance:  3,
             attackRange:     4,
             lowHpThreshold:  6,
-            tickMs:          150,
+            tickMs:          75,
             ...opts
         }
 
@@ -60,6 +60,8 @@ export class StateController {
         if (this.tickInterval) return
         console.log('[STATE] Controller started')
         this.tickInterval = setInterval(() => this._tick(), this.opts.tickMs)
+
+        
     }
 
     stop() {

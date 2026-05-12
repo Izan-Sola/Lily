@@ -102,7 +102,7 @@ function _connect() {
                 followDistance: 3,
                 attackRange: 4,
                 lowHpThreshold: 6,
-                tickMs: 150,
+                tickMs: 75,
                 ai: aiInstance
             })
             // IMPORTANT: Load the ability stats from our JSON into the controller

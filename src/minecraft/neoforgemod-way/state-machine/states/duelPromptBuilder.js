@@ -101,7 +101,7 @@ ${abilitiesText}
 
     For a single ability:  { "slot": slot_number, "move_to": {"x": 100, "z": 200} }
     For two abilities:     { "slot": [slot_number, another_slot_number], "move_to": {"x": 100, "z": 200} }
-    For three abilities:   { "slot": [slot_number, another_slot_number, yet_another_slot_number], "move_to": {"x": 100, "z": 200} }
+    For three abilities:   { "slot": [slot_number, another_slot_number, other_slot_number], "move_to": {"x": 100, "z": 200} }
 
     - "slot" is a number or an array of numbers (1 to 9).
     - "move_to" is the coordinate you want to move toward (or same as current to stay in place).

@@ -28,7 +28,7 @@ export class LilyStateMachine {
             followDistance:  3,
             attackRange:     4,
             lowHpThreshold:  6,
-            tickMs:          150,
+            tickMs:          75,
             ...opts
         }
 

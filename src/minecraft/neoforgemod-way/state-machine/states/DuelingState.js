@@ -290,3 +290,47 @@ function triggerCooldown(ctx, slot) {
     ctx.abilityCooldowns[ability] = Date.now() + stats.cooldown;
     console.log(`[Cooldown] ${ability} on cooldown for ${stats.cooldown}ms`);
 }
+/**
+ * DUELING STATE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * 1v1 bending combat against a specific player target. On each tick, looks at
+ * the opponent and periodically sends a prompt to the AI with the full combat
+ * context. The AI responds with JSON deciding which ability slot(s) to use and
+ * where to move. Abilities are executed via fire_pk_event (PK Bukkit events).
+ *
+ * LIFECYCLE:
+ *   onEnter  → stops movement and sneak, resets prompt timing
+ *   onTick   → looks at opponent, handles movement toward moveTarget,
+ *              requests fresh duel data, fires AI prompt if ready
+ *   onExit   → clears busy flag, sends unsprint
+ *
+ * KEY VARIABLES:
+ *   this.ctx.duelTarget          → name of the player being dueled, e.g. "shinyshadow_"
+ *   this.ctx.players             → { name: { x, y, z, hp } } for all online players
+ *   this.ctx.bindings            → { slot: abilityName } e.g. { 1: "FireBall", 2: "FireShots" }
+ *   this.ctx.abilityStats        → { abilityName: { range, cooldown, actions, actionTimes, description } }
+ *                                  e.g. { FireBall: { range: 20, cooldown: 1500, actions: ["click:left:1"], actionTimes: [200] } }
+ *   this.ctx.abilityCooldowns    → { abilityName: expiryTimestamp } e.g. { FireBall: 1716123456789 }
+ *   this.ctx.duelDifficulty      → "easy" | "medium" | "hard" — affects how many slots AI can pick
+ *   this.nextPromptAt            → timestamp (ms) before which no new AI prompt is sent
+ *   this.busy                    → boolean, true while waiting for AI response
+ *   this.lastRequest             → timestamp of last get_duel_data request
+ *   this.requestInterval         → how often duel data is refreshed, default 2000ms
+ *   this.moveTarget              → { x, z } destination Lily is moving toward, or null
+ *   this.lastMoveUpdate          → timestamp of last movement direction update
+ *
+ * AI RESPONSE FORMAT:
+ *   Single slot:  { "slot": 3, "move_to": { "x": 100, "z": 200 } }
+ *   Multi slot:   { "slot": [3, 7], "move_to": { "x": 100, "z": 200 } }
+ *
+ * ACTION EXECUTION:
+ *   Each ability's actions array e.g. ["click:left:1", "sneak:hold:1"]
+ *   is expanded into steps and fired with timeOffset delays using _fireAction()
+ *   click:left  → mcSend("attack", { mode: "once" })
+ *   click:right → mcSend("use",    { mode: "once" })
+ *   sneak:hold  → mcSend fire_pk_event sneak, then unsneak after actionTime
+ *   sneak:tap   → fire_pk_event sneak + unsneak 50ms later
+ *
+ * TRANSITIONS OUT:
+ *   → IDLE  when duelTarget is null or player leaves
+ */

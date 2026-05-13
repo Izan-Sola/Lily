@@ -45,3 +45,26 @@ export class AttackingState {
     console.log('[Attacking] Exited')
   }
 }
+/**
+ * ATTACKING STATE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Activated when a hostile mob is detected within attackRange blocks.
+ * Handles melee combat: looks at the hostile, closes the gap, and swings.
+ *
+ * LIFECYCLE:
+ *   onEnter  → starts a repeating attack interval (every 1500ms)
+ *   onTick   → called every tickMs (75ms) — tracks hostile position, moves toward it
+ *   onExit   → clears the attack interval, stops movement
+ *
+ * KEY VARIABLES:
+ *   this.ctx                     → StateController instance (shared state)
+ *   this.attackInterval          → setInterval handle, fires attack every 1500ms
+ *   this.ctx.nearestHostile()    → returns nearest hostile entity or null
+ *                                  e.g. { x: 100, y: 64, z: 200, type: "zombie", id: 42, hp: 10 }
+ *   this.ctx.lilyPos             → Lily's current position { x, y, z }
+ *   this.ctx._dist(a, b)         → euclidean distance between two {x,y,z} points
+ *   dist > 2.5                   → threshold to close gap vs stand and swing
+ *
+ * TRANSITIONS OUT:
+ *   → IDLE  when no hostile is found within range on tick
+ */

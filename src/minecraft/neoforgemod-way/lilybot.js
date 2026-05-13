@@ -296,3 +296,43 @@ function _splitMessage(text, limit = 250) {
     if (current) chunks.push(current.trim())
     return chunks
 }
+/**
+ * STATE CONTROLLER
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Central orchestrator for Lily's in-game behavior. Owns all shared game state,
+ * manages state transitions, runs the main tick loop, and provides helper
+ * methods used by individual states.
+ *
+ * ARCHITECTURE:
+ *   Each behavior is a separate state class (IdleState, FollowingState, etc.)
+ *   The controller delegates onTick() to the current active state every tickMs.
+ *   States call back into the controller via this.ctx for shared data and helpers.
+ *
+ * KEY OPTIONS (opts):
+ *   followTarget    → username to follow, default "shinyshadow_"
+ *   followDistance  → blocks before following kicks in, default 3
+ *   attackRange     → blocks to scan for hostiles, default 4
+ *   lowHpThreshold  → HP floor for recovering state, default 6
+ *   tickMs          → tick interval in ms, default 75
+ *
+ * SHARED STATE:
+ *   this.players         → { name: { x, y, z, hp } } updated every tick from mod
+ *                          e.g. { shinyshadow_: { x: 100, y: 64, z: 200, hp: 20 } }
+ *   this.lilyPos         → { x, y, z } Lily's position, null until first update
+ *   this.lilyHp          → Lily's HP 0–20, default 20
+ *   this.hostiles        → [{ x, y, z, type, id, hp }] nearby hostile entities
+ *                          e.g. [{ x: 105, y: 64, z: 202, type: "zombie", id: 42, hp: 10 }]
+ *   this.duelTarget      → player name being dueled or null
+ *   this.bindings        → { slot: rawAbilityName } e.g. { 1: "§cFireBall", 2: "FireShots" }
+ *   this.abilityCooldowns → { abilityName: expiryMs } e.g. { FireBall: 1716123456789 }
+ *   this.abilityStats    → { abilityName: { range, cooldown, actions, actionTimes, description } }
+ *
+ * HELPERS AVAILABLE TO STATES:
+ *   this.sneak           → SneakHelper — setSneaking(bool), cancelHold()
+ *   this.move            → MovementHelper — moveToward(from, to), stop()
+ *   this.mcSend(type, data) → sends WebSocket command to Java mod
+ *   this.getFollowTarget()  → returns players[followTarget] or null
+ *   this.nearestHostile()   → nearest hostile within attackRange or null
+ *   this._dist(a, b)        → Math.hypot distance between two {x,y,z} points
+ *   this.transitionTo(name) → triggers onExit → onEnter for state change
+ */

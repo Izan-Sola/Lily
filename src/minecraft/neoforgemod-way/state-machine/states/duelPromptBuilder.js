@@ -153,3 +153,38 @@ ${abilitiesText}
 // - Maintain optimal distance based on your abilities.
 // - If your health is low, consider retreating to a safer distance while waiting for cooldowns.
 // `
+
+/**
+ * DUEL PROMPT BUILDER
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Builds the text prompt sent to the AI model during a bending duel.
+ * Called by DuelingState._sendPrompt() every decision cycle.
+ * The AI receives this and must reply with ONLY a JSON action object.
+ *
+ * INPUT (from ctx — StateController):
+ *   ctx.players[opponentName]    → { x, y, z, hp } opponent position and health
+ *   ctx.lilyPos                  → { x, y, z } Lily's current position
+ *   ctx.lilyHp                   → Lily's current HP 0–20
+ *   ctx.bindings                 → { slot: rawAbilityName }
+ *                                  e.g. { 1: "§cFireBall", 2: "FireShots" }
+ *   ctx.abilityStats             → { abilityName: { range, cooldown, description } }
+ *   ctx.abilityCooldowns         → { abilityName: expiryTimestamp }
+ *                                  remaining = abilityCooldowns[name] - Date.now()
+ *   ctx.duelDifficulty           → "easy" | "medium" | "hard"
+ *
+ * PROMPT CONTENTS:
+ *   - Difficulty level
+ *   - All 9 ability slots with: name, range, cooldown status (ready / Xs), description
+ *   - Opponent HP, distance in blocks, XYZ position
+ *   - Lily HP, XYZ position
+ *   - Instructions: pick 1/2/3 slots based on difficulty, reply JSON only
+ *   - Strategy tips
+ *
+ * EXPECTED AI RESPONSE FORMAT:
+ *   { "slot": 3, "move_to": { "x": 100, "z": 200 } }
+ *   { "slot": [3, 7], "move_to": { "x": 100, "z": 200 } }
+ *
+ * HELPER:
+ *   cleanName(raw) → strips Minecraft color codes (§c etc) and leading >
+ *                    e.g. "§cFireBall" → "FireBall"
+ */

@@ -957,3 +957,72 @@ chat(channelId, userInput, systemPromptOverride = null, opts = {}) {
 }
     buttIn(channelId, rawMessage) { return this.handleMessage(channelId, rawMessage, "BUTT IN") }
 }
+/**
+ * OLLAMA AI CHAT — CORE AI MODULE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The brain of HyLily. Manages all communication with the local Ollama LLM,
+ * tool execution, memory databases, conversation history, and GIF search.
+ * Used by both the Discord bot and the Minecraft bot.
+ *
+ * EXPORTS:
+ *   HytaleAIChat class        → main AI interface
+ *   MINECRAFT_SYSTEM_PROMPT   → system prompt variant for in-game chat
+ *
+ * KEY OPTIONS (DEFAULT_OPTIONS):
+ *   model                    → Ollama model name, e.g. "Lily"
+ *   temperature              → 0.6
+ *   maxReplyTokens           → 2048
+ *   contextWindow            → 4096 tokens
+ *   maxConvoMessages         → 10 messages kept per channel in convo history
+ *   maxRawMessages           → 10 messages kept per channel in raw buffer
+ *   maxToolLoops             → 10 iterations before giving up
+ *   maxToolRepeats           → 4 identical tool calls before deduping
+ *   memoryDuplicateMinScore  → 0.9 cosine similarity to skip duplicate memory add
+ *   memoryQueryMinScore      → 0.4 minimum score for memory search results
+ *   memoryRemoveMinScore     → 0.70 minimum score to consider a match for removal
+ *   episodicQueryMinScore    → 0.45
+ *   episodicDuplicateScore   → 0.90
+ *   ollamaUrl                → "http://localhost:11434"
+ *   vectorDbUrl              → "http://localhost:8000" (Hytale wiki vector DB)
+ *   knowledgeDbUrl           → "http://localhost:8001" (factual memory DB)
+ *   episodicDbUrl            → "http://localhost:8002" (episodic memory DB)
+ *
+ * KEY MAPS (per instance):
+ *   convoHistories  → Map<channelId, Message[]>  Lily↔user interaction history
+ *                     Message: { role: "user"|"assistant"|"tool", content: string }
+ *   rawBuffers      → Map<channelId, string[]>   all raw chat from everyone
+ *                     e.g. ["shinyshadow_: hey lily", "helixer_: what up"]
+ *   channelLocks    → Map<channelId, boolean>    prevents race conditions
+ *   observeBuffer   → string[]  passive chat accumulator for background summarization
+ *
+ * TOOLS AVAILABLE:
+ *   query_memory_database    → factual memory search (ChromaDB via knowledgeDbUrl)
+ *   addto_memory_database    → store new fact
+ *   update_memory_database   → correct existing fact
+ *   remove_memory_database   → forget a fact
+ *   query_episodic_memory    → search past events/conversations
+ *   addto_episodic_memory    → store notable event with emotions/participants
+ *   query_hytale_wiki        → vector search Hytale wiki (vectorDbUrl)
+ *   send_gif                 → search KLIPY API, returns URL intercepted by bot.js
+ *   minecraft_action         → in-game actions (goto_player, mine_block, etc.)
+ *
+ * TOOL LOOP FLOW:
+ *   runToolLoop() iterates up to maxToolLoops:
+ *     1. sendToOllama() → get model response
+ *     2. Native tool_calls? → execute and push tool results to history
+ *     3. Embedded <tool_call> tags? → parse, execute, push tool_response
+ *     4. Malformed tag? → nudge model with correct format
+ *     5. Narration guard? → model mentioned tool name instead of calling it → retry
+ *     6. Real reply? → return { text, gifUrl }
+ *
+ * MEMORY FLOW:
+ *   summarizeEvery N messages → summarizeConversationAndStore() → episodicAdd()
+ *   observeEvery N messages   → summarizeAndStore() → episodicAdd()
+ *
+ * ENTRY POINTS:
+ *   chat(channelId, input, systemPromptOverride?, opts?)
+ *     → full AI response for direct mentions/replies
+ *   buttIn(channelId, input)
+ *     → same but for spontaneous butt-ins (no system prompt override)
+ *   Both return Promise<{ text: string, gifUrl: string|null }>
+ */

@@ -1,4 +1,5 @@
 import { buildDuelPrompt } from './duelPromptBuilder.js';
+import { getComboByName, getCombos, isComboAvailable, executeCombo } from './comboExecutor.js'
 
 export class DuelingState {
     constructor(ctx) {
@@ -7,6 +8,16 @@ export class DuelingState {
         this.lastRequest = 0;
         this.requestInterval = 2000;
         this.busy = false;
+    }
+    _isComboSlot(slot) {
+        return slot >= 10
+    }
+    _getComboForSlot(slot) {
+        const availableCombos = getCombos().filter(c =>
+            isComboAvailable(c, this.ctx.bindings, cleanName)
+        )
+        const idx = slot - 10
+        return availableCombos[idx] ?? null
     }
 
     _getAbilityDuration(slot) {
@@ -108,7 +119,7 @@ export class DuelingState {
 
     async _sendPrompt(targetName) {
         const prompt = buildDuelPrompt(this.ctx, targetName);
-        // console.log('[DUEL PROMPT]\n', prompt);
+        //  console.log('[DUEL PROMPT]\n', prompt);
 
         try {
             const response = await fetch("http://localhost:11434/api/chat", {
@@ -207,47 +218,48 @@ export class DuelingState {
         }
     }
 
-    _executeAbility(slot) {
-        //    console.log(`[Dueling] _executeAbility called with slot ${slot}`);
-        const raw = this.ctx.bindings[slot];
-        //    console.log(`[Dueling] raw binding: ${raw}`);
-        if (!raw) return;
-        const abilityName = cleanName(raw);
-        //    console.log(`[Dueling] abilityName: ${abilityName}`);
-        const stats = this.ctx.abilityStats[abilityName];
-        //    console.log(`[Dueling] stats:`, stats);
-        if (!stats?.actions?.length) return;
-
-        //   console.log(`[Dueling] Executing slot ${slot}: ${abilityName}`);
-
-        this.ctx.mcSend('hotbar', { slot });
-
-        const steps = [];
-        for (const actionStr of stats.actions) {
-            const [type, mode, countStr] = actionStr.split(':');
-            const count = parseInt(countStr ?? '1');
-            for (let i = 0; i < count; i++) {
-                steps.push({ type, mode });
-            }
+_executeAbility(slot) {
+    // ── Combo slot ──
+    if (this._isComboSlot(slot)) {
+        const combo = this._getComboForSlot(slot)
+        if (!combo) {
+            console.warn(`[Dueling] No combo found for virtual slot ${slot}`)
+            return
         }
-
-        let timeOffset = 0;
-        for (let i = 0; i < steps.length; i++) {
-            const step = steps[i];
-            const delay = timeOffset;
-            setTimeout(() => this._fireAction(step), delay);
-
-            if (step.type === 'sneak' && step.mode === 'hold') {
-                setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'unsneak' }), delay + (stats.actionTimes[i] ?? 200));
-            }
-
-            timeOffset += stats.actionTimes[i] ?? 200;
-        }
-
-        // timeOffset is now the total duration — use it directly instead of _getAbilityDuration
-        this.nextPromptAt = Date.now();
+        const duration = executeCombo(combo, this.ctx.bindings, cleanName, this.ctx.mcSend)
+        this.nextPromptAt = Date.now() + duration + 500
+        return
     }
 
+    // ── Normal ability slot ──
+    const raw = this.ctx.bindings[slot]
+    if (!raw) return
+    const abilityName = cleanName(raw)
+    const stats = this.ctx.abilityStats[abilityName]
+    if (!stats?.actions?.length) return
+
+    this.ctx.mcSend('hotbar', { slot })
+
+    const steps = []
+    for (const actionStr of stats.actions) {
+        const [type, mode, countStr] = actionStr.split(':')
+        const count = parseInt(countStr ?? '1')
+        for (let i = 0; i < count; i++) steps.push({ type, mode })
+    }
+
+    let timeOffset = 0
+    for (let i = 0; i < steps.length; i++) {
+        const step = steps[i]
+        const delay = timeOffset
+        setTimeout(() => this._fireAction(step), delay)
+        if (step.type === 'sneak' && step.mode === 'hold') {
+            setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'unsneak' }), delay + (stats.actionTimes[i] ?? 200))
+        }
+        timeOffset += stats.actionTimes[i] ?? 200
+    }
+
+    this.nextPromptAt = Date.now()
+}
     _fireAction(step) {
         console.log(`[FireAction] type: ${step.type} mode: ${step.mode}`);
         const { type, mode } = step;
@@ -267,6 +279,8 @@ export class DuelingState {
                 // left
                 this.ctx.mcSend('attack', { mode: 'once' });
             }
+        } else if (type === 'jump') {
+                 this.ctx.mcSend('jump', { mode: 'once' });
         }
     }
 

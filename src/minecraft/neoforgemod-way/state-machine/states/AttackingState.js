@@ -4,21 +4,25 @@ export class AttackingState {
     this.attackInterval = null
   }
 
-  onEnter() {
-    console.log('[Attacking] Engaging hostile')
-    // Start attack interval: every 1500ms
-    if (this.attackInterval) clearInterval(this.attackInterval)
-    this.attackInterval = setInterval(() => {
-      // Only attack if still in attacking state and have a valid hostile
-      if (this.ctx.currentStateName === 'ATTACKING') {
-        const hostile = this.ctx.nearestHostile()
-        if (hostile) {
-          this.ctx.mcSend('attack', { mode: 'once' })
-        }
-      }
-    }, 1500)
-  }
+  // onEnter() {
+  //   console.log('[Attacking] Engaging hostile')
+  //   // Start attack interval: every 1500ms
+  //   if (this.attackInterval) clearInterval(this.attackInterval)
+  //   this.attackInterval = setInterval(() => {
+  //     // Only attack if still in attacking state and have a valid hostile
+  //     if (this.ctx.currentStateName === 'ATTACKING') {
+  //       const hostile = this.ctx.nearestHostile()
+  //       if (hostile) {
+  //         this.ctx.mcSend('attack', { mode: 'once' })
+  //       }
+  //     }
+  //   }, 1500)
+  // }
+onEnter() {
+    console.log('[Attacking] Engaging hostile — testing FireKick combo')
 
+      setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'sneak' }),  200)
+}
   onTick() {
     const hostile = this.ctx.nearestHostile()
     if (!hostile) {

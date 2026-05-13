@@ -1,126 +1,99 @@
+import { getCombos, isComboAvailable } from './comboExecutor.js'
+
 function cleanName(raw) {
-    return raw
-        .replace(/§[0-9a-fk-orxA-FK-ORX]/g, '')
-        .replace(/^[>\s]+/, '')
-        .trim()
+    return raw.replace(/§[0-9a-fk-orxA-FK-ORX]/g, '').replace(/^[>\s]+/, '').trim()
 }
 
 export function buildDuelPrompt(ctx, opponentName) {
-
     const opponent = ctx.players[opponentName]
-
-    if (!opponent) {
-        return "Opponent not found."
-    }
+    if (!opponent) return "Opponent not found."
 
     const now = Date.now()
-
     const lilyPos = ctx.lilyPos
+    if (!lilyPos) return "Lily position unknown."
 
-    if (!lilyPos) {
-        return "Lily position unknown."
-    }
-
-    const dist = Math.hypot(
-        lilyPos.x - opponent.x,
-        lilyPos.z - opponent.z
-    )
-
+    const dist = Math.hypot(lilyPos.x - opponent.x, lilyPos.z - opponent.z)
     const distInt = Math.floor(dist)
 
-    const opponentHp = opponent.hp
-
-    const oppX = opponent.x
-    const oppY = opponent.y
-    const oppZ = opponent.z
-
-    const lilyHp = ctx.lilyHp ?? 20
-
+    // ── Normal abilities (slots 1-9) ──────────────────────────────────────────
     let abilitiesText = ""
-
     for (let slot = 1; slot <= 9; slot++) {
-
         const raw = ctx.bindings[slot]
-
         if (!raw) continue
 
         const ability = cleanName(raw)
+        const stats = ctx.abilityStats[ability] || { range: 10, cooldown: 0, description: "No description." }
 
-        const stats =
-            ctx.abilityStats[ability] || {
-                range: 10,
-                cooldown: 0,
-                description: "No description."
-            }
+        const remaining = ctx.abilityCooldowns[ability] ? Math.max(0, ctx.abilityCooldowns[ability] - now) : 0
+        const cooldownStatus = remaining > 0 ? `${(remaining / 1000).toFixed(1)}s` : "ready"
 
-        const remaining =
-            ctx.abilityCooldowns[ability]
-                ? Math.max(
-                    0,
-                    ctx.abilityCooldowns[ability] - now
-                )
-                : 0
-
-        const remainingSec =
-            (remaining / 1000).toFixed(1)
-
-        const cooldownStatus =
-            remaining > 0
-                ? `${remainingSec}s`
-                : "ready"
-
-        abilitiesText +=
-            `Slot ${slot}: ${ability} - ` +
-            `Range: ${stats.range}, ` +
-            `Cooldown: ${cooldownStatus}, ` +
-            `Description: ${stats.description}\n`
+        abilitiesText += `Slot ${slot}: ${ability} — Range: ${stats.range}, Cooldown: ${cooldownStatus}, Description: ${stats.description}\n`
     }
+
+    // ── Combos (virtual slots 10+) ────────────────────────────────────────────
+    let comboText = ""
+    const availableCombos = []
+    let virtualSlot = 10
+
+    for (const combo of getCombos()) {
+        if (!isComboAvailable(combo, ctx.bindings, cleanName)) continue
+
+        const onCooldown = combo.bindsRequired.some(req => {
+            const exp = ctx.abilityCooldowns[req]
+            return exp && exp > now
+        })
+
+        const totalTime = combo.actionsTime.reduce((a, b) => a + b, 0)
+        const remaining = combo.bindsRequired.some(req => ctx.abilityCooldowns[req] && ctx.abilityCooldowns[req] > now)
+            ? Math.max(...combo.bindsRequired.map(req => (ctx.abilityCooldowns[req] ?? 0) - now))
+            : 0
+        const cooldownStatus = remaining > 0 ? `${(remaining / 1000).toFixed(1)}s` : "ready"
+
+        comboText += `Slot ${virtualSlot}: ${combo.name} — Range: ${combo.range ?? '?'}, Cooldown: ${cooldownStatus}, Description: ${combo.description}\n`
+        availableCombos.push({ slot: virtualSlot, name: combo.name, onCooldown })
+        virtualSlot++
+    }
+
+    const maxSlot = 9 + availableCombos.length   // dynamic max slot number
 
     return `
 You are currently in a bending duel with ${opponentName}.
 
 # DIFFICULTY
 ${ctx.duelDifficulty || "medium"}
-# AVAILABLE ABILITIES
+
+# AVAILABLE ABILITIES (slots 1-${maxSlot})
 ${abilitiesText}
+${comboText || "No combos available with current bindings."}
 
 # DUEL STATUS
-
-## Opponent Status
-- Health: ${opponentHp}/20
+## Opponent
+- Health: ${opponent.hp}/20
 - Distance: ${distInt} blocks
-- Location: (${Math.floor(oppX)}, ${Math.floor(oppY)}, ${Math.floor(oppZ)})
+- Location: (${Math.floor(opponent.x)}, ${Math.floor(opponent.y)}, ${Math.floor(opponent.z)})
 
-## Your Status
-- Health: ${lilyHp}/20
+## You
+- Health: ${ctx.lilyHp ?? 20}/20
 - Location: (${Math.floor(lilyPos.x)}, ${Math.floor(lilyPos.y)}, ${Math.floor(lilyPos.z)})
-    # INSTRUCTIONS
-    - Based on the above information, decide your next action.
-    - You may use 1, 2, or 3 abilities in a single turn (depending on difficulty: easy=1, medium=2, hard=3).
-    - Reply ONLY with JSON in this format:
 
-    For a single ability:  { "slot": slot_number, "move_to": {"x": 100, "z": 200} }
-    For two abilities:     { "slot": [slot_number, another_slot_number], "move_to": {"x": 100, "z": 200} }
-    For three abilities:   { "slot": [slot_number, another_slot_number, other_slot_number], "move_to": {"x": 100, "z": 200} }
+# INSTRUCTIONS
+- Based on the above information, decide your next action.
+- You may use 1, 2, or 3 abilities in a single turn (depending on difficulty: easy=1, medium=2, hard=3).
+- Reply ONLY with JSON in this format:
 
-    - "slot" is a number or an array of numbers (1 to 9).
-    - "move_to" is the coordinate you want to move toward (or same as current to stay in place).
-    - All abilities you list will be executed in that order.
-    - If an ability is on cooldown, do NOT include it.
-    - Do not add any extra text, only the JSON object.
+For a single ability:  { "slot": slot_number, "move_to": {"x": 100, "z": 200} }
+For two abilities:     { "slot": [slot_number, another_slot_number], "move_to": {"x": 100, "z": 200} }
+For three abilities:   { "slot": [slot_number, another_slot_number, other_slot_number], "move_to": {"x": 100, "z": 200} }
 
-# STRATEGY TIPS
-- Prioritize abilities when opponent is far, close-range when near.
-- Don't use the same slot repeatedly; mix them.
-- Circle to the left or right, keep 5‑10 blocks distance.
-- If your health is low, retreat while waiting for cooldowns.
+- "slot" is a number or an array of numbers from 1 to ${maxSlot}
+- "move_to" is the coordinate you want to move toward (or same as current to stay in place).
+- If an ability is on cooldown, do NOT include it.
+- Do not add any extra text, only the JSON object.
+- Dont use the same slots over and over, use all your available slots from 1 to ${maxSlot}.
 
 # STRATEGY TIPS
-- Use long-range abilities when opponent is far, close-range when near.
-- Dont use same slot over and over, use variety to keep opponent guessing.
-- Move around your opponent to make it harder for them to hit you, I recommend circling to their left or right and mainting 5-10 blocks distance.
-- If your health is low, consider retreating to a safer distance while waiting for cooldowns.
-`
+- Move left or right, maintain 5-10 blocks distance.
+`.trim()
 }
 
 // You are currently in a bending duel with ${opponentName}.

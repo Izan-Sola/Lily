@@ -4,7 +4,7 @@ import { MINECRAFT_SYSTEM_PROMPT } from '../../ai/ollama.js'
 import fs, { stat } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-
+import { loadCombos, enrichCombosData } from './state-machine/states/comboExecutor.js'
 export function requestDuelData(opponentName) {
     mcSend('get_duel_data', { opponent: opponentName });
 }
@@ -85,7 +85,9 @@ export function startMinecraftBot({ host = "localhost", port = 8765, ai }) {
     aiInstance = ai
     wsHost = host
     wsPort = port
-    loadStaticAbilityData()   // load static JSON once
+    loadCombos()      // load static JSON once
+    loadStaticAbilityData() // load static JSON once
+    
     _connect()
 }
 
@@ -219,8 +221,10 @@ async function _handleEvent(event) {
         case "ability_data": {
             mergeAbilityData(event.abilities)
             if (stateController?.updateAbilityStats) {
-                stateController.updateAbilityStats(staticAbilities)  // pass the fully merged static data
+                stateController.updateAbilityStats(staticAbilities)
+                enrichCombosData(staticAbilities)
             }
+            break
         }
 
         case "set_duel_target": {

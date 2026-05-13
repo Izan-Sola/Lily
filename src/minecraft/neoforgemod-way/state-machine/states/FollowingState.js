@@ -50,5 +50,6 @@ export class FollowingState {
  *   this.ctx.move.stop()             → sends stop command
  *
  * TRANSITIONS OUT:
+ * 
  *   → IDLE  when follow target not found or within followDistance
  */

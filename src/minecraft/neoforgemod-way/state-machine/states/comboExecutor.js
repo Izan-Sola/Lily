@@ -65,62 +65,56 @@ function findSlot(abilityName, bindings, cleanName) {
 export function executeCombo(combo, bindings, cleanName, mcSend) {
     console.log(`[COMBOS] Executing: ${combo.name}`)
 
+    // Expand actions into steps, one per actual input
     const steps = []
-
-    // Expand actions into individual steps
     for (const actionStr of combo.actions) {
         const parts = actionStr.split(':')
         const type = parts[0]
 
         if (type === 'swap') {
-            // Format: swap:slot:AbilityName — ability name is parts[2]
-            steps.push({ type, mode: parts[2] })
+            steps.push({ type, target: parts[2] })
         } else {
-            const [, mode, countStr] = parts
-            const count = parseInt(countStr ?? '1')
-            for (let i = 0; i < count; i++) {
+            const mode = parts[1]
+            const count = parseInt(parts[2] ?? '1')
+            for (let j = 0; j < count; j++) {
                 steps.push({ type, mode })
             }
         }
     }
 
-    // steps.length should match actionsTime.length
+    // Now steps.length === actionsTime.length
     let timeOffset = 0
     for (let i = 0; i < steps.length; i++) {
-        const step     = steps[i]
-        const delay    = timeOffset
+        const step = steps[i]
+        const delay = timeOffset
         const stepTime = combo.actionsTime[i] ?? 200
 
         if (step.type === 'swap') {
-            // mode is the ability name to swap to
-            const slot = findSlot(step.mode, bindings, cleanName)
-            if (slot !== null) {
-                setTimeout(() => mcSend('hotbar', { slot }), delay)
-            } else {
-                console.warn(`[COMBOS] Cannot find slot for ability: ${step.mode}`)
-            }
+            const slot = findSlot(step.target, bindings, cleanName)
+            if (slot !== null) setTimeout(() => mcSend('hotbar', { slot }), delay)
+            else console.warn(`[COMBOS] Cannot find slot for ability: ${step.target}`)
         } else if (step.type === 'click') {
-            if (step.mode === 'left') {
-                setTimeout(() => mcSend('attack', { mode: 'once' }), delay)
-            } else if (step.mode === 'right') {
-                setTimeout(() => mcSend('use', { mode: 'once' }), delay)
-            }
-        } else if (step.type === 'sneak') {
+            if (step.mode === 'left') setTimeout(() => mcSend('attack', { mode: 'once' }), delay)
+            else if (step.mode === 'right') setTimeout(() => mcSend('use', { mode: 'once' }), delay)
+} else if (step.type === 'sneak') {
             if (step.mode === 'hold') {
                 setTimeout(() => mcSend('fire_pk_event', { event: 'sneak' }), delay)
-                // release at end of step time
-                setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), delay + stepTime)
+                // unsneak scheduled after ALL remaining steps finish
+                const remainingTime = combo.actionsTime.slice(i).reduce((a, b) => a + b, 0)
+                setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), delay + remainingTime)
+                // do NOT add stepTime to timeOffset — next action fires immediately
+                continue
             } else if (step.mode === 'tap') {
-                setTimeout(() => mcSend('fire_pk_event', { event: 'sneak' }),   delay)
+                setTimeout(() => mcSend('fire_pk_event', { event: 'sneak' }), delay)
                 setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), delay + 80)
             }
-        } else if (type === 'jump') {
-                 this.ctx.mcSend('fire_pk_event', { event: 'jump' });
-}
+        } else if (step.type === 'jump') {
+            setTimeout(() => mcSend('fire_pk_event', { event: 'jump' }), delay)
+        }
 
         timeOffset += stepTime
     }
 
     console.log(`[COMBOS] ${combo.name} will finish in ~${timeOffset}ms`)
-    return timeOffset  // total duration
+    return timeOffset
 }

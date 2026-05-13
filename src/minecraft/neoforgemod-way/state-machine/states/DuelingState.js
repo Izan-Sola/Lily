@@ -83,7 +83,7 @@ export class DuelingState {
         const now = Date.now();
 
         // Always look at opponent
-        this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1, z: target.z });
+        this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1.5, z: target.z });
 
         // Continuously update movement direction toward moveTarget every second
         if (this.moveTarget && this.ctx.lilyPos && now - this.lastMoveUpdate >= 1000) {
@@ -119,7 +119,7 @@ export class DuelingState {
 
     async _sendPrompt(targetName) {
         const prompt = buildDuelPrompt(this.ctx, targetName);
-        //  console.log('[DUEL PROMPT]\n', prompt);
+        //   console.log('[DUEL PROMPT]\n', prompt);
 
         try {
             const response = await fetch("http://localhost:11434/api/chat", {

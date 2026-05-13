@@ -22,7 +22,7 @@ export class StateController {
             followDistance:  3,
             attackRange:     4,
             lowHpThreshold:  6,
-            tickMs:          75,
+            tickMs:          25,
             ...opts
         }
 
@@ -32,11 +32,12 @@ export class StateController {
         this.lilyHp     = 20
         this.hostiles   = []
         this.duelTarget = null
-        this.ai = opts.ai
+        this.ai         = opts.ai
+
         // Ability tracking
-        this.bindings         = {}        // slot -> ability name
-        this.abilityCooldowns = {}        // ability name -> expiry timestamp (ms)
-        this.abilityStats     = {}        // ability name -> { range, cooldown }
+        this.bindings         = {}   // slot -> raw ability name
+        this.abilityCooldowns = {}   // ability name -> expiry timestamp (ms)
+        this.abilityStats     = {}   // ability name -> { range, cooldown, actions, actionTimes, description }
 
         // Helpers
         this.sneak = new SneakHelper(mcSend)
@@ -52,16 +53,14 @@ export class StateController {
         }
 
         this.currentStateName = State.IDLE
-        this.currentState = this.states[State.IDLE]
-        this.tickInterval = null
+        this.currentState     = this.states[State.IDLE]
+        this.tickInterval     = null
     }
 
     start() {
         if (this.tickInterval) return
         console.log('[STATE] Controller started')
         this.tickInterval = setInterval(() => this._tick(), this.opts.tickMs)
-
-        
     }
 
     stop() {
@@ -76,23 +75,23 @@ export class StateController {
 
     transitionTo(stateName) {
         if (this.currentStateName === stateName) return
-        const oldName = this.currentStateName
+        const oldName  = this.currentStateName
         const newState = this.states[stateName]
         if (!newState) {
             console.error(`[STATE] Unknown state: ${stateName}`)
             return
         }
-        if (this.currentState?.onExit) this.currentState.onExit()
+        if (this.currentState?.onExit)  this.currentState.onExit()
         this.currentStateName = stateName
-        this.currentState = newState
+        this.currentState     = newState
         if (this.currentState?.onEnter) this.currentState.onEnter()
         console.log(`[STATE] ➡️ ${oldName} → ${stateName}`)
     }
 
     // Data updaters
-    updatePlayers(players) { this.players = players }
-    updateLilyState(pos, hp) { this.lilyPos = pos; this.lilyHp = hp }
-    updateHostiles(hostiles) { this.hostiles = hostiles }
+    updatePlayers(players)          { this.players = players }
+    updateLilyState(pos, hp)        { this.lilyPos = pos; this.lilyHp = hp }
+    updateHostiles(hostiles)        { this.hostiles = hostiles }
 
     setDuelTarget(targetName) {
         if (!targetName || targetName === '') {
@@ -100,14 +99,13 @@ export class StateController {
                 this.duelTarget = null
                 if (this.currentStateName === State.DUELING) this.transitionTo(State.IDLE)
                 console.log('[DUEL] Duel ended')
-                this.ctx.mcSend('unsprint', {});
+                this.mcSend('unsprint', {})   // fixed: was this.ctx.mcSend
             }
             return
         }
         this.duelTarget = targetName
         this.transitionTo(State.DUELING)
         console.log(`[DUEL] Now dueling ${targetName}`)
-        // Request fresh bindings from server (optional)
         this.mcSend('get_bindings')
     }
 
@@ -130,7 +128,6 @@ export class StateController {
     // Ability-related methods
     bindAbility(slot, abilityName) {
         this.bindings[slot] = abilityName
-        // console.log(`[BIND] Bound ${abilityName} to slot ${slot}`)
     }
 
     setAbilityCooldown(abilityName, durationMs) {
@@ -144,16 +141,14 @@ export class StateController {
 
     // Helper methods for states
     getFollowTarget() { return this.players[this.opts.followTarget] ?? null }
+
     nearestHostile() {
         if (!this.lilyPos || !this.hostiles.length) return null
-        let nearest = null
+        let nearest     = null
         let nearestDist = this.opts.attackRange
         for (const h of this.hostiles) {
             const d = this._dist(this.lilyPos, h)
-            if (d < nearestDist) {
-                nearest = h
-                nearestDist = d
-            }
+            if (d < nearestDist) { nearest = h; nearestDist = d }
         }
         return nearest
     }
@@ -171,6 +166,7 @@ export class StateController {
         if (this.currentState?.onTick) await this.currentState.onTick()
     }
 }
+
 /**
  * STATE CONTROLLER
  * ─────────────────────────────────────────────────────────────────────────────
@@ -188,18 +184,16 @@ export class StateController {
  *   followDistance  → blocks before following kicks in, default 3
  *   attackRange     → blocks to scan for hostiles, default 4
  *   lowHpThreshold  → HP floor for recovering state, default 6
- *   tickMs          → tick interval in ms, default 75
+ *   tickMs          → tick interval in ms, default 25
  *
  * SHARED STATE:
  *   this.players         → { name: { x, y, z, hp } } updated every tick from mod
- *                          e.g. { shinyshadow_: { x: 100, y: 64, z: 200, hp: 20 } }
  *   this.lilyPos         → { x, y, z } Lily's position, null until first update
  *   this.lilyHp          → Lily's HP 0–20, default 20
  *   this.hostiles        → [{ x, y, z, type, id, hp }] nearby hostile entities
- *                          e.g. [{ x: 105, y: 64, z: 202, type: "zombie", id: 42, hp: 10 }]
  *   this.duelTarget      → player name being dueled or null
- *   this.bindings        → { slot: rawAbilityName } e.g. { 1: "§cFireBall", 2: "FireShots" }
- *   this.abilityCooldowns → { abilityName: expiryMs } e.g. { FireBall: 1716123456789 }
+ *   this.bindings        → { slot: rawAbilityName }
+ *   this.abilityCooldowns → { abilityName: expiryMs }
  *   this.abilityStats    → { abilityName: { range, cooldown, actions, actionTimes, description } }
  *
  * HELPERS AVAILABLE TO STATES:

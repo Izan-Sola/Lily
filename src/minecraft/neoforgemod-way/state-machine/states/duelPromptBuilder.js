@@ -27,7 +27,7 @@ export function buildDuelPrompt(ctx, opponentName) {
         const remaining = ctx.abilityCooldowns[ability] ? Math.max(0, ctx.abilityCooldowns[ability] - now) : 0
         const cooldownStatus = remaining > 0 ? `${(remaining / 1000).toFixed(1)}s` : "ready"
 
-        abilitiesText += `Slot ${slot}: ${ability} — Range: ${stats.range}, Cooldown: ${cooldownStatus}, Description: ${stats.description}\n`
+        abilitiesText += `Ability ${slot}: ${ability} — Range: ${stats.range}, Cooldown: ${cooldownStatus}, Description: ${stats.description}\n`
     }
 
     // ── Combos (virtual slots 10+) ────────────────────────────────────────────
@@ -49,24 +49,23 @@ export function buildDuelPrompt(ctx, opponentName) {
             : 0
         const cooldownStatus = remaining > 0 ? `${(remaining / 1000).toFixed(1)}s` : "ready"
 
-        comboText += `Slot ${virtualSlot}: ${combo.name} — Range: ${combo.range ?? '?'}, Cooldown: ${cooldownStatus}, Description: ${combo.description}\n`
+        comboText += `Ability ${virtualSlot}: ${combo.name} — Range: ${combo.range ?? '?'}, Cooldown: ${cooldownStatus}, Description: ${combo.description}\n`
         availableCombos.push({ slot: virtualSlot, name: combo.name, onCooldown })
         virtualSlot++
     }
 
     const maxSlot = 9 + availableCombos.length   // dynamic max slot number
-
-    return `
+return `
 You are currently in a bending duel with ${opponentName}.
 
 # DIFFICULTY
 ${ctx.duelDifficulty || "medium"}
 
 # AVAILABLE ABILITIES (slots 1-${maxSlot})
-${abilitiesText}
-${comboText || "No combos available with current bindings."}
+${abilitiesText}${comboText}
 
 # DUEL STATUS
+
 ## Opponent
 - Health: ${opponent.hp}/20
 - Distance: ${distInt} blocks
@@ -76,56 +75,89 @@ ${comboText || "No combos available with current bindings."}
 - Health: ${ctx.lilyHp ?? 20}/20
 - Location: (${Math.floor(lilyPos.x)}, ${Math.floor(lilyPos.y)}, ${Math.floor(lilyPos.z)})
 
+# DIFFICULTY RULES
+
+EASY:
+- You MUST use EXACTLY ONE ability.
+
+MEDIUM:
+- You MUST use EXACTLY TWO abilities.
+
+HARD:
+- You MUST use EXACTLY THREE abilities.
+
 # INSTRUCTIONS
+
 - Based on the above information, decide your next action.
-- You may use 1, 2, or 3 abilities in a single turn (depending on difficulty: easy=1, medium=2, hard=3).
-- Reply ONLY with JSON in this format:
 
-For a single ability:  { "slot": slot_number, "move_to": {"x": 100, "z": 200} }
-For two abilities:     { "slot": [slot_number, another_slot_number], "move_to": {"x": 100, "z": 200} }
-For three abilities:   { "slot": [slot_number, another_slot_number, other_slot_number], "move_to": {"x": 100, "z": 200} }
+# IMPORTANT RULES
 
-- "slot" is a number or an array of numbers from 1 to ${maxSlot}
-- "move_to" is the coordinate you want to move toward (or same as current to stay in place).
-- If an ability is on cooldown, do NOT include it.
-- Do not add any extra text, only the JSON object.
-- Dont use the same slots over and over, use all your available slots from 1 to ${maxSlot}.
+- NEVER return fewer abilities than required by the difficulty.
+- NEVER return more abilities than required by the difficulty.
+- Use a variety of abilities.
+- Do not repeatedly use the same ability every turn, mix it up.
+- "move_to" is the coordinate you want to move toward.
+- Prioritize abilities from 10 to ${maxSlot} if available.
 
+
+# RESPONSE FORMAT EXAMPLE - numbers can be any valid slot and coordinate you choose:
+
+Single ability:
+{ "slot": (1-${maxSlot}), "move_to": { "x": 100, "z": 200 } }
+
+Two abilities:
+{ "slot": [(1-${maxSlot}), (1-${maxSlot})], "move_to": { "x": 100, "z": 200 } }
+
+Three abilities:
+{ "slot": [(1-${maxSlot}), (1-${maxSlot}), (1-${maxSlot})], "move_to": { "x": 100, "z": 200 } }
+
+- Reply only with the JSON object, do NOT add any extra text.
 # STRATEGY TIPS
-- Move left or right, maintain 5-10 blocks distance.
+- Move left and right often.
+- Maintain roughly 5-10 blocks distance.
+- Use long-range abilities if opponent is far, close-range if opponent is near.
 `.trim()
 }
-
+//     return `
 // You are currently in a bending duel with ${opponentName}.
 
-// # AVAILABLE ABILITIES
+// # DIFFICULTY
+// ${ctx.duelDifficulty || "medium"}
+
+// # AVAILABLE ABILITIES (slots 1-${maxSlot})
 // ${abilitiesText}
+// ${comboText || "No combos available with current bindings."}
 
 // # DUEL STATUS
-
-// ## Opponent Status
-// - Health: ${opponentHp}/20
+// ## Opponent
+// - Health: ${opponent.hp}/20
 // - Distance: ${distInt} blocks
-// - Location: (${Math.floor(oppX)}, ${Math.floor(oppY)}, ${Math.floor(oppZ)})
+// - Location: (${Math.floor(opponent.x)}, ${Math.floor(opponent.y)}, ${Math.floor(opponent.z)})
 
-// ## Your Status
-// - Health: ${lilyHp}/20
+// ## You
+// - Health: ${ctx.lilyHp ?? 20}/20
 // - Location: (${Math.floor(lilyPos.x)}, ${Math.floor(lilyPos.y)}, ${Math.floor(lilyPos.z)})
 
 // # INSTRUCTIONS
-// - Based on the above information, decide your next action. You can choose to use an ability (if off cooldown).
-// - Reply ONLY with the specified JSON format:
-//   { "slot": slot_number, "move_to": { "x": new_x, "z": new_z }, "look_at": { "x": new_x, "y": new_y, "z": new_z } }
-//         - "slot" is the number of the ability slot you want to use (from 1 to 9).
-//         - "movetoward" is the coordinate you want to move toward (or same as current to stay in place).
-//         - "lookat" is the coordinate you want to look at. Most of the time this will be the opponent's position unless you are low hp and want to flee.
+// - Based on the above information, decide your next action.
+// - You may use 1, 2, or 3 abilities in a single turn (depending on difficulty: easy=1, medium=2, hard=3).
+// - Reply ONLY with JSON in this format:
+
+// For a single ability:  { "slot": slot_number, "move_to": {"x": 100, "z": 200} }
+// For two abilities:     { "slot": [slot_number, another_slot_number], "move_to": {"x": 100, "z": 200} }
+// For three abilities:   { "slot": [slot_number, another_slot_number, other_slot_number], "move_to": {"x": 100, "z": 200} }
+
+// - "slot" is a number or an array of numbers from 1 to ${maxSlot}
+// - "move_to" is the coordinate you want to move toward (or same as current to stay in place).
+// - If an ability is on cooldown, do NOT include it.
+// - Do not add any extra text, only the JSON object.
+// - Dont use the same slots over and over, use all your available slots from 1 to ${maxSlot}.
 
 // # STRATEGY TIPS
-// - Use long-range abilities when opponent is far, close-range when near.
-// - Dont spam the same slot over and over, use variety to keep opponent guessing.
-// - Maintain optimal distance based on your abilities.
-// - If your health is low, consider retreating to a safer distance while waiting for cooldowns.
-// `
+// - Move left or right, maintain 5-10 blocks distance.
+// `.trim()
+// }
+
 
 /**
  * DUEL PROMPT BUILDER

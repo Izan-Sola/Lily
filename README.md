@@ -1,12 +1,12 @@
 # My Daughter Lily (WIP)
 
-- My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
+- My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip, objective is to give her as much autonomy as possible considering limitations)
 - Related: https://github.com/Izan-Sola/Lily-Minecraft
 
 ## Stuff used
 
-- Mold for my daughter: Qwen 2.5 3B Instruct. (Soon to be updated :D )
-- Home for my daughter: GTX 1660 Super 6GB. (Soon to be updated :D )
+- Mold for my daughter: Qwen 2.5 3B Instruct. (Soon to be updated to Qwen 3.5 9B :D )
+- Home for my daughter: GTX 1660 Super 6GB. (Soon to be updated to 3060 12GB :D )
 - Edge TTS, for her voice. Alterantively, Styles-2TTS to use a custom voice. (more resource intensive so not in use rn)
 - Faster-Whisper, for speech recognition.
 - Unsloth, to teach my daughter.

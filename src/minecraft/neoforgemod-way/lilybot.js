@@ -4,18 +4,25 @@ import { MINECRAFT_SYSTEM_PROMPT } from '../../ai/ollama.js'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { loadCombos, enrichCombosData } from './state-machine/states/comboExecutor.js'
+import { loadCombos, enrichCombosData } from './state-machine/helpers/comboExecutor.js'
+import { startSurvivalLoop } from './survivalLoop.js'
+
+export function requestDuelData(opponentName) {
+    mcSend('get_duel_data', { opponent: opponentName });
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const MODE = process.env.MODE ?? 'bendcraft'
+export const isSurvival = MODE === 'survival'
+export const isBendcraft = MODE === 'bendcraft'
 
 let wss = null
-let ws = null                   // the single Java client socket
+let ws = null
 let stateController = null
 let aiInstance = null
+let reconnectTimer = null
 
 let staticAbilities = {}
-
-// ─── Ability data ─────────────────────────────────────────────────────────────
 
 function loadStaticAbilityData() {
     const jsonPath = path.join(__dirname, './state-machine/states/data/PKAbilitiesData.json')
@@ -31,102 +38,82 @@ function loadStaticAbilityData() {
 }
 
 function mergeAbilityData(liveData) {
-    console.log('[ABILITY] Received live data. Abilities:', Object.keys(liveData))
-    let updatedCount = 0
+    console.log('[ABILITY] Received live data. Abilities:', Object.keys(liveData));
+    let updatedCount = 0;
 
     for (const [ability, stats] of Object.entries(liveData)) {
-        const old = staticAbilities[ability]
+        const old = staticAbilities[ability];
         if (old) {
-            old.range    = stats.range
-            old.cooldown = stats.cooldown
+            const oldRange = old.range;
+            const oldCooldown = old.cooldown;
+            old.range = stats.range;
+            old.cooldown = stats.cooldown;
+            updatedCount++;
+            console.log(`[ABILITY] Updated ${ability}: range ${oldRange}→${stats.range}, cooldown ${oldCooldown}→${stats.cooldown}`);
         } else {
             staticAbilities[ability] = {
                 description: "Unknown ability",
-                actions:     [],
+                actions: [],
                 actionTimes: [],
-                range:       stats.range,
-                cooldown:    stats.cooldown
-            }
+                range: stats.range,
+                cooldown: stats.cooldown
+            };
+            updatedCount++;
+            console.log(`[ABILITY] Created new entry for ${ability}: range=${stats.range}, cooldown=${stats.cooldown}`);
         }
-        updatedCount++
-        console.log(`[ABILITY] Upserted ${ability}: range=${stats.range}, cooldown=${stats.cooldown}`)
     }
 
     if (updatedCount > 0) {
         try {
-            const jsonPath = path.join(__dirname, './state-machine/states/data/PKAbilitiesData.json')
-            fs.writeFileSync(jsonPath, JSON.stringify({ abilities: staticAbilities }, null, 4))
-            console.log(`[ABILITY] Saved PKAbilitiesData.json (${updatedCount} entries updated/added).`)
+            const jsonPath = path.join(__dirname, './state-machine/states/data/PKAbilitiesData.json');
+            const output = { abilities: staticAbilities };
+            fs.writeFileSync(jsonPath, JSON.stringify(output, null, 4));
+            console.log(`[ABILITY] Saved PKAbilitiesData.json (${updatedCount} entries updated/added).`);
         } catch (err) {
-            console.error('[ABILITY] Failed to write PKAbilitiesData.json:', err.message)
+            console.error('[ABILITY] Failed to write PKAbilitiesData.json:', err.message);
         }
     } else {
-        console.warn('[ABILITY] No abilities matched – check ability name casing.')
+        console.warn('[ABILITY] No abilities matched – check ability name casing.');
     }
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+function requestAbilityData() {
+    mcSend('request_ability_data')
+}
 
 export function startMinecraftBot({ port = 8765, ai }) {
     aiInstance = ai
-    loadCombos()
-    loadStaticAbilityData()
-    _startServer(port)
-}
-
-export function stopMinecraftBot() {
-    stateController?.stop()
-    ws?.close()
-    wss?.close()
-    ws  = null
-    wss = null
-    stateController = null
-}
-
-export function getStateController() { return stateController }
-
-export function mcSend(type, data = {}) {
-    if (!ws || ws.readyState !== 1) {
-        console.warn(`⛏️ [MC] WS not ready, dropping: ${type}`)
-        return
+    if (isBendcraft) {
+        loadCombos()
+        loadStaticAbilityData()
     }
-    ws.send(JSON.stringify({ type, ...data }))
+    _connect(port)
 }
 
-export function mcChat(message)    { mcSend("chat",        { message }) }
-export function mcCommand(cmd)     { mcSend("run_command", { command: cmd }) }
-export function mcGetPlayers()     { mcSend("get_players") }
-export function mcGetScoreboard()  { mcSend("get_scoreboard") }
-
-// ─── WebSocket server ─────────────────────────────────────────────────────────
-
-function _startServer(port) {
+function _connect(port = 8765) {
     wss = new WebSocketServer({ port })
-    console.log(`⛏️ [MC] WebSocket server listening on port ${port} — waiting for Java client...`)
+    console.log(`⛏️ [MC] WebSocket server listening on port ${port} (mode: ${MODE})`)
 
     wss.on("connection", (socket) => {
-        // Only allow one Java client at a time; drop previous if reconnecting
-        if (ws && ws.readyState === 1) {
-            console.warn("⛏️ [MC] New Java client connected, replacing old socket.")
-            ws.terminate()
-        }
-
         ws = socket
         console.log("⛏️ [MC] Java mod connected")
+        clearTimeout(reconnectTimer)
 
-        // Create or reuse the state controller
         if (!stateController) {
             stateController = new StateController(mcSend, {
-                followTarget:    process.env.MC_FOLLOW_TARGET ?? "shinyshadow_",
-                followDistance:  3,
-                attackRange:     4,
-                lowHpThreshold:  6,
-                tickMs:          25,
-                ai:              aiInstance
+                followTarget: process.env.MC_FOLLOW_TARGET ?? "shinyshadow_",
+                followDistance: 3,
+                attackRange: 4,
+                lowHpThreshold: 6,
+                tickMs: 25,
+                ai: aiInstance
             })
+            if (isBendcraft) stateController.updateAbilityStats(staticAbilities)
         }
-        stateController.updateAbilityStats(staticAbilities)
         stateController.start()
+
+        if (isBendcraft) requestAbilityData()
+        if (isSurvival) startSurvivalLoop(stateController, mcSend, mcChat)
 
         socket.on("message", async (data) => {
             try {
@@ -141,7 +128,6 @@ function _startServer(port) {
             console.log("⛏️ [MC] Java mod disconnected")
             stateController?.stop()
             ws = null
-            // Java is responsible for reconnecting — no timer needed here
         })
 
         socket.on("error", err => {
@@ -150,23 +136,13 @@ function _startServer(port) {
     })
 }
 
-// ─── Event handler ────────────────────────────────────────────────────────────
-
 async function _handleEvent(event) {
     switch (event.type) {
-
-        // Java client just connected and identified itself
-        case "java_connected": {
-            console.log("⛏️ [MC] Java handshake received — requesting ability data")
-            mcSend('request_ability_data')
-            break
-        }
-
         case "chat": {
             console.log(`⛏️ [MC CHAT] ${event.player}: ${event.message}`)
             aiInstance?.pushRawMessage("minecraft", event.player, event.message)
 
-            const lower    = event.message.toLowerCase()
+            const lower = event.message.toLowerCase()
             const addressed = lower.includes("lily") || lower.includes("hylily")
 
             if (addressed || (Math.random() < 0.05 && stateController?.currentStateName !== 'DUELING')) {
@@ -179,7 +155,7 @@ async function _handleEvent(event) {
                         ? `[${event.player}] says to you in Minecraft: ${event.message}`
                         : `[${event.player}] said in Minecraft nearby: ${event.message}`
                     const reply = await aiInstance?.chat("minecraft", formatted, MINECRAFT_SYSTEM_PROMPT)
-                    const text  = typeof reply === "object" ? reply?.text : reply
+                    const text = typeof reply === "object" ? reply?.text : reply
                     if (text) _splitMessage(text).forEach(chunk => mcChat(chunk))
                 } catch (err) {
                     console.error("⛏️ [MC] Chat handler error:", err.message)
@@ -189,20 +165,25 @@ async function _handleEvent(event) {
         }
 
         case "duel_data": {
-            stateController?.updateLilyState(
+            if (!isBendcraft) break
+            stateController.updateLilyState(
                 { x: event.lily.x, y: event.lily.y, z: event.lily.z },
                 event.lily.hp
-            )
-            const opp = event.opponent
-            stateController?.updatePlayers({
-                [opp.name]: { x: opp.x, y: opp.y, z: opp.z, hp: opp.hp }
-            })
-            if (event.bindings) {
-                for (const [slot, ability] of Object.entries(event.bindings)) {
-                    stateController?.bindAbility(parseInt(slot), ability)
+            );
+            const opp = event.opponent;
+            stateController.updatePlayers({
+                [opp.name]: {
+                    x: opp.x, y: opp.y, z: opp.z,
+                    hp: opp.hp
+                }
+            });
+            const bindingsMap = event.bindings;
+            if (bindingsMap) {
+                for (const [slot, ability] of Object.entries(bindingsMap)) {
+                    stateController.bindAbility(parseInt(slot), ability);
                 }
             }
-            break
+            break;
         }
 
         case "players_list": {
@@ -211,12 +192,12 @@ async function _handleEvent(event) {
                 event.players.split(";").filter(Boolean).forEach(entry => {
                     try {
                         const colonIdx = entry.indexOf(":")
-                        const name     = entry.slice(0, colonIdx)
-                        const parts    = entry.slice(colonIdx + 1).split(",")
-                        players[name]  = {
-                            x:  parseFloat(parts[0]),
-                            y:  parseFloat(parts[1]),
-                            z:  parseFloat(parts[2]),
+                        const name = entry.slice(0, colonIdx)
+                        const parts = entry.slice(colonIdx + 1).split(",")
+                        players[name] = {
+                            x: parseFloat(parts[0]),
+                            y: parseFloat(parts[1]),
+                            z: parseFloat(parts[2]),
                             hp: parseFloat((parts[3] ?? "hp=20").split("=")[1] ?? "20")
                         }
                     } catch { /* skip malformed */ }
@@ -229,7 +210,8 @@ async function _handleEvent(event) {
         case "lily_state": {
             stateController?.updateLilyState(
                 { x: event.x, y: event.y, z: event.z },
-                event.hp ?? 20
+                event.hp ?? 20,
+                event.food ?? 20
             )
             break
         }
@@ -240,29 +222,20 @@ async function _handleEvent(event) {
         }
 
         case "ability_data": {
+            if (!isBendcraft) break
             mergeAbilityData(event.abilities)
-            if (stateController) {
+            if (stateController?.updateAbilityStats) {
                 stateController.updateAbilityStats(staticAbilities)
                 enrichCombosData(staticAbilities)
             }
             break
         }
 
-        case "bindings_update": {
-            // Java sends current hotbar bindings on demand (get_bindings request)
-            if (event.bindings && stateController) {
-                for (const [slot, ability] of Object.entries(event.bindings)) {
-                    stateController.bindAbility(parseInt(slot), ability)
-                }
-                console.log('[MC] Bindings updated from Java:', event.bindings)
-            }
-            break
-        }
-
         case "set_duel_target": {
+            if (!isBendcraft) break
             stateController?.setDuelTarget(event.target)
-            if (stateController) stateController.duelDifficulty = event.difficulty || "medium"
-            console.log(`[DUEL] Difficulty: ${stateController?.duelDifficulty}`)
+            stateController.duelDifficulty = event.difficulty || "medium"
+            console.log(`[DUEL] Difficulty: ${stateController.duelDifficulty}`)
             break
         }
 
@@ -282,14 +255,33 @@ async function _handleEvent(event) {
         case "player_death":
             console.log(`⛏️ [MC] ${event.player} died: ${event.cause}`)
             break
-
-        default:
-            // Silently ignore unknown event types
-            break
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+export function mcSend(type, data = {}) {
+    if (!ws || ws.readyState !== 1) {
+        console.warn(`⛏️ [MC] WS not ready, dropping: ${type}`)
+        return
+    }
+    ws.send(JSON.stringify({ type, ...data }))
+}
+
+export function mcChat(message) { mcSend("chat", { message }) }
+export function mcCommand(cmd) { mcSend("run_command", { command: cmd }) }
+export function mcGetPlayers() { mcSend("get_players") }
+export function mcGetScoreboard() { mcSend("get_scoreboard") }
+
+export function stopMinecraftBot() {
+    clearTimeout(reconnectTimer)
+    stateController?.stop()
+    ws?.close()
+    wss?.close()
+    ws = null
+    wss = null
+    stateController = null
+}
+
+export function getStateController() { return stateController }
 
 function _splitMessage(text, limit = 250) {
     const words = text.split(" ")

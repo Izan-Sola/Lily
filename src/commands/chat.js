@@ -2,7 +2,9 @@ import { SlashCommandBuilder } from "discord.js"
 import { HytaleAIChat } from "../ai/ollama.js"
 import { config } from "../utils/config.js"
 
-const ai = new HytaleAIChat({ model: config.model });  
+const ai = new HytaleAIChat({ 
+    model: config.model 
+});  
 
 export const data = new SlashCommandBuilder()
     .setName("chat")

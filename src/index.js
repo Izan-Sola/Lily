@@ -3,6 +3,9 @@ import { config } from "./utils/config.js"
 import { startMinecraftBot } from "./minecraft/neoforgemod-way/lilybot.js"
 
 const client = await createBot()
+const MODE = process.env.MODE ?? 'bendcraft'
+export const isSurvival = MODE === 'survival'
+export const isBendcraft = MODE === 'bendcraft'
 
 client.once("clientReady", () => {
     console.log(`Logged in as ${client.user.tag}`)

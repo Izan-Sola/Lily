@@ -1,5 +1,5 @@
-import { buildDuelPrompt } from './duelPromptBuilder.js';
-import { getComboByName, getCombos, isComboAvailable, executeCombo } from './comboExecutor.js'
+import { buildDuelPrompt } from '../prompt-builders/duelPromptBuilder.js';
+import { getComboByName, getCombos, isComboAvailable, executeCombo } from '../helpers/comboExecutor.js'
 
 export class DuelingState {
     constructor(ctx) {

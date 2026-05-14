@@ -15,11 +15,13 @@ import prism from "prism-media"
 import { HytaleAIChat, initLogChannel } from "./ai/ollama.js"
 import { config } from "./utils/config.js"
 import { getPrefs } from "./utils/userPreferences.js"
-
 const __filename = fileURLToPath(import.meta.url)
 const __dirname  = path.dirname(__filename)
 const execAsync  = promisify(exec)
-export const ai         = new HytaleAIChat({ model: config.modelName }) // export the AI instance for use in other modules like the Minecraft bot
+export const ai         = new HytaleAIChat({ 
+    model: config.modelName 
+
+}) // export the AI instance for use in other modules like the Minecraft bot
 // ─── Voice helpers ────────────────────────────────────────────────────────────
 
 const PYTHON_BIN   = process.env.PYTHON_BIN   || "python3"

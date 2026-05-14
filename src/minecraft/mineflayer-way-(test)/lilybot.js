@@ -59,6 +59,11 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
         const randomButtin = Math.random() < 0.05
 
         if (addressed || randomButtin) {
+            if (StateController?.currentStateName === State.DUELING) {
+                return {
+                    content: "Lily is currently in a duel, she can't reply right now!"
+                }
+            }
             try {
                 const formattedMessage = addressed
                     ? `[${sender}] says to you in Minecraft: ${message}`

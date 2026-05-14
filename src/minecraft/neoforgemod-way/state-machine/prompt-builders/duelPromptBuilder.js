@@ -1,4 +1,4 @@
-import { getCombos, isComboAvailable } from './comboExecutor.js'
+import { getCombos, isComboAvailable } from '../helpers/comboExecutor.js'
 
 function cleanName(raw) {
     return raw.replace(/§[0-9a-fk-orxA-FK-ORX]/g, '').replace(/^[>\s]+/, '').trim()

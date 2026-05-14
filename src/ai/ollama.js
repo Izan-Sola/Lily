@@ -1,4 +1,5 @@
 import axios from "axios"
+import { getStateController } from '../minecraft/neoforgemod-way/lilybot.js'
 
 // ─── Logger ───────────────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ function sendToLogChannel(message) {
     logChannel?.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => { })
 }
 
-function log(message)      { console.log(message);   sendToLogChannel(message) }
+function log(message) { console.log(message); sendToLogChannel(message) }
 function logError(message) { console.error(message); sendToLogChannel(`❌ ${message}`) }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
@@ -269,7 +270,7 @@ const TOOLS = [
             parameters: {
                 type: "object",
                 properties: {
-                    text:   { type: "string", description: "Fact to store, e.g. 'User John likes pizza.'" },
+                    text: { type: "string", description: "Fact to store, e.g. 'User John likes pizza.'" },
                     source: { type: "string", description: "Source of info, usually 'user'" }
                 },
                 required: ["text", "source"]
@@ -285,7 +286,7 @@ const TOOLS = [
                 type: "object",
                 properties: {
                     query: { type: "string", description: "Multiple keywords to find the entry, e.g. 'John age years old'" },
-                    text:  { type: "string", description: "The replacement fact, e.g. 'User John is 25 years old.'" }
+                    text: { type: "string", description: "The replacement fact, e.g. 'User John is 25 years old.'" }
                 },
                 required: ["query", "text"]
             }
@@ -314,7 +315,7 @@ const TOOLS = [
                 type: "object",
                 properties: {
                     query: { type: "string", description: "Event or experience description, e.g. 'John upset angry argument last week'" },
-                    k:     { type: "number", description: "Max results to return (default 5)" }
+                    k: { type: "number", description: "Max results to return (default 5)" }
                 },
                 required: ["query"]
             }
@@ -328,12 +329,12 @@ const TOOLS = [
             parameters: {
                 type: "object",
                 properties: {
-                    title:        { type: "string",  description: "Short descriptive title, e.g. 'John's rough day at work'" },
-                    summary:      { type: "string",  description: "What happened, who was involved, why it matters" },
-                    participants: { type: "array",   items: { type: "string" }, description: "Usernames or names of people involved" },
-                    emotions:     { type: "array",   items: { type: "string" }, description: "Emotions present, e.g. ['happy', 'excited', 'angry']" },
-                    importance:   { type: "number",  description: "0.0 to 1.0 — how important this is to remember (default 0.5)" },
-                    channel:      { type: "string",  description: "Channel where this happened (optional)" }
+                    title: { type: "string", description: "Short descriptive title, e.g. 'John's rough day at work'" },
+                    summary: { type: "string", description: "What happened, who was involved, why it matters" },
+                    participants: { type: "array", items: { type: "string" }, description: "Usernames or names of people involved" },
+                    emotions: { type: "array", items: { type: "string" }, description: "Emotions present, e.g. ['happy', 'excited', 'angry']" },
+                    importance: { type: "number", description: "0.0 to 1.0 — how important this is to remember (default 0.5)" },
+                    channel: { type: "string", description: "Channel where this happened (optional)" }
                 },
                 required: ["title", "summary"]
             }
@@ -353,29 +354,29 @@ const TOOLS = [
             }
         }
     },
-  
-{
-    type: "function",
-    function: {
-        name: "minecraft_action",
-        description: "Perform an action in the Minecraft server. Use when asked to do something in game like going to a player, mining a block, or checking status.",
-        parameters: {
-            type: "object",
-            properties: {
-                action: {
-                    type: "string",
-                    enum: ["chat", "goto_player", "mine_block", "look_at_player", "get_status"],
-                    description: "What action to perform"
+
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action",
+            description: "Perform an action in the Minecraft server. Use when asked to do something in game like going to a player, mining a block, or checking status.",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["chat", "goto_player", "mine_block", "look_at_player", "get_status"],
+                        description: "What action to perform"
+                    },
+                    target: {
+                        type: "string",
+                        description: "Target for the action — player name, block name, or message text"
+                    }
                 },
-                target: {
-                    type: "string",
-                    description: "Target for the action — player name, block name, or message text"
-                }
-            },
-            required: ["action"]
+                required: ["action"]
+            }
         }
     }
-}
 ]
 
 const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
@@ -383,41 +384,41 @@ const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
 // ─── Options ──────────────────────────────────────────────────────────────────
 
 const DEFAULT_OPTIONS = {
-    model:                   "Lily",
-    temperature:             0.6,
-    maxReplyTokens:          2048,
-    contextWindow:           4096,
-    maxConvoMessages:        10,
-    maxRawMessages:          10,
-    maxToolLoops:            10,
-    maxToolRepeats:          4,
+    model: "Lily",
+    temperature: 0.6,
+    maxReplyTokens: 2048,
+    contextWindow: 4096,
+    maxConvoMessages: 10,
+    maxRawMessages: 10,
+    maxToolLoops: 10,
+    maxToolRepeats: 4,
     memoryDuplicateMinScore: 0.9,
-    memoryRemoveMinScore:    0.70,
-    memoryQueryMinScore:     0.4,
-    memoryRemoveK:           2,
-    episodicQueryMinScore:   0.45,
-    episodicDuplicateScore:  0.90,
-    summarizeEvery:          12,
-    summarizeLastN:          12,
-    observeEvery:            20,
-    ollamaUrl:               "http://localhost:11434",
-    vectorDbUrl:             "http://localhost:8000",
-    knowledgeDbUrl:          "http://localhost:8001",
-    episodicDbUrl:           "http://localhost:8002",  
-    ollamaTimeout:           60000,
-    dbTimeout:               30000,
+    memoryRemoveMinScore: 0.70,
+    memoryQueryMinScore: 0.4,
+    memoryRemoveK: 2,
+    episodicQueryMinScore: 0.45,
+    episodicDuplicateScore: 0.90,
+    summarizeEvery: 12,
+    summarizeLastN: 12,
+    observeEvery: 20,
+    ollamaUrl: "http://localhost:11434",
+    vectorDbUrl: "http://localhost:8000",
+    knowledgeDbUrl: "http://localhost:8001",
+    episodicDbUrl: "http://localhost:8002",
+    ollamaTimeout: 60000,
+    dbTimeout: 30000,
 }
 
 // ─── Main class ───────────────────────────────────────────────────────────────
 
 export class HytaleAIChat {
     constructor(options = {}) {
-        this.opts             = { ...DEFAULT_OPTIONS, ...options }
-        this.convoHistories   = new Map()
-        this.rawBuffers       = new Map()
-        this.channelLocks     = new Map()
+        this.opts = { ...DEFAULT_OPTIONS, ...options }
+        this.convoHistories = new Map()
+        this.rawBuffers = new Map()
+        this.channelLocks = new Map()
         this.userMessageCount = 0
-        this.observeBuffer    = []
+        this.observeBuffer = []
     }
 
     // ─── Channel lock ─────────────────────────────────────────────────────────
@@ -461,8 +462,8 @@ export class HytaleAIChat {
     buildMessagesForOllama(channelId, systemPromptOverride = null, opts = {}) {
         const { skipHistory = false, skipRawContext = false } = opts
 
-        const systemMessages = [{ 
-            role: "system", 
+        const systemMessages = [{
+            role: "system",
             content: systemPromptOverride ?? SYSTEM_PROMPT
         }]
 
@@ -505,11 +506,11 @@ export class HytaleAIChat {
 
     // ─── HTTP helpers ─────────────────────────────────────────────────────────
 
-    knowledgeGet(path, params)  { return axios.get(`${this.opts.knowledgeDbUrl}${path}`,  { params, timeout: this.opts.dbTimeout }) }
-    knowledgePost(path, body)   { return axios.post(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
-    knowledgePut(path, body)    { return axios.put(`${this.opts.knowledgeDbUrl}${path}`,  body, { timeout: this.opts.dbTimeout }) }
+    knowledgeGet(path, params) { return axios.get(`${this.opts.knowledgeDbUrl}${path}`, { params, timeout: this.opts.dbTimeout }) }
+    knowledgePost(path, body) { return axios.post(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
+    knowledgePut(path, body) { return axios.put(`${this.opts.knowledgeDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
 
-    episodicPost(path, body)    { return axios.post(`${this.opts.episodicDbUrl}${path}`,  body, { timeout: this.opts.dbTimeout }) }
+    episodicPost(path, body) { return axios.post(`${this.opts.episodicDbUrl}${path}`, body, { timeout: this.opts.dbTimeout }) }
 
     // ─── Summarization ────────────────────────────────────────────────────────
 
@@ -523,11 +524,11 @@ export class HytaleAIChat {
         log(`📝 [${logPrefix}] Summarizing ${lines.length} entries...`)
         try {
             const { data } = await axios.post(`${this.opts.ollamaUrl}/api/chat`, {
-                model:  this.opts.model,
+                model: this.opts.model,
                 stream: false,
                 messages: [
                     { role: "system", content: SUMMARIZE_PROMPT },
-                    { role: "user",   content: lines.join("\n") }
+                    { role: "user", content: lines.join("\n") }
                 ],
                 options: { temperature: 0.3, num_predict: maxTokens },
             }, { timeout: this.opts.ollamaTimeout })
@@ -538,12 +539,12 @@ export class HytaleAIChat {
 
             // Store in episodic DB — these are time-bound events, not plain facts
             await this.episodicAdd({
-                title:        memoryTitle,
+                title: memoryTitle,
                 summary,
                 participants,
                 emotions,
                 importance,
-                source:       memorySource,
+                source: memorySource,
             })
         } catch (err) {
             logError(`[${logPrefix}] ${err.message}`)
@@ -558,11 +559,11 @@ export class HytaleAIChat {
 
         const title = `Conversation summary — ${new Date().toISOString().slice(0, 10)}`
         await this.summarizeAndStore(lines, {
-            logPrefix:    "SUMMARIZE",
-            maxTokens:    512,
-            memoryTitle:  title,
+            logPrefix: "SUMMARIZE",
+            maxTokens: 512,
+            memoryTitle: title,
             memorySource: "summary",
-            importance:   0.5,
+            importance: 0.5,
         })
     }
 
@@ -575,11 +576,11 @@ export class HytaleAIChat {
         if (this.opts.observeEvery > 0 && this.observeBuffer.length >= this.opts.observeEvery) {
             const title = `Observed chat — ${new Date().toISOString().slice(0, 10)}`
             this.summarizeAndStore(this.observeBuffer.splice(0, this.opts.observeEvery), {
-                logPrefix:    "OBSERVE",
-                maxTokens:    200,
-                memoryTitle:  title,
+                logPrefix: "OBSERVE",
+                maxTokens: 200,
+                memoryTitle: title,
                 memorySource: "observe",
-                importance:   0.3,
+                importance: 0.3,
             })
         }
     }
@@ -674,7 +675,7 @@ export class HytaleAIChat {
             return data.results.map(m =>
                 `[${new Date(m.timestamp * 1000).toLocaleDateString()}] ${m.title}: ${m.summary}` +
                 (m.participants?.length ? ` (with: ${m.participants.join(", ")})` : "") +
-                (m.emotions?.length    ? ` [emotions: ${m.emotions.join(", ")}]` : "")
+                (m.emotions?.length ? ` [emotions: ${m.emotions.join(", ")}]` : "")
             ).join("\n")
         } catch (err) {
             logError(`[EPISODIC QUERY] ${err.message}`)
@@ -714,7 +715,7 @@ export class HytaleAIChat {
             if (!results.length) return JSON.stringify({ status: "not_found", message: "No GIF found for that query." })
 
             const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
-            const url  = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url ?? null
+            const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url ?? null
 
             if (!url) {
                 log(`⚠️ [GIF] Unexpected response shape: ${JSON.stringify(pick).slice(0, 200)}`)
@@ -731,23 +732,23 @@ export class HytaleAIChat {
 
     runTool(name, args) {
         switch (name) {
-            case "query_hytale_wiki":      return this.wikiSearch(args.query ?? "")
+            case "query_hytale_wiki": return this.wikiSearch(args.query ?? "")
             case "minecraft_action": return this.minecraftAction(args.action ?? "", args.target ?? "")
-            case "query_memory_database":  return this.memoryQuery(args.query ?? "")
-            case "addto_memory_database":  return this.memoryAdd(args.text ?? "", args.source ?? "user")
+            case "query_memory_database": return this.memoryQuery(args.query ?? "")
+            case "addto_memory_database": return this.memoryAdd(args.text ?? "", args.source ?? "user")
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args.query ?? "")
-            case "query_episodic_memory":  return this.episodicQuery(args.query ?? "", args.k ?? 5)
-            case "addto_episodic_memory":  return this.episodicAdd({
-                title:        args.title        ?? "Untitled memory",
-                summary:      args.summary      ?? "",
+            case "query_episodic_memory": return this.episodicQuery(args.query ?? "", args.k ?? 5)
+            case "addto_episodic_memory": return this.episodicAdd({
+                title: args.title ?? "Untitled memory",
+                summary: args.summary ?? "",
                 participants: args.participants ?? [],
-                emotions:     args.emotions     ?? [],
-                importance:   args.importance   ?? 0.5,
-                channel:      args.channel      ?? null,
-                source:       "conversation",
+                emotions: args.emotions ?? [],
+                importance: args.importance ?? 0.5,
+                channel: args.channel ?? null,
+                source: "conversation",
             })
-            case "send_gif":               return this.searchGif(args.query ?? "")
+            case "send_gif": return this.searchGif(args.query ?? "")
             default:
                 console.warn(`⚠️ [TOOL] Unknown tool: ${name}`)
                 return Promise.resolve(`Unknown tool: ${name}`)
@@ -757,6 +758,11 @@ export class HytaleAIChat {
     // ─── Ollama ───────────────────────────────────────────────────────────────
 
     async sendToOllama(messages) {
+      if (getStateController()?.currentStateName === 'DUELING') {
+            return {
+                content: "Lily is currently in a duel, she can't reply right now!"
+            }
+        }
         const { model, temperature, maxReplyTokens, contextWindow, ollamaUrl, ollamaTimeout } = this.opts
         try {
             const { data } = await axios.post(`${ollamaUrl}/api/chat`, {
@@ -774,7 +780,7 @@ export class HytaleAIChat {
     // ─── Tool call parsing ────────────────────────────────────────────────────
 
     parseEmbeddedToolCalls(content) {
-        const closed  = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
+        const closed = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
         const sources = closed.length
             ? closed
             : [...content.matchAll(/<tool_call>\s*([\s\S]+)/g)]
@@ -782,7 +788,7 @@ export class HytaleAIChat {
         return sources.flatMap(match => {
             try {
                 const parsed = JSON.parse(match[1].trim())
-                const args   = this.normalizeToolArgs(parsed)
+                const args = this.normalizeToolArgs(parsed)
                 log(`🔬 [PARSE] ${parsed.name} → ${JSON.stringify(args)}`)
                 return [{ name: parsed.name, args }]
             } catch { return [] }
@@ -816,7 +822,7 @@ export class HytaleAIChat {
                 if (!args.text) args = { text: firstString(args, toolCall), source: args.source ?? "user" }
                 break
             case "addto_episodic_memory":
-                if (!args.title) args.title   = args.summary?.slice(0, 50) ?? "Untitled"
+                if (!args.title) args.title = args.summary?.slice(0, 50) ?? "Untitled"
                 if (!args.summary) args.summary = firstString(args, toolCall)
                 break
             case "update_memory_database":
@@ -832,7 +838,7 @@ export class HytaleAIChat {
     // ─── Dedupe ───────────────────────────────────────────────────────────────
 
     checkDedupe(seenCalls, name, args) {
-        const key   = `${name}:${JSON.stringify(args)}`
+        const key = `${name}:${JSON.stringify(args)}`
         const count = (seenCalls.get(key) ?? 0) + 1
         seenCalls.set(key, count)
         if (count > this.opts.maxToolRepeats) {
@@ -845,13 +851,13 @@ export class HytaleAIChat {
     // ─── Tool loop ────────────────────────────────────────────────────────────
 
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}) {
-        const seenCalls   = new Map()
+        const seenCalls = new Map()
         let pendingGifUrl = null
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
             log(`🔄 [LOOP ${i + 1}]`)
 
-          const msg = await this.sendToOllama(this.buildMessagesForOllama(channelId, systemPromptOverride, opts))
+            const msg = await this.sendToOllama(this.buildMessagesForOllama(channelId, systemPromptOverride, opts))
             if (!msg) return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
 
             const content = (msg.content ?? "").trim()
@@ -938,7 +944,7 @@ export class HytaleAIChat {
 
     // ─── Shared entry point ───────────────────────────────────────────────────
 
-   async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}) {
+    async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}) {
         const clean = this.sanitizeInput(rawInput)
         if (!clean) return null
         log(`\n💬 [${logPrefix}] ${clean}`)
@@ -948,13 +954,13 @@ export class HytaleAIChat {
             if (this.opts.summarizeEvery > 0 && ++this.userMessageCount % this.opts.summarizeEvery === 0) {
                 await this.summarizeConversationAndStore(channelId)
             }
-               return this.runToolLoop(channelId, systemPromptOverride, opts)
+            return this.runToolLoop(channelId, systemPromptOverride, opts)
         })
     }
 
-chat(channelId, userInput, systemPromptOverride = null, opts = {}) {
-    return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts)
-}
+    chat(channelId, userInput, systemPromptOverride = null, opts = {}) {
+        return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts)
+    }
     buttIn(channelId, rawMessage) { return this.handleMessage(channelId, rawMessage, "BUTT IN") }
 }
 /**

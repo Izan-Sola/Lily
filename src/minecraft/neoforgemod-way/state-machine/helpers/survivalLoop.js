@@ -1,4 +1,4 @@
-import { buildSurvivalPrompt } from './state-machine/states/duelPromptBuilder/buildSurvivalPrompt.js' // adjust path
+import { buildSurvivalPrompt } from '../prompt-builders/survivalPromptBuilder.js' 
 
 export function startSurvivalLoop(stateController, mcSend, mcChat) {
     setInterval(async () => {
@@ -25,16 +25,16 @@ export function startSurvivalLoop(stateController, mcSend, mcChat) {
                 console.error('[SURVIVAL] Invalid JSON:', text)
                 return
             }
-
+            console.log('[SURVIVAL] Lily response:', JSON.stringify(action, null, 2))
             if (action.msg) mcChat(action.msg)
-
+        
             for (const act of action.actions ?? []) {
                 handleSurvivalAction(act, mcSend)
             }
         } catch (err) {
             console.error('[SURVIVAL] AI error:', err.message)
         }
-    }, 10000)
+    }, 60000)
 }
 
 function handleSurvivalAction(act, mcSend) {

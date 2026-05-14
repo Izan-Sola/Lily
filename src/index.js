@@ -3,16 +3,16 @@ import { config } from "./utils/config.js"
 import { startMinecraftBot } from "./minecraft/neoforgemod-way/lilybot.js"
 
 const client = await createBot()
-const MODE = process.env.MODE ?? 'bendcraft'
-export const isSurvival = MODE === 'survival'
-export const isBendcraft = MODE === 'bendcraft'
+let currentMode = process.env.MODE ?? 'bendcraft'
+let survivalLoopStarted = false
 
+export const getMode = () => currentMode
 client.once("clientReady", () => {
     console.log(`Logged in as ${client.user.tag}`)
 
     startMinecraftBot({
         host: process.env.MC_BRIDGE_HOST ?? "localhost",  
-        port: parseInt(process.env.MC_BRIDGE_PORT ?? "8765"),
+        port: parseInt("8765"),
         ai
     })
 })

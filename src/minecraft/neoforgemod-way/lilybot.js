@@ -5,16 +5,18 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { loadCombos, enrichCombosData } from './state-machine/helpers/comboExecutor.js'
-import { startSurvivalLoop } from './survivalLoop.js'
+import { startSurvivalLoop } from './state-machine/helpers/survivalLoop.js'
 
 export function requestDuelData(opponentName) {
     mcSend('get_duel_data', { opponent: opponentName });
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const MODE = process.env.MODE ?? 'bendcraft'
-export const isSurvival = MODE === 'survival'
-export const isBendcraft = MODE === 'bendcraft'
+
+let currentMode = process.env.MODE ?? 'bendcraft'
+let survivalLoopStarted = false
+
+export const getMode = () => currentMode
 
 let wss = null
 let ws = null
@@ -81,18 +83,20 @@ function requestAbilityData() {
     mcSend('request_ability_data')
 }
 
-export function startMinecraftBot({ port = 8765, ai }) {
+export function startMinecraftBot({ port, ai }) {
     aiInstance = ai
-    if (isBendcraft) {
+    if (getMode() === 'bendcraft') {
         loadCombos()
         loadStaticAbilityData()
     }
-    _connect(port)
+    // Port priority: explicit arg → mode default (survival=8766, bendcraft=8765)
+    const resolvedPort = port ?? (getMode() === 'survival' ? 8766 : 8765)
+    _connect(resolvedPort)
 }
 
-function _connect(port = 8765) {
+function _connect(port) {
     wss = new WebSocketServer({ port })
-    console.log(`⛏️ [MC] WebSocket server listening on port ${port} (mode: ${MODE})`)
+    console.log(`⛏️ [MC] WebSocket server listening on port ${port} (mode: ${currentMode})`)
 
     wss.on("connection", (socket) => {
         ws = socket
@@ -108,12 +112,15 @@ function _connect(port = 8765) {
                 tickMs: 25,
                 ai: aiInstance
             })
-            if (isBendcraft) stateController.updateAbilityStats(staticAbilities)
+            if (getMode() === 'bendcraft') stateController.updateAbilityStats(staticAbilities)
         }
         stateController.start()
 
-        if (isBendcraft) requestAbilityData()
-        if (isSurvival) startSurvivalLoop(stateController, mcSend, mcChat)
+        if (getMode() === 'bendcraft') requestAbilityData()
+        if (getMode() === 'survival' && !survivalLoopStarted) {
+            startSurvivalLoop(stateController, mcSend, mcChat)
+            survivalLoopStarted = true
+        }
 
         socket.on("message", async (data) => {
             try {
@@ -165,7 +172,7 @@ async function _handleEvent(event) {
         }
 
         case "duel_data": {
-            if (!isBendcraft) break
+            //if (getMode() === 'survival') break
             stateController.updateLilyState(
                 { x: event.lily.x, y: event.lily.y, z: event.lily.z },
                 event.lily.hp
@@ -222,7 +229,7 @@ async function _handleEvent(event) {
         }
 
         case "ability_data": {
-            if (!isBendcraft) break
+            if (getMode() === 'survival') break
             mergeAbilityData(event.abilities)
             if (stateController?.updateAbilityStats) {
                 stateController.updateAbilityStats(staticAbilities)
@@ -232,7 +239,7 @@ async function _handleEvent(event) {
         }
 
         case "set_duel_target": {
-            if (!isBendcraft) break
+            if (getMode() === 'survival') break
             stateController?.setDuelTarget(event.target)
             stateController.duelDifficulty = event.difficulty || "medium"
             console.log(`[DUEL] Difficulty: ${stateController.duelDifficulty}`)
@@ -252,9 +259,51 @@ async function _handleEvent(event) {
             console.log(`⛏️ [MC] ${event.player} left`)
             break
 
-        case "player_death":
-            console.log(`⛏️ [MC] ${event.player} died: ${event.cause}`)
+        case "player_death": {
+            const who = event.player
+            console.log(`⛏️ [MC] ${who} died`)
+
+            const inDuel       = stateController?.currentStateName === 'DUELING'
+            const lilyDied     = who === 'Lily'
+            const opponentDied = inDuel && who === stateController?.duelTarget
+
+            if (inDuel && (lilyDied || opponentDied)) {
+                console.log(`[DUEL] ${who} died — ending duel`)
+                if (stateController) {
+                    stateController.duelTarget = null
+                    stateController.transitionTo('IDLE')
+                }
+                mcSend('run_command', { command: '/lily duel stop' })
+            }
+
+            if (lilyDied) {
+                console.log('[MC] Lily died — reloading bot in 3s')
+                setTimeout(() => mcSend('spawn', {}), 3000)
+            }
             break
+        }
+
+        case "set_mode": {
+            currentMode = event.mode
+            console.log(`[MC] Mode switched to ${currentMode}`)
+
+            if (currentMode === 'bendcraft') {
+                loadCombos()
+                loadStaticAbilityData()
+                if (stateController) {
+                    stateController.updateAbilityStats(staticAbilities)
+                    requestAbilityData()
+                }
+                survivalLoopStarted = false
+            }
+
+            if (currentMode === 'survival' && !survivalLoopStarted) {
+                survivalLoopStarted = true
+                startSurvivalLoop(stateController, mcSend, mcChat)
+            }
+
+            break
+        }
     }
 }
 

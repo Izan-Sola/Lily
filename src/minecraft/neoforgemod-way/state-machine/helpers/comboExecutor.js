@@ -8,7 +8,7 @@ let combosData = {}
 
 export function loadCombos() {
     try {
-        const raw = fs.readFileSync(path.join(__dirname, './data/PKCombosData.json'), 'utf8')
+        const raw = fs.readFileSync(path.join(__dirname, '../states/data/PKCombosData.json'), 'utf8')
         combosData = JSON.parse(raw)
         console.log(`[COMBOS] Loaded ${combosData.combos?.length ?? 0} combos`)
     } catch (err) {

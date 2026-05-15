@@ -119,7 +119,7 @@ export class DuelingState {
 
     async _sendPrompt(targetName) {
         const prompt = buildDuelPrompt(this.ctx, targetName);
-        //   console.log('[DUEL PROMPT]\n', prompt);
+           console.log('[DUEL PROMPT]\n', prompt);
 
         try {
             const response = await fetch("http://localhost:11434/api/chat", {

@@ -172,24 +172,73 @@ async function _handleEvent(event) {
         }
 
         case "duel_data": {
-            //if (getMode() === 'survival') break
+            // Update Lily's current position and health
             stateController.updateLilyState(
                 { x: event.lily.x, y: event.lily.y, z: event.lily.z },
-                event.lily.hp
+                event.lily.hp,
+                event.lily.hunger ?? 20
             );
+
+            // Store Lily's previous position for movement tracking
+            if (!stateController.lilyPrevPos) {
+                stateController.lilyPrevPos = { x: event.lily.x, y: event.lily.y, z: event.lily.z };
+            } else {
+                stateController.lilyPrevPos = {
+                    x: stateController.lilyPos?.x ?? event.lily.x,
+                    y: stateController.lilyPos?.y ?? event.lily.y,
+                    z: stateController.lilyPos?.z ?? event.lily.z
+                };
+            }
+
             const opp = event.opponent;
+
+            // Store opponent's previous position before updating
+            if (!stateController.opponentPrevPos) {
+                stateController.opponentPrevPos = {};
+            }
+
+            const currentOpp = stateController.players?.[opp.name];
+            if (currentOpp) {
+                stateController.opponentPrevPos[opp.name] = {
+                    x: currentOpp.x,
+                    y: currentOpp.y,
+                    z: currentOpp.z
+                };
+            }
+
+            // Update opponent data
             stateController.updatePlayers({
                 [opp.name]: {
-                    x: opp.x, y: opp.y, z: opp.z,
+                    x: opp.x,
+                    y: opp.y,
+                    z: opp.z,
                     hp: opp.hp
                 }
             });
+
+            // Update bindings (abilities in hotbar)
             const bindingsMap = event.bindings;
             if (bindingsMap) {
                 for (const [slot, ability] of Object.entries(bindingsMap)) {
                     stateController.bindAbility(parseInt(slot), ability);
                 }
             }
+
+            // Store duel difficulty if provided
+            if (event.duelDifficulty) {
+                stateController.duelDifficulty = event.duelDifficulty;
+            }
+
+            // Store sprinting state if provided
+            if (event.lily?.sprinting !== undefined) {
+                stateController.lilySprinting = event.lily.sprinting;
+            }
+
+            // Store armor value if provided
+            if (event.lily?.armor !== undefined) {
+                stateController.lilyArmor = event.lily.armor;
+            }
+
             break;
         }
 
@@ -263,8 +312,8 @@ async function _handleEvent(event) {
             const who = event.player
             console.log(`⛏️ [MC] ${who} died`)
 
-            const inDuel       = stateController?.currentStateName === 'DUELING'
-            const lilyDied     = who === 'Lily'
+            const inDuel = stateController?.currentStateName === 'DUELING'
+            const lilyDied = who === 'Lily'
             const opponentDied = inDuel && who === stateController?.duelTarget
 
             if (inDuel && (lilyDied || opponentDied)) {

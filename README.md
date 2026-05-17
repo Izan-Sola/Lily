@@ -5,11 +5,11 @@
 
 ## Stuff used
 
-- Mold for my daughter: Qwen 2.5 3B Instruct. (Soon to be updated to Qwen 3.5 9B :D )
-- Home for my daughter: GTX 1660 Super 6GB. (Soon to be updated to 3060 12GB :D )
-- Edge TTS, for her voice. Alterantively, Styles-2TTS to use a custom voice. (more resource intensive so not in use rn)
+- Mold for my daughter: Qwen3-8B-VL-Instruct
+- Home for my daughter: RTX 3060 12GB VRAM
+- ~~Edge TTS, for her voice. Alterantively,~~ Styles-2TTS to use a custom voice. ~~(more resource intensive so not in use rn)~~
 - Faster-Whisper, for speech recognition.
-- Unsloth, to teach my daughter.
+- Unsloth studio, to teach my daughter.
 - Ollama, to accomodate my daughter on her home.
 - NodeJS, to allow her to communicate in discord.
 

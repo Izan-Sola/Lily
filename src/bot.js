@@ -7,12 +7,15 @@ import {
     getVoiceConnection,
 } from "@discordjs/voice"
 import fs from "fs"
+import { randomUUID } from "crypto"
+import { tmpdir } from "os"
+import { join } from "path"
 import path from "path"
 import { fileURLToPath } from "url"
 import { exec, spawn } from "child_process"
 import { promisify } from "util"
 import prism from "prism-media"
-import { HytaleAIChat, initLogChannel } from "./ai/ollama.js"
+import { HytaleAIChat, initLogChannel } from "./ai/index.js"
 import { config } from "./utils/config.js"
 import { getPrefs } from "./utils/userPreferences.js"
 const __filename = fileURLToPath(import.meta.url)
@@ -33,7 +36,7 @@ export async function transcribe(audioPath) {
     return new Promise((resolve, reject) => {
         const script = `
 from faster_whisper import WhisperModel
-model = WhisperModel('base', device='cuda', compute_type='int8')
+model = WhisperModel('small', device='cuda', compute_type='int8')
 segments, _ = model.transcribe(r'${audioPath}')
 print(' '.join(s.text for s in segments).strip())
 `
@@ -47,7 +50,24 @@ print(' '.join(s.text for s in segments).strip())
         })
     })
 }
-
+export async function speak(text) {
+    const outPath = join(tmpdir(), `lily_${randomUUID()}.wav`)
+    return new Promise((resolve, reject) => {
+        const py = spawn(PYTHON_BIN, [
+            process.env.STYLETTS2_SCRIPT,
+            "--text", text,
+            "--ref",  process.env.VOICE_SAMPLE_PATH,
+            "--out",  outPath,
+            "--model_dir", process.env.STYLETTS2_MODEL_DIR ?? "./models",
+        ])
+        let err = ""
+        py.stderr.on("data", d => err += d)
+        py.on("close", code => {
+            if (code !== 0) return reject(new Error(`StyleTTS2 failed: ${err.trim()}`))
+            resolve(outPath)
+        })
+    })
+}
 function sanitizeInput(text) {
     return text
         .replace(/[:;=8][\-o\*\']?[\)\]\(\[dDpP\/\:\}\{@\|\\]/gi, "")
@@ -64,16 +84,16 @@ function sanitizeInput(text) {
         .trim()
 }
 
-export async function speak(text) {
-    const clean   = sanitizeInput(text)
-    const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
-    const wavPath = "/tmp/lily_response.wav"
-    const oggPath = "/tmp/lily_response.ogg"
-    await execAsync(`${EDGE_TTS_BIN} --text "${escaped}" --voice en-US-AnaNeural --write-media ${wavPath}`)
-    await execAsync(`ffmpeg -y -i ${wavPath} -c:a libopus ${oggPath}`)
-    fs.unlink(wavPath, () => { })
-    return oggPath
-}
+// export async function speak(text) {
+//     const clean   = sanitizeInput(text)
+//     const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
+//     const wavPath = "/tmp/lily_response.wav"
+//     const oggPath = "/tmp/lily_response.ogg"
+//     await execAsync(`${EDGE_TTS_BIN} --text "${escaped}" --voice en-US-AnaNeural --write-media ${wavPath}`)
+//     await execAsync(`ffmpeg -y -i ${wavPath} -c:a libopus ${oggPath}`)
+//     fs.unlink(wavPath, () => { })
+//     return oggPath
+// }
 
 export async function playInGuild(guildId, text) {
     const state = guildPlayers.get(guildId)

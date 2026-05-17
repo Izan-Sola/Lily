@@ -114,25 +114,37 @@ export class DuelingState {
         this.busy = true;
         this._sendPrompt(targetName).finally(() => {
             this.busy = false;
-        });
+        });w
     }
-
     async _sendPrompt(targetName) {
         const prompt = buildDuelPrompt(this.ctx, targetName);
-           console.log('[DUEL PROMPT]\n', prompt);
+        console.log('[DUEL PROMPT]\n', prompt);
 
         try {
-            const response = await fetch("http://localhost:11434/api/chat", {
+            const response = await fetch("http://localhost:11434/v1/chat/completions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     model: "Lily",
                     stream: false,
-                    messages: [{ role: "user", content: prompt }]
+                    temperature: 0.35,
+                    max_tokens: 120,
+                    response_format: { type: "json_object" },
+                    messages: [
+                        {
+                            role: "system",
+                            content: "Return ONLY valid JSON. No reasoning. No extra text."
+                        },
+                        {
+                            role: "user",
+                            content: prompt
+                        }
+                    ]
                 })
             });
+
             const data = await response.json();
-            const text = data.message?.content;
+            const text = data.choices?.[0]?.message?.content;
 
             console.log('[Dueling] Lily decision:', text);
             if (!text) return;
@@ -148,40 +160,21 @@ export class DuelingState {
 
             const target = this.ctx.players[targetName];
 
-            // Look at target (always handled in onTick now)
-            // if (action.look_at) {
-            //     this.ctx.mcSend('look_at', action.look_at);
-            // } else if (target) {
-            //     this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1, z: target.z });
-            // }
-
             // Move in the correct direction based on desired position
-            // Move in the correct direction based on desired position, stop when close enough
             if (action.move_to && this.ctx.lilyPos && target) {
                 const dx = action.move_to.x - this.ctx.lilyPos.x;
                 const dz = action.move_to.z - this.ctx.lilyPos.z;
                 const distToGoal = Math.hypot(dx, dz);
 
                 if (distToGoal <= 0.75) {
-                    // Already close enough – stop moving
                     this.ctx.mcSend('move', { direction: 'stop' });
                     this.moveTarget = null;
                 } else {
-                    // Send target coordinates – Java will continuously adjust
                     this.ctx.mcSend('move_to', { x: action.move_to.x, z: action.move_to.z });
-                    this.moveTarget = action.move_to;   // store for local use (optional)
+                    this.moveTarget = action.move_to;
                 }
             }
 
-            // Use ability slot
-            // const slot = action.slot;
-            // if (slot) {
-            //     triggerCooldown(this.ctx, slot);
-            //     this._executeAbility(slot);
-            //     this.nextPromptAt = Date.now() + this._getAbilityDuration(slot);
-            // } else {
-            //     this.nextPromptAt = Date.now() + this._getAbilityDuration(slot);
-            // }
             const slots = Array.isArray(action.slot)
                 ? action.slot
                 : action.slot
@@ -193,73 +186,69 @@ export class DuelingState {
                 let accumulatedDelay = 0;
 
                 for (const slot of slots) {
-                    const duration =
-                        this._getAbilityDuration(slot);
+                    const duration = this._getAbilityDuration(slot);
                     setTimeout(() => {
                         triggerCooldown(this.ctx, slot);
                         this._executeAbility(slot);
-
                     }, accumulatedDelay);
                     accumulatedDelay += duration + 650;
                     if (accumulatedDelay > maxDuration) {
                         maxDuration = accumulatedDelay;
                     }
                 }
-                this.nextPromptAt =
-                    Date.now() + maxDuration
+                this.nextPromptAt = Date.now() + maxDuration
             } else {
-                this.nextPromptAt =
-                    Date.now() + 1000
+                this.nextPromptAt = Date.now() + 1000
             }
 
         } catch (err) {
             console.error('[Dueling] AI error:', err.message);
-            this.nextPromptAt = Date.now();
+            this.nextPromptAt = Date.now() + 2000;
         }
     }
 
-_executeAbility(slot) {
-    // ── Combo slot ──
-    if (this._isComboSlot(slot)) {
-        const combo = this._getComboForSlot(slot)
-        if (!combo) {
-            console.warn(`[Dueling] No combo found for virtual slot ${slot}`)
+    _executeAbility(slot) {
+        // ── Combo slot ──
+        if (this._isComboSlot(slot)) {
+            const combo = this._getComboForSlot(slot)
+            if (!combo) {
+                console.warn(`[Dueling] No combo found for virtual slot ${slot}`)
+                return
+            }
+            const duration = executeCombo(combo, this.ctx.bindings, cleanName, this.ctx.mcSend)
+            this.nextPromptAt += Date.now() + duration + 500
             return
         }
-        const duration = executeCombo(combo, this.ctx.bindings, cleanName, this.ctx.mcSend)
-        this.nextPromptAt = Date.now() + duration + 500
-        return
-    }
 
-    // ── Normal ability slot ──
-    const raw = this.ctx.bindings[slot]
-    if (!raw) return
-    const abilityName = cleanName(raw)
-    const stats = this.ctx.abilityStats[abilityName]
-    if (!stats?.actions?.length) return
+        // ── Normal ability slot ──
+        const raw = this.ctx.bindings[slot]
+        if (!raw) return
+        const abilityName = cleanName(raw)
+        const stats = this.ctx.abilityStats[abilityName]
+        if (!stats?.actions?.length) return
 
-    this.ctx.mcSend('hotbar', { slot })
+        this.ctx.mcSend('hotbar', { slot })
 
-    const steps = []
-    for (const actionStr of stats.actions) {
-        const [type, mode, countStr] = actionStr.split(':')
-        const count = parseInt(countStr ?? '1')
-        for (let i = 0; i < count; i++) steps.push({ type, mode })
-    }
-
-    let timeOffset = 0
-    for (let i = 0; i < steps.length; i++) {
-        const step = steps[i]
-        const delay = timeOffset
-        setTimeout(() => this._fireAction(step), delay)
-        if (step.type === 'sneak' && step.mode === 'hold') {
-            setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'unsneak' }), delay + (stats.actionTimes[i] ?? 200))
+        const steps = []
+        for (const actionStr of stats.actions) {
+            const [type, mode, countStr] = actionStr.split(':')
+            const count = parseInt(countStr ?? '1')
+            for (let i = 0; i < count; i++) steps.push({ type, mode })
         }
-        timeOffset += stats.actionTimes[i] ?? 200
-    }
 
-    this.nextPromptAt = Date.now()
-}
+        let timeOffset = 0
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i]
+            const delay = timeOffset
+            setTimeout(() => this._fireAction(step), delay)
+            if (step.type === 'sneak' && step.mode === 'hold') {
+                setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'unsneak' }), delay + (stats.actionTimes[i] ?? 200))
+            }
+            timeOffset += stats.actionTimes[i] ?? 200
+        }
+
+        this.nextPromptAt += Date.now()
+    }
     _fireAction(step) {
         console.log(`[FireAction] type: ${step.type} mode: ${step.mode}`);
         const { type, mode } = step;
@@ -280,7 +269,7 @@ _executeAbility(slot) {
                 this.ctx.mcSend('attack', { mode: 'once' });
             }
         } else if (type === 'jump') {
-                 this.ctx.mcSend('jump', { mode: 'once' });
+            this.ctx.mcSend('jump', { mode: 'once' });
         }
     }
 

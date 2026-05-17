@@ -7,17 +7,21 @@ export function startSurvivalLoop(stateController, mcSend, mcChat) {
         if (!prompt) return
 
         try {
-            const response = await fetch("http://localhost:11434/api/chat", {
+            // ✅ UPDATED to OpenAI-compatible format
+            const response = await fetch("http://localhost:11434/v1/chat/completions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     model: "Lily",
                     stream: false,
-                    messages: [{ role: "user", content: prompt }]
+                    messages: [{ role: "user", content: prompt }],
+                    temperature: 0.7,
+                    max_tokens: 512
                 })
             })
             const data = await response.json()
-            const text = data.message?.content
+            const text = data.choices?.[0]?.message?.content  // ✅ UPDATED path
+            
             if (!text) return
 
             let action

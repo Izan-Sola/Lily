@@ -1,5 +1,5 @@
 import { SlashCommandBuilder } from "discord.js"
-import { HytaleAIChat } from "../ai/ollama.js"
+import { HytaleAIChat } from "../ai/HytaleAIChat.js"
 import { config } from "../utils/config.js"
 
 const ai = new HytaleAIChat({ 

@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from "discord.js"
 import { speak } from "../bot.js"
-import { HytaleAIChat } from "../ai/ollama.js"
+import { HytaleAIChat } from "../ai/HytaleAIChat.js"
 import { config } from "../utils/config.js"
 import fs from "fs"
 

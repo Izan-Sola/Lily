@@ -5,6 +5,8 @@ export const config = {
     token: process.env.DISCORD_TOKEN,
     clientId: process.env.CLIENT_ID,
     ollamaUrl: process.env.OLLAMA_URL,
-    model: "Lily",               // keep this
-    modelName: "Lily"            // add this for compatibility
+  //  model: "qwen3.5:9b",               // keep this
+    model: "Lily",
+    modelName: "Lily",
+ //   modelName: "qwen3.5:9b"            // add this for compatibility
 };

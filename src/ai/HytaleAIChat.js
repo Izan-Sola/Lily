@@ -10,10 +10,10 @@ const DEFAULT_OPTIONS = {
     temperature: 0.75,
     maxReplyTokens: 2048,
     contextWindow: 4096,
-    maxConvoMessages: 15,        // Reduced from 20
-    maxRawMessages: 15,          // Reduced from 20
-    maxToolLoops: 5,             // Reduced from 10 — prevents infinite loops
-    maxToolRepeats: 1,           // Block after 1 repeat, not 2
+    maxConvoMessages: 15,
+    maxRawMessages: 15,
+    maxToolLoops: 5,
+    maxToolRepeats: 1,
     memoryDuplicateMinScore: 0.9,
     memoryRemoveMinScore: 0.70,
     memoryQueryMinScore: 0.35,
@@ -40,11 +40,9 @@ export class HytaleAIChat {
         this.userMessageCount = 0
         this.observeBuffer = []
 
-        // Initialize tool executor
         this.tools = new ToolExecutor(this.opts)
     }
 
-    // Get or create history objects
     getHistory(channelId) {
         if (!this.convoHistories.has(channelId)) {
             this.convoHistories.set(channelId, new ConversationHistory(this.opts.maxConvoMessages))
@@ -85,10 +83,8 @@ export class HytaleAIChat {
         const { skipHistory = false, skipRawContext = false } = opts
         const messages = []
 
-        // System prompt
         messages.push({ role: "system", content: systemPromptOverride ?? SYSTEM_PROMPT })
 
-        // Raw chat context
         if (!skipRawContext) {
             const rawContext = this.getRawContext(channelId)
             if (rawContext.length) {
@@ -99,11 +95,38 @@ export class HytaleAIChat {
             }
         }
 
-        // Conversation history
         const history = skipHistory ? [] : this.getConvoHistory(channelId)
         messages.push(...history)
 
         return messages
+    }
+
+    /**
+     * Build a multimodal user message content array for Qwen3-VL / OpenAI vision format.
+     * images = [{ base64, mimeType }, ...]
+     */
+    buildUserContent(text, images = []) {
+        if (!images || images.length === 0) {
+            return text
+        }
+
+        // OpenAI vision format — array of content parts
+        const parts = []
+
+        for (const img of images) {
+            parts.push({
+                type: "image_url",
+                image_url: {
+                    url: `data:${img.mimeType};base64,${img.base64}`
+                }
+            })
+        }
+
+        if (text) {
+            parts.push({ type: "text", text })
+        }
+
+        return parts
     }
 
     async summarizeAndStore(lines, { logPrefix, maxTokens = 512, memoryTitle, memorySource = "summary", participants = [], emotions = [], importance = 0.5 }) {
@@ -136,6 +159,7 @@ export class HytaleAIChat {
             logError(`[${logPrefix}] ${err.message}`)
         }
     }
+
     async summarizeConversationAndStore(channelId) {
         const history = this.getHistory(channelId)
         const lines = history.lastN(this.opts.summarizeLastN)
@@ -205,14 +229,38 @@ export class HytaleAIChat {
         })
     }
 
-    async runToolLoop(channelId, systemPromptOverride = null, opts = {}) {
+    async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
         let pendingGifUrl = null
+        let firstIteration = true
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
             log(`🔄 [LOOP ${i + 1}]`)
 
-            const msg = await this.sendToOllama(this.buildMessagesForOllama(channelId, systemPromptOverride, opts))
+            // On the first iteration, inject images into the last user message if any
+            let messages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
+
+            if (firstIteration && images.length > 0) {
+                firstIteration = false
+                // Find the last user message and make it multimodal
+                for (let j = messages.length - 1; j >= 0; j--) {
+                    if (messages[j].role === "user") {
+                        const originalText = typeof messages[j].content === "string"
+                            ? messages[j].content
+                            : ""
+                        messages[j] = {
+                            ...messages[j],
+                            content: this.buildUserContent(originalText, images)
+                        }
+                        log(`🖼️ [VISION] Injected ${images.length} image(s) into user message`)
+                        break
+                    }
+                }
+            } else {
+                firstIteration = false
+            }
+
+            const msg = await this.sendToOllama(messages)
             if (!msg) return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
 
             const content = (msg.content ?? "").trim()
@@ -231,7 +279,6 @@ export class HytaleAIChat {
                     let args = {}
                     try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
 
-                    // Check dedupe
                     const blocked = tracker.check(tc.function.name, args, log)
                     if (blocked) {
                         this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: blocked })
@@ -292,10 +339,7 @@ export class HytaleAIChat {
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 this.pushToConvoHistory(channelId, {
                     role: "user",
-                    content: `[System: Your <tool_call> was malformed. Use exact format:
-<tool_call>
-{"name": "tool_name", "arguments": {"arg": "value"}}
-</tool_call>]`
+                    content: `[System: Your <tool_call> was malformed. Use exact format:\n<tool_call>\n{"name": "tool_name", "arguments": {"arg": "value"}}\n</tool_call>]`
                 })
                 continue
             }
@@ -325,28 +369,28 @@ export class HytaleAIChat {
         return { text: "Sorry, I got a bit lost. Could you repeat that?", gifUrl: null }
     }
 
-    async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}) {
+    async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}, images = []) {
         const clean = sanitizeInput(rawInput)
-        if (!clean) return null
+        // Allow empty text if there are images
+        if (!clean && images.length === 0) return null
 
-        log(`\n💬 [${logPrefix}] ${clean.slice(0, 200)}`)
+        log(`\n💬 [${logPrefix}] ${clean.slice(0, 200)}${images.length ? ` + ${images.length} image(s)` : ""}`)
 
         return this.withChannelLock(channelId, async () => {
-            this.pushToConvoHistory(channelId, { role: "user", content: clean })
+            // Store text-only version in history (base64 would bloat it)
+            this.pushToConvoHistory(channelId, { role: "user", content: clean || "[sent an image]" })
 
             if (this.opts.summarizeEvery > 0 && ++this.userMessageCount % this.opts.summarizeEvery === 0) {
                 await this.summarizeConversationAndStore(channelId)
             }
 
-            const result = await this.runToolLoop(channelId, systemPromptOverride, opts)
-
-            // Reset tool tracker for next conversation turn
+            const result = await this.runToolLoop(channelId, systemPromptOverride, opts, images)
             return result
         })
     }
 
-    chat(channelId, userInput, systemPromptOverride = null, opts = {}) {
-        return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts)
+    chat(channelId, userInput, systemPromptOverride = null, opts = {}, images = []) {
+        return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts, images)
     }
 
     buttIn(channelId, rawMessage) {

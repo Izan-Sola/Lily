@@ -191,7 +191,7 @@ export class ToolExecutor {
                 source: "conversation",
             })
             case "query_recent_episodic_memories":
-                return this.queryRecentEpisodicMemories(args.limit ?? 5, args.days_back ?? 7)
+                return this.queryRecentEpisodicMemories(args.limit ?? 5, args.days_back ?? 1)
             case "send_gif": return this.searchGif(args.query ?? "")
             default:
                 console.warn(`⚠️ [TOOL] Unknown: ${name}`)

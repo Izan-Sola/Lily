@@ -8,6 +8,7 @@ export class DuelingState {
         this.lastRequest = 0;
         this.requestInterval = 2000;
         this.busy = false;
+        this.minPromptDelay = 1250 
     }
     _isComboSlot(slot) {
         return slot >= 10
@@ -83,7 +84,7 @@ export class DuelingState {
         const now = Date.now();
 
         // Always look at opponent
-        this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1.5, z: target.z });
+        this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1.75, z: target.z });
 
         // Continuously update movement direction toward moveTarget every second
         if (this.moveTarget && this.ctx.lilyPos && now - this.lastMoveUpdate >= 1000) {
@@ -114,14 +115,14 @@ export class DuelingState {
         this.busy = true;
         this._sendPrompt(targetName).finally(() => {
             this.busy = false;
-        });w
+        });
     }
     async _sendPrompt(targetName) {
         const prompt = buildDuelPrompt(this.ctx, targetName);
         console.log('[DUEL PROMPT]\n', prompt);
 
         try {
-            const response = await fetch("http://localhost:11434/v1/chat/completions", {
+            const response = await fetch("http://localhost:11435/v1/chat/completions", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -191,19 +192,21 @@ export class DuelingState {
                         triggerCooldown(this.ctx, slot);
                         this._executeAbility(slot);
                     }, accumulatedDelay);
+
                     accumulatedDelay += duration + 650;
                     if (accumulatedDelay > maxDuration) {
                         maxDuration = accumulatedDelay;
                     }
+
                 }
-                this.nextPromptAt = Date.now() + maxDuration
+              this.nextPromptAt = Date.now() + Math.max(maxDuration, this.minPromptDelay)
             } else {
-                this.nextPromptAt = Date.now() + 1000
+                this.nextPromptAt = Date.now() + this.minPromptDelay
             }
 
         } catch (err) {
             console.error('[Dueling] AI error:', err.message);
-            this.nextPromptAt = Date.now() + 2000;
+            this.nextPromptAt = Date.now() + this.minPromptDelay
         }
     }
 
@@ -216,7 +219,7 @@ export class DuelingState {
                 return
             }
             const duration = executeCombo(combo, this.ctx.bindings, cleanName, this.ctx.mcSend)
-            this.nextPromptAt += Date.now() + duration + 500
+            this.nextPromptAt = Date.now() + duration + 500
             return
         }
 
@@ -247,7 +250,7 @@ export class DuelingState {
             timeOffset += stats.actionTimes[i] ?? 200
         }
 
-        this.nextPromptAt += Date.now()
+      this.nextPromptAt = Date.now() + timeOffset + 500
     }
     _fireAction(step) {
         console.log(`[FireAction] type: ${step.type} mode: ${step.mode}`);

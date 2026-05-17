@@ -47,7 +47,7 @@ export function buildDuelPrompt(ctx, opponentName) {
         : distInt < (prevDist ?? distInt) ? `Opponent is closing in (moved ${Math.floor(oppMoved)} blocks closer).`
         : `Opponent is moving laterally (moved ${Math.floor(oppMoved)} blocks).`
 
-    const oppVelocity = oppMoved === null ? '' : oppMoved > 4 ? ' Fast.' : oppMoved > 1.5 ? ' Moderate speed.' : ' Slow.'
+    const oppVelocity = oppMoved === null ? '' : oppMoved > 4 ? ' Fast.' : oppMoved > 1.75 ? ' Moderate speed.' : ' Slow.'
 
     // ── Situation summary ─────────────────────────────────────────────────────
     const situations = []
@@ -127,15 +127,8 @@ ${situationText}
 - circle: strafe around opponent laterally, avoid direct trades
 - reposition: move to better ground, higher elevation or open space
 
-# DIFFICULTY RULES
-EASY: use EXACTLY ONE ability.
-MEDIUM: use EXACTLY TWO abilities.
-HARD: use EXACTLY THREE abilities.
-IMPOSSIBLE: You are free to use any number of abilities.
-
 # IMPORTANT RULES
-- NEVER return fewer or more abilities than required by difficulty.
-- Use a variety of abilities, do not repeat the same every turn.
+- Return a two slots to use.
 - Prioritize slots 10+ if available and at range.
 - "move_to" is where you want to move this turn.
 - "look_toward" is what you want to aim at — usually the opponent, but can be a retreat point or predicted position.
@@ -143,7 +136,7 @@ IMPOSSIBLE: You are free to use any number of abilities.
 
 # RESPONSE FORMAT EXAMPLE
 { 
-  "slot": [1, 3],
+  "slot": [slot_number, slot_number],
   "move_to": { "x": 100, "z": 200 },
   "look_toward": { "x": 106, "y": 62, "z": 204 },
   "look_pitch": -15,

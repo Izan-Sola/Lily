@@ -18,6 +18,12 @@ export async function initLogChannel(client) {
 function sendToLogChannel(message) {
     const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
     logChannel?.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => { })
+
+        fetch("http://localhost:1234/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ msg: truncated })
+    }).catch(() => { console.error("Failed to send log to local server") })
 }
 
 export function log(message) { console.log(message); sendToLogChannel(message) }

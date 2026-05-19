@@ -145,7 +145,7 @@ export class ToolExecutor {
         try {
             const { data } = await axios.post(`${this.opts.episodicDbUrl}/recent`, {
                 limit: Math.min(limit, 10),
-                days_back: Math.min(daysBack, 30),
+                days_back: 1,
                 min_importance: 0.3  // Include moderately important memories too
             }, { timeout: this.opts.dbTimeout })
 
@@ -174,7 +174,6 @@ export class ToolExecutor {
     }
     async execute(name, args) {
         switch (name) {
-            case "query_hytale_wiki": return this.wikiSearch(args.query ?? "")
             case "minecraft_action": return this.minecraftAction(args.action ?? "", args.target ?? "")
             case "query_memory_database": return this.memoryQuery(args.query ?? "")
             case "addto_memory_database": return this.memoryAdd(args.text ?? "", args.source ?? "user")
@@ -202,14 +201,6 @@ export class ToolExecutor {
 
 // ─── Tool Definitions (for Ollama) ──────────────────────────────────────
 export const TOOLS = [
-    {
-        type: "function",
-        function: {
-            name: "query_hytale_wiki",
-            description: "Search the Hytale wiki. Use multiple keywords.",
-            parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-        }
-    },
     {
         type: "function",
         function: {
@@ -285,14 +276,6 @@ export const TOOLS = [
             name: "send_gif",
             description: "Search and send a GIF.",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "minecraft_action",
-            description: "Perform an action in Minecraft.",
-            parameters: { type: "object", properties: { action: { type: "string", enum: ["chat", "goto_player", "mine_block", "look_at_player", "get_status"] }, target: { type: "string" } }, required: ["action"] }
         }
     }
 ]

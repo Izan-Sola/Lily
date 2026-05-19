@@ -94,9 +94,6 @@ export function buildDuelPrompt(ctx, opponentName) {
     return `
 You are currently in a 1v1 bending duel against ${opponentName}.
 
-# DIFFICULTY
-${ctx.duelDifficulty || "medium"}
-
 # AVAILABLE ABILITIES (slots 1-${maxSlot})
 ${abilitiesText}
 # DUEL STATUS
@@ -120,27 +117,22 @@ ${abilitiesText}
 ${situationText}
 
 # STRATEGIES
-- aggressive: close distance, pressure hard, sprint in, use combos
-- defensive: keep distance, use ranged abilities, avoid trading hits
-- retreat: flee and survive, use movement abilities to escape
-- chase: opponent is running, pursue and close the gap
-- circle: strafe around opponent laterally, avoid direct trades
-- reposition: move to better ground, higher elevation or open space
+- defensive: keep distance, use ranged abilities, avoid trading hits.
+- reposition: MUST use when enemy is very close or closing in fast. MUST include a [MOVEMENT] slot.
+- chase: go all in, pursue and close the gap. MUST include a [MOVEMENT] slot.
 
 # IMPORTANT RULES
-- Return a two slots to use.
-- Prioritize slots 10+ if available and at range.
+- Return two slot numbers from 1 to ${maxSlot} to use.
+- Prioritize slots 10+ if off cooldown and at range.
 - "move_to" is where you want to move this turn.
-- "look_toward" is what you want to aim at — usually the opponent, but can be a retreat point or predicted position.
-- "look_pitch" is vertical aim in degrees: negative aims down, positive aims up. Use -10 to -25 for arcing projectiles at range.
+- If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
+- DO NOT use slots on cooldown.
 
 # RESPONSE FORMAT EXAMPLE
 { 
-  "slot": [slot_number, slot_number],
+  "slot": [(1-${maxSlot}), (1-${maxSlot})],
   "move_to": { "x": 100, "z": 200 },
-  "look_toward": { "x": 106, "y": 62, "z": 204 },
-  "look_pitch": -15,
-  "strategy": "aggressive",F
+  "strategy": "strategy_name",
 }
 - Reply ONLY with the JSON object, no extra text.
 `.trim()

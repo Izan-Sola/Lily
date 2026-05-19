@@ -45,7 +45,7 @@ export function isComboAvailable(combo, bindings, cleanName) {
         .filter(Boolean)
         .map(raw => normalize(cleanName(raw)));
 
-    console.log(`[COMBOS] Checking ${combo.name} — needs: ${combo.bindsRequired} — have: ${availableAbilities}`);
+   // console.log(`[COMBOS] Checking ${combo.name} — needs: ${combo.bindsRequired} — have: ${availableAbilities}`);
 
     return combo.bindsRequired.every(required =>
         availableAbilities.includes(normalize(required))
@@ -63,7 +63,7 @@ function findSlot(abilityName, bindings, cleanName) {
 // Execute a combo given current bindings and mcSend
 // Returns total duration in ms so caller knows when it's done
 export function executeCombo(combo, bindings, cleanName, mcSend) {
-    console.log(`[COMBOS] Executing: ${combo.name}`)
+   // console.log(`[COMBOS] Executing: ${combo.name}`)
 
     // Expand actions into steps, one per actual input
     const steps = []
@@ -115,6 +115,6 @@ export function executeCombo(combo, bindings, cleanName, mcSend) {
         timeOffset += stepTime
     }
 
-    console.log(`[COMBOS] ${combo.name} will finish in ~${timeOffset}ms`)
+   //console.log(`[COMBOS] ${combo.name} will finish in ~${timeOffset}ms`)
     return timeOffset
 }

@@ -530,7 +530,7 @@ export async function createBot() {
         if (!isMentioned && !isReplyToBot) {
             ai.observe(`${authorName} said ${userInput}`)
 
-            if (Math.random() < 0.03) {
+            if (Math.random() < 0.01) {
                 const prefs = getPrefs(message.author.id)
                 if (prefs.spontaneousReplies) {
                     try {

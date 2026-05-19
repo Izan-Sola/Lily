@@ -1,3 +1,4 @@
+
 import { createBot, ai } from "./bot.js"
 import { config } from "./utils/config.js"
 import { startMinecraftBot } from "./minecraft/neoforgemod-way/lilybot.js"

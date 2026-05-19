@@ -19,15 +19,25 @@
 - She can send gifs, audio messages, talk in voice calls, and listen to your voice.
 - ~~She has access to a vectorized database containing the scrapped Hytale Wiki that she can query using a tool~~ (Droping this).
 - She has a memory database that she can query, add, update and remove memory from using tools.
-- ( more coming soon herhehrehreherhre )
+- SUCCUMB TO HER MAD BENDING SKILLS IN A DUEL (wip)
 
 ## Commands
+
+### Discord
 
 - /aboutlily: Displays information about Lily
 - /lilyprefs: Adjust your preferences such as, disabling pings, voice processing (she wont listen to you in voice calls), disabling spontaneous replies to your messages...
 - /voice join/leave: To make her join or leave a voice channel.
 - /audiolily: To make her respond with an audio message.
+  
+### Minecraft
 
+- /lily duel (difficulty)
+- /lily duel stop
+- /lily bend (element) [only fire atm]
+- /lily come
+- /lily follow (user)
+  
 ## Info
 
 - Your voice is only processed in real time and not stored anywhere. An history of messages sent in the current channel is stored for memory and context enhancement purposes.

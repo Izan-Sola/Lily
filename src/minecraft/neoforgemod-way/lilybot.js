@@ -6,7 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { loadCombos, enrichCombosData } from './state-machine/helpers/comboExecutor.js'
 import { startSurvivalLoop } from './state-machine/helpers/survivalLoop.js'
-
+import axios from "axios"
 export function requestDuelData(opponentName) {
     mcSend('get_duel_data', { opponent: opponentName });
 }
@@ -89,7 +89,6 @@ export function startMinecraftBot({ port, ai }) {
         loadCombos()
         loadStaticAbilityData()
     }
-    // Port priority: explicit arg → mode default (survival=8766, bendcraft=8765)
     const resolvedPort = port ?? (getMode() === 'survival' ? 8766 : 8765)
     _connect(resolvedPort)
 }
@@ -146,40 +145,41 @@ function _connect(port) {
 async function _handleEvent(event) {
     switch (event.type) {
         case "chat": {
-            console.log(`⛏️ [MC CHAT] ${event.player}: ${event.message}`)
-            aiInstance?.pushRawMessage("minecraft", event.player, event.message)
+            const player = event.player ?? ""
+            const message = event.message ?? ""
 
-            const lower = event.message.toLowerCase()
-            const addressed = lower.includes("lily") || lower.includes("hylily")
+            if (player.toLowerCase() === "lily") break
 
-            if (addressed || (Math.random() < 0.05 && stateController?.currentStateName !== 'DUELING')) {
-                if (stateController?.currentStateName === 'DUELING') {
-                    mcChat("Lily is busy in a duel!")
-                    break
+            console.log(`[MC CHAT] ${player}: ${message}`)
+
+            try {
+                const aiReply = await aiInstance.chat(
+                    "minecraft",
+                    `${player}: ${message}`,
+                    MINECRAFT_SYSTEM_PROMPT
+                )
+
+                const text = aiReply?.text?.trim()
+
+                if (text) {
+                    _splitMessage(text).forEach(msg => {
+                        mcChat(msg)
+                    })
                 }
-                try {
-                    const formatted = addressed
-                        ? `[${event.player}] says to you in Minecraft: ${event.message}`
-                        : `[${event.player}] said in Minecraft nearby: ${event.message}`
-                    const reply = await aiInstance?.chat("minecraft", formatted, MINECRAFT_SYSTEM_PROMPT)
-                    const text = typeof reply === "object" ? reply?.text : reply
-                    if (text) _splitMessage(text).forEach(chunk => mcChat(chunk))
-                } catch (err) {
-                    console.error("⛏️ [MC] Chat handler error:", err.message)
-                }
+
+            } catch (err) {
+                console.error("[MC CHAT ERROR]", err)
             }
+
             break
         }
-
         case "duel_data": {
-            // Update Lily's current position and health
             stateController.updateLilyState(
                 { x: event.lily.x, y: event.lily.y, z: event.lily.z },
                 event.lily.hp,
                 event.lily.hunger ?? 20
             );
 
-            // Store Lily's previous position for movement tracking
             if (!stateController.lilyPrevPos) {
                 stateController.lilyPrevPos = { x: event.lily.x, y: event.lily.y, z: event.lily.z };
             } else {
@@ -192,7 +192,6 @@ async function _handleEvent(event) {
 
             const opp = event.opponent;
 
-            // Store opponent's previous position before updating
             if (!stateController.opponentPrevPos) {
                 stateController.opponentPrevPos = {};
             }
@@ -206,7 +205,6 @@ async function _handleEvent(event) {
                 };
             }
 
-            // Update opponent data
             stateController.updatePlayers({
                 [opp.name]: {
                     x: opp.x,
@@ -216,7 +214,6 @@ async function _handleEvent(event) {
                 }
             });
 
-            // Update bindings (abilities in hotbar)
             const bindingsMap = event.bindings;
             if (bindingsMap) {
                 for (const [slot, ability] of Object.entries(bindingsMap)) {
@@ -224,17 +221,14 @@ async function _handleEvent(event) {
                 }
             }
 
-            // Store duel difficulty if provided
             if (event.duelDifficulty) {
                 stateController.duelDifficulty = event.duelDifficulty;
             }
 
-            // Store sprinting state if provided
             if (event.lily?.sprinting !== undefined) {
                 stateController.lilySprinting = event.lily.sprinting;
             }
 
-            // Store armor value if provided
             if (event.lily?.armor !== undefined) {
                 stateController.lilyArmor = event.lily.armor;
             }
@@ -308,27 +302,31 @@ async function _handleEvent(event) {
             console.log(`⛏️ [MC] ${event.player} left`)
             break
 
+        // Clean Hook from your custom NeoForge / Arclight Event Listener
+        case "duel_result": {
+            const { winner, loser } = event;
+            console.log(`🏆 [DUEL ENDED] Winner: ${winner} | Loser: ${loser}`);
+
+            if (stateController) {
+                stateController.duelTarget = null;
+                if (stateController.currentStateName === 'DUELING') {
+                    stateController.transitionTo('IDLE');
+                }
+            }
+
+            axios.post("http://localhost:1234/duel-result", { winner, loser })
+                .then(() => console.log("✉️ [DUEL] Successfully synced score update with Blog Server."))
+                .catch(err => console.error("❌ [DUEL] Failed to update Blog Server:", err.message));
+
+            break;
+        }
+
         case "player_death": {
             const who = event.player
             console.log(`⛏️ [MC] ${who} died`)
 
-            const inDuel = stateController?.currentStateName === 'DUELING'
-            const lilyDied = who === 'Lily'
-            const opponentDied = inDuel && who === stateController?.duelTarget
-
-            if (inDuel && (lilyDied || opponentDied)) {
-                console.log(`[DUEL] ${who} died — ending duel`)
-                if (stateController) {
-                    stateController.duelTarget = null
-                    stateController.transitionTo('IDLE')
-                }
-                mcSend('run_command', { command: '/lily duel stop' })
-            }
-
-            if (lilyDied) {
-                console.log('[MC] Lily died — reloading bot in 3s')
-                setTimeout(() => mcSend('spawn', {}), 3000)
-            }
+            // Note: General match termination logic is handled cleanly by "duel_result" above.
+            // This case handles fallback cleanups if non-duel entities drop.
             break
         }
 

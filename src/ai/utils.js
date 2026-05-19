@@ -18,8 +18,7 @@ export async function initLogChannel(client) {
 function sendToLogChannel(message) {
     const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
     logChannel?.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => { })
-
-        fetch("http://localhost:1234/log", {
+    fetch("http://localhost:1234/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ msg: truncated })
@@ -44,7 +43,7 @@ export function sanitizeInput(raw) {
         .trim()
 }
 
-// ─── Tool Call Dedupe ───────────────────────────────────────────────────
+// ─── Tool Call Tracker (repeat counter only, no cache) ───────────────────
 export class ToolCallTracker {
     constructor(maxRepeats = 2) {
         this.maxRepeats = maxRepeats
@@ -53,33 +52,19 @@ export class ToolCallTracker {
 
     reset() {
         this.calls = new Map()
-        this.results = new Map()
         return this
     }
 
     check(name, args, logFn) {
         const key = `${name}:${JSON.stringify(args)}`
-        
-        if (this.results.has(key)) {
-            logFn(`📦 [CACHED] ${key}`)
-            return this.results.get(key)
-        }
-        
         const count = (this.calls.get(key) || 0) + 1
         this.calls.set(key, count)
-        
+
         if (count > this.maxRepeats) {
             logFn(`🚫 [BLOCKED] ${key} (x${count})`)
-            return `[System: You already called ${name} with these arguments ${count - 1} times. Reply now without repeating.]`
+            return `[System: You already called ${name} with these exact arguments ${count - 1} time(s). Stop calling it and reply now.]`
         }
-        
-        return null
-    }
 
-    cacheResult(name, args, result, logFn) {
-        const key = `${name}:${JSON.stringify(args)}`
-        this.results.set(key, result)
-        logFn(`💾 [CACHED] ${key}`)
-        return result
+        return null
     }
 }

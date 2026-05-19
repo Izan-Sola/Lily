@@ -1,7 +1,7 @@
 # My Daughter Lily (WIP)
 
 - My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip, objective is to give her as much autonomy as possible considering limitations)
-- Related: https://github.com/Izan-Sola/Lily-Minecraft
+- Related: https://github.com/Izan-Sola/Lily-Minecraft, https://lilyblog.duckdns.org/
 
 ## Stuff used
 

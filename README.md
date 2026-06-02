@@ -24,24 +24,20 @@
 ## Commands
 
 ### Discord
-<<<<<<< HEAD
 
-=======
->>>>>>> 95f3a03f33f0af9ecdd6ad6433d89d5e0ceaedab
 - /aboutlily: Displays information about Lily
 - /lilyprefs: Adjust your preferences such as, disabling pings, voice processing (she wont listen to you in voice calls), disabling spontaneous replies to your messages...
 - /voice join/leave: To make her join or leave a voice channel.
 - /audiolily: To make her respond with an audio message.
   
 ### Minecraft
-<<<<<<< HEAD
 
 - /lily duel (difficulty)
 - /lily duel stop
-=======
+
 - /lily duel (difficulty)
 - /lily duel stop 
->>>>>>> 95f3a03f33f0af9ecdd6ad6433d89d5e0ceaedab
+
 - /lily bend (element) [only fire atm]
 - /lily come
 - /lily follow (user)

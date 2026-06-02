@@ -13,7 +13,7 @@ const DEFAULT_OPTIONS = {
     repeatPenalty: 1.1,
     repeatLastN: 64,
     maxReplyTokens: 2048,
-    contextWindow: 4096,
+    contextWindow: 6096,
     maxConvoMessages: 15,
     maxRawMessages: 15,
     maxToolLoops: 5,
@@ -69,6 +69,20 @@ export class HytaleAIChat {
 
     pushRawMessage(channelId, authorName, content) {
         this.getRawBuffer(channelId).push(authorName, content)
+    }
+
+    /**
+     * Called before chat() when Lily is pinged or replied to in a channel.
+     * Replaces the raw buffer for that channel with the exact messages
+     * that appeared before the ping, so Lily always has real context.
+     *
+     * @param {string} channelId
+     * @param {Array<{ authorName: string, content: string }>} recentMessages - oldest first
+     */
+    injectChannelContext(channelId, recentMessages) {
+        const lines = recentMessages.map(m => `${m.authorName}: ${m.content}`)
+        this.getRawBuffer(channelId).replace(lines)
+        log(`📥 [CONTEXT] Injected ${lines.length} messages into raw buffer for channel ${channelId}`)
     }
 
     pushToConvoHistory(channelId, message) {

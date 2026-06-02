@@ -125,9 +125,9 @@ async function extractImagesFromEmbeds(message) {
             const res = await fetch(gifUrl)
             fs.writeFileSync(tmpIn, Buffer.from(await res.arrayBuffer()))
             await execAsync(`ffmpeg -y -i "${tmpIn}" -frames:v 1 -q:v 2 "${tmpOut}"`)
-            fs.unlink(tmpIn, () => {})
+            fs.unlink(tmpIn, () => { })
             const b64 = fs.readFileSync(tmpOut).toString("base64")
-            fs.unlink(tmpOut, () => {})
+            fs.unlink(tmpOut, () => { })
             results.push({ base64: b64, mimeType: "image/jpeg" })
             console.log(`🖼️ [MEDIA] Extracted frame from embed GIF`)
         } catch (err) {
@@ -137,6 +137,7 @@ async function extractImagesFromEmbeds(message) {
 
     return results
 }
+
 async function extractImagesFromMessage(message) {
     const results = []
     for (const attachment of message.attachments.values()) {
@@ -148,7 +149,7 @@ async function extractImagesFromMessage(message) {
     const embedImages = await extractImagesFromEmbeds(message)
     results.push(...embedImages)
 
-    // Si no hay nada pero hay link de tenor/giphy, espera y re-fetch
+    // If nothing but there's a tenor/giphy link, wait and re-fetch
     if (results.length === 0 && /tenor\.com|giphy\.com/i.test(message.content)) {
         await new Promise(r => setTimeout(r, 1500))
         try {
@@ -523,14 +524,14 @@ export async function createBot() {
             .replace(`<@!${client.user.id}>`, "")
             .trim()
 
-        // ── Always push to raw buffer first ──
+        // ── Passive: always push to rolling raw buffer ──
         if (userInput) ai.pushRawMessage(channelId, authorName, userInput)
 
         // ─── Spontaneous butt-in ──────────────────────────────────────────────
         if (!isMentioned && !isReplyToBot) {
             ai.observe(`${authorName} said ${userInput}`)
 
-            if (Math.random() < 0.01) {
+            if (Math.random() < 0.005) {
                 const prefs = getPrefs(message.author.id)
                 if (prefs.spontaneousReplies) {
                     try {
@@ -549,6 +550,24 @@ export async function createBot() {
                 }
             }
             return
+        }
+
+        // ─── Fetch the 15 messages before this ping/reply and inject as context ──
+        try {
+            const fetched = await message.channel.messages.fetch({
+                limit: 15,
+                before: message.id,
+            })
+            const prior = [...fetched.values()]
+                .reverse()                              // oldest → newest
+                .filter(m => m.content?.trim())         // skip empty/attachment-only
+                .map(m => ({
+                    authorName: m.author.bot ? m.author.displayName : (m.member?.displayName || m.author.username),
+                    content: m.content,
+                }))
+            ai.injectChannelContext(channelId, prior)
+        } catch (err) {
+            console.error("[CONTEXT] Failed to fetch prior messages:", err.message)
         }
 
         // ─── Voice message handler (reply to bot with audio) ──────────────────
@@ -620,7 +639,7 @@ export async function createBot() {
             try {
                 const referenced = await message.channel.messages.fetch(message.reference.messageId)
                 if (referenced) {
-                    // ── Extraer imágenes del mensaje referenciado también ──
+                    // Extract images from the referenced message too
                     const referencedImages = await extractImagesFromMessage(referenced)
                     if (referencedImages.length > 0) {
                         console.log(`🖼️ [MEDIA] Extracted ${referencedImages.length} image(s) from referenced message`)
@@ -632,7 +651,7 @@ export async function createBot() {
                     } else {
                         const repliedUser = referenced.member?.displayName || referenced.author.username
                         const quoted = referenced.content?.replace(/\n/g, " ").slice(0, 120)
-                        formattedMessage = `[${authorName}] says to you, replying to ${repliedUser} who said "${quoted}"${referencedImages.length ? " (with an image)" : ""}: ${userInput}`
+                        formattedMessage = `[${authorName}] says to you, mentioning ${repliedUser} who said "${quoted}"${referencedImages.length ? " (with an image)" : ""}: ${userInput}`
                     }
                 }
             } catch { }
@@ -650,7 +669,7 @@ export async function createBot() {
         if (!formattedMessage) {
             formattedMessage = userInput
                 ? `[${authorName}] says to you: ${userInput}`
-                : `[${authorName}] sent you an image`  // image-only message
+                : `[${authorName}] sent you an image`
         }
 
         await message.channel.sendTyping()

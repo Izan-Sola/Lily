@@ -1,6 +1,6 @@
 import axios from "axios"
 import { log, logError } from './utils.js'
-
+import { tavily } from "@tavily/core"
 // ─── Tool Executor ──────────────────────────────────────────────────────
 export class ToolExecutor {
     constructor(opts) {
@@ -134,7 +134,26 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Failed to search for GIF." })
         }
     }
+    async webSearch(query) {
+        log(`🌐 [WEB SEARCH] "${query}"`)
+        try {
+            const client = tavily({ apiKey: process.env.TAVILY_API_KEY })
+            const response = await client.search(query, {
+                maxResults: 5,
+                searchDepth: "basic",
+            })
 
+            const results = response?.results ?? []
+            if (!results.length) return "No results found."
+
+            return results.map(r =>
+                `**${r.title}**\n${r.url}\n${r.content ?? ""}`
+            ).join("\n\n")
+        } catch (err) {
+            logError(`[WEB SEARCH] ${err.message}`)
+            return "Web search failed."
+        }
+    }
     async minecraftAction(action, target) {
         log(`⛏️ [MINECRAFT] ${action} → ${target || "none"}`)
         // This would integrate with your Minecraft bot
@@ -174,6 +193,7 @@ export class ToolExecutor {
     }
     async execute(name, args) {
         switch (name) {
+            case "web_search": return this.webSearch(args.query ?? "")
             case "minecraft_action": return this.minecraftAction(args.action ?? "", args.target ?? "")
             case "query_memory_database": return this.memoryQuery(args.query ?? "")
             case "addto_memory_database": return this.memoryAdd(args.text ?? "", args.source ?? "user")
@@ -226,7 +246,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "query_memory_database",
-            description: "Search stored factual memory. Use multiple keywords.",
+            description: "Search stored factual memory. Use multiple keywords. Use the results to enhance your reply, and never mention the use of the tool.",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     },
@@ -234,7 +254,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a new factual entry.",
+            description: "Store a new factual entry. Reply naturally after using the tool, and never mention you used it.",
             parameters: { type: "object", properties: { text: { type: "string" }, source: { type: "string" } }, required: ["text"] }
         }
     },
@@ -242,7 +262,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "update_memory_database",
-            description: "Update an existing memory.",
+            description: "Update an existing memory. Reply naturally after using the tool, and never mention you used it",
             parameters: { type: "object", properties: { query: { type: "string" }, text: { type: "string" } }, required: ["query", "text"] }
         }
     },
@@ -250,7 +270,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "remove_memory_database",
-            description: "Remove matching memories.",
+            description: "Remove matching memories. Reply naturally after using the tool, and never mention you used it",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     },
@@ -258,7 +278,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "query_episodic_memory",
-            description: "Search episodic memory for past events.",
+            description: "Search episodic memory for past events. Use multiple keywords. Use the results to enhance your reply, and never mention the use of the tool. ",
             parameters: { type: "object", properties: { query: { type: "string" }, k: { type: "number" } }, required: ["query"] }
         }
     },
@@ -266,7 +286,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "addto_episodic_memory",
-            description: "Store an episodic memory (event/experience).",
+            description: "Store an episodic memory (event/experience). Reply naturally after using the tool, and never mention you used it",
             parameters: { type: "object", properties: { title: { type: "string" }, summary: { type: "string" }, participants: { type: "array", items: { type: "string" } }, emotions: { type: "array", items: { type: "string" } }, importance: { type: "number" } }, required: ["title", "summary"] }
         }
     },
@@ -274,8 +294,22 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "send_gif",
-            description: "Search and send a GIF.",
+            description: "Search and send a GIF. Reply naturally after using the tool, and never mention you used it",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "web_search",
+            description: "Search the web for current information, news, facts, or anything you don't know. Use when asked things outside your basic knowledge.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "Search query" }
+                },
+                required: ["query"]
+            }
         }
     }
 ]

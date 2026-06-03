@@ -7,7 +7,7 @@
 
 - Mold for my daughter: Qwen3-8B-VL-Instruct
 - Home for my daughter: RTX 3060 12GB VRAM
-- ~~Edge TTS, for her voice. Alterantively,~~ Styles-2TTS to use a custom voice. ~~(more resource intensive so not in use rn)~~
+- Edge TTS, for her voice. Alterantively, Styles-2TTS to use a custom voice. 
 - Faster-Whisper, for speech recognition.
 - Unsloth studio, to teach my daughter.
 - Ollama, to accomodate my daughter on her home.

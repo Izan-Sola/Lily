@@ -34,10 +34,6 @@
 
 - /lily duel (difficulty)
 - /lily duel stop
-
-- /lily duel (difficulty)
-- /lily duel stop 
-
 - /lily bend (element) [only fire atm]
 - /lily come
 - /lily follow (user)

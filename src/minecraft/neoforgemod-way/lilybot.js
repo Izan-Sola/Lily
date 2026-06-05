@@ -265,7 +265,11 @@ async function _handleEvent(event) {
             )
             break
         }
-
+        case "element_changed": {
+            stateController.currentElement = event.element
+            console.log(`[BEND] Element changed to ${event.element}`)
+            break
+        }
         case "hostiles": {
             stateController?.updateHostiles(event.hostiles ?? [])
             break
@@ -350,6 +354,10 @@ async function _handleEvent(event) {
             }
 
             break
+        }
+        case "source_block": {
+            stateController?.handleSourceBlock(event);
+            break;
         }
     }
 }

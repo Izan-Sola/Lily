@@ -4,6 +4,11 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
+const SWAP_LOCK_TIME = 20
+const DEFAULT_STEP_TIME = 200
+
 let combosData = {}
 
 export function loadCombos() {
@@ -17,11 +22,12 @@ export function loadCombos() {
     }
     return combosData
 }
+
 export function enrichCombosData(abilityStats) {
     for (const combo of getCombos()) {
         const stats = abilityStats[combo.name]
         if (stats) {
-            combo.range    = stats.range
+            combo.range = stats.range
             combo.cooldown = stats.cooldown
         }
     }
@@ -35,24 +41,17 @@ export function getComboByName(name) {
     return getCombos().find(c => c.name === name) ?? null
 }
 
-// Check if all required abilities are bound in current bindings
-// bindings: { slot: rawAbilityName }
-// cleanName: fn to strip color codes
 export function isComboAvailable(combo, bindings, cleanName) {
-    const normalize = (s) => s.toLowerCase().trim().replace(/\s+/g, '');
-    
+    const normalize = (s) => s.toLowerCase().trim().replace(/\s+/g, '')
     const availableAbilities = Object.values(bindings)
         .filter(Boolean)
-        .map(raw => normalize(cleanName(raw)));
-
-   // console.log(`[COMBOS] Checking ${combo.name} — needs: ${combo.bindsRequired} — have: ${availableAbilities}`);
+        .map(raw => normalize(cleanName(raw)))
 
     return combo.bindsRequired.every(required =>
         availableAbilities.includes(normalize(required))
-    );
+    )
 }
 
-// Find the hotbar slot for a given ability name
 function findSlot(abilityName, bindings, cleanName) {
     for (const [slot, raw] of Object.entries(bindings)) {
         if (cleanName(raw) === abilityName) return parseInt(slot)
@@ -60,61 +59,133 @@ function findSlot(abilityName, bindings, cleanName) {
     return null
 }
 
-// Execute a combo given current bindings and mcSend
-// Returns total duration in ms so caller knows when it's done
-export function executeCombo(combo, bindings, cleanName, mcSend) {
-   // console.log(`[COMBOS] Executing: ${combo.name}`)
+/*
+handlers:
+onSource(ms)
+onLockLook(ms)
+onForceMove(dir, ms)
+*/
 
-    // Expand actions into steps, one per actual input
-    const steps = []
-    for (const actionStr of combo.actions) {
+export async function executeCombo(combo, bindings, cleanName, mcSend, handlers = {}) {
+    const { onSource, onLockLook, onForceMove } = handlers
+
+    const actions = combo.actions
+    const times = combo.actionsTime ?? []
+    let timeIdx = 0
+
+    for (let i = 0; i < actions.length; i++) {
+        const actionStr = actions[i]
         const parts = actionStr.split(':')
         const type = parts[0]
 
+        // ------------------------
+        // SWAP
+        // ------------------------
         if (type === 'swap') {
-            steps.push({ type, target: parts[2] })
-        } else {
+            const ability = parts[2]
+            const slot = findSlot(ability, bindings, cleanName)
+            timeIdx++
+
+            if (slot !== null) {
+                mcSend('hotbar', { slot })
+                await sleep(SWAP_LOCK_TIME)
+            } else {
+                console.warn(`[COMBOS] Cannot find slot for ability: ${ability}`)
+            }
+            continue
+        }
+
+        const count = parseInt(parts[2] ?? '1') || 1
+
+        // ------------------------
+        // CLICK
+        // ------------------------
+        if (type === 'click') {
+            for (let c = 0; c < count; c++) {
+                const stepTime = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                if (parts[1] === 'left') mcSend('attack', { mode: 'once' })
+                if (parts[1] === 'right') mcSend('use', { mode: 'once' })
+                await sleep(stepTime)
+            }
+            continue
+        }
+
+        // ------------------------
+        // SNEAK
+        // ------------------------
+        if (type === 'sneak') {
             const mode = parts[1]
-            const count = parseInt(parts[2] ?? '1')
-            for (let j = 0; j < count; j++) {
-                steps.push({ type, mode })
-            }
-        }
-    }
+            const isBlocking = parts[3] !== 'continue'
 
-    // Now steps.length === actionsTime.length
-    let timeOffset = 0
-    for (let i = 0; i < steps.length; i++) {
-        const step = steps[i]
-        const delay = timeOffset
-        const stepTime = combo.actionsTime[i] ?? 200
+            for (let c = 0; c < count; c++) {
+                const stepTime = times[timeIdx++] ?? DEFAULT_STEP_TIME
 
-        if (step.type === 'swap') {
-            const slot = findSlot(step.target, bindings, cleanName)
-            if (slot !== null) setTimeout(() => mcSend('hotbar', { slot }), delay)
-            else console.warn(`[COMBOS] Cannot find slot for ability: ${step.target}`)
-        } else if (step.type === 'click') {
-            if (step.mode === 'left') setTimeout(() => mcSend('attack', { mode: 'once' }), delay)
-            else if (step.mode === 'right') setTimeout(() => mcSend('use', { mode: 'once' }), delay)
-} else if (step.type === 'sneak') {
-            if (step.mode === 'hold') {
-                setTimeout(() => mcSend('fire_pk_event', { event: 'sneak' }), delay)
-                // unsneak scheduled after ALL remaining steps finish
-                const remainingTime = combo.actionsTime.slice(i).reduce((a, b) => a + b, 0)
-                setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), delay + remainingTime)
-                // do NOT add stepTime to timeOffset — next action fires immediately
-                continue
-            } else if (step.mode === 'tap') {
-                setTimeout(() => mcSend('fire_pk_event', { event: 'sneak' }), delay)
-                setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), delay + 80)
+                if (mode === 'hold') {
+                    mcSend('fire_pk_event', { event: 'sneak' })
+                    setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), stepTime)
+                    if (isBlocking) await sleep(stepTime)
+                } else if (mode === 'tap') {
+                    mcSend('fire_pk_event', { event: 'sneak' })
+                    setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), 80)
+                    if (isBlocking) await sleep(stepTime)
+                }
             }
-        } else if (step.type === 'jump') {
-            setTimeout(() => mcSend('fire_pk_event', { event: 'jump' }), delay)
+            continue
         }
 
-        timeOffset += stepTime
-    }
+        // ------------------------
+        // JUMP
+        // ------------------------
+        if (type === 'jump') {
+            for (let c = 0; c < count; c++) {
+                const stepTime = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                mcSend('fire_pk_event', { event: 'jump' })
+                await sleep(stepTime)
+            }
+            continue
+        }
 
-   //console.log(`[COMBOS] ${combo.name} will finish in ~${timeOffset}ms`)
-    return timeOffset
+        // ------------------------
+        // MOVEMENT
+        // ------------------------
+        if (type === 'forward' || type === 'back' || type === 'left' || type === 'right') {
+            for (let c = 0; c < count; c++) {
+                const stepTime = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                if (onForceMove) onForceMove(type, stepTime)
+                await sleep(stepTime)
+            }
+            continue
+        }
+
+        // LOCK LOOK
+        // ------------------------
+        if (type === 'locklook') {
+            for (let c = 0; c < count; c++) {
+                const stepTime = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                if (onLockLook) onLockLook(stepTime)
+                // non-blocking: just set the lock and move on immediately
+            }
+            continue
+        }
+
+        // ------------------------
+        // SOURCE
+        // ------------------------
+        if (type === 'source') {
+            for (let c = 0; c < count; c++) {
+                const stepTime = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                const isBlocking = parts[3] === 'block'  // source defaults non-blocking
+
+                if (onSource) onSource(stepTime)
+                if (isBlocking) await sleep(stepTime)
+            }
+            continue
+        }
+
+        // ------------------------
+        // FALLBACK
+        // ------------------------
+        const stepTime = times[timeIdx++] ?? DEFAULT_STEP_TIME
+        await sleep(stepTime)
+    }
 }

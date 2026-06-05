@@ -1,28 +1,183 @@
 import { getCombos, isComboAvailable } from '../helpers/comboExecutor.js'
+
+// ── Abilities to NEVER inject in the prompt ───────────────────────────────────
+const EXCLUDED_ABILITIES = new Set([
+    "shockwave", "raiseearth", "lavadisc", "catapult"
+])
+
+// ── Element system prompts (full prompt per element) ──────────────────────────
+const ELEMENT_PROMPTS = {
+    fire: (opponentName, abilitiesText, maxSlot, status) => `
+You are currently in a 1v1 bending duel against ${opponentName} using fire.
+
+# AVAILABLE ABILITIES (slots 1-${maxSlot})
+${abilitiesText}
+
+# DUEL STATUS
+${status}
+
+# STRATEGIES
+- defensive: keep distance, use ranged abilities, avoid trading hits.
+- reposition: MUST use when enemy is very close or closing in fast. MUST include a [MOVEMENT] slot.
+- chase: go all in, pursue and close the gap. MUST include a [MOVEMENT] slot.
+
+# IMPORTANT RULES
+- Return three slot numbers from 1 to ${maxSlot} to use.
+- Prioritize slots 10+ if off cooldown and at range.
+- "move_to" is where you want to move this turn.
+- If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
+- DO NOT use slots on cooldown.
+
+# RESPONSE FORMAT EXAMPLE
+{ 
+  "slot": [(1-${maxSlot}), (1-${maxSlot}), (1-${maxSlot})],
+  "move_to": { "x": 100, "z": 200 },
+  "strategy": "strategy_name",
+}
+- Reply ONLY with the JSON object, no extra text.
+`.trim(),
+
+    water: (opponentName, abilitiesText, maxSlot, status) => `
+You are currently in a 1v1 bending duel against ${opponentName}.
+
+# AVAILABLE ABILITIES (slots 1-${maxSlot})
+${abilitiesText}
+# DUEL STATUS
+${status}
+
+# STRATEGIES
+- defensive: keep distance, use ranged abilities, avoid trading hits.
+- reposition: MUST use when enemy is very close or closing in fast. MUST include a [MOVEMENT] slot.
+- chase: go all in, pursue and close the gap. MUST include a [MOVEMENT] slot.
+
+# IMPORTANT RULES
+- Return three slot numbers from 1 to ${maxSlot} to use.
+- Prioritize slots 10+ if off cooldown and at range.
+- "move_to" is where you want to move this turn.
+- If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
+- DO NOT use slots on cooldown.
+
+# RESPONSE FORMAT EXAMPLE
+{ 
+  "slot": [(1-${maxSlot}), (1-${maxSlot}), (1-${maxSlot})],
+  "move_to": { "x": 100, "z": 200 },
+  "strategy": "strategy_name",
+}
+- Reply ONLY with the JSON object, no extra text.
+`.trim(),
+
+    earth: (opponentName, abilitiesText, maxSlot, status) => `
+You are currently in a 1v1 bending duel against ${opponentName} using earth.
+
+# AVAILABLE ABILITIES (slots 1-${maxSlot})
+${abilitiesText}
+# DUEL STATUS
+${status}
+
+# STRATEGIES
+- defensive: keep distance, use ranged abilities, avoid trading hits.
+- reposition: MUST use when enemy is very close or closing in fast. MUST include a [MOVEMENT] slot.
+- chase: go all in, pursue and close the gap. MUST include a [MOVEMENT] slot.
+
+# IMPORTANT RULES
+- Return one slot number from 1 to ${maxSlot} to use.
+- Prioritize slots 10+ if off cooldown and at range.
+- "move_to" is where you want to move this turn.
+- If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
+- DO NOT use slots on cooldown.
+
+# RESPONSE FORMAT EXAMPLE
+{ 
+  "slot": [(1-${maxSlot})],
+  "move_to": { "x": 100, "z": 200 },
+  "strategy": "strategy_name",
+}
+- Reply ONLY with the JSON object, no extra text.
+`.trim(),
+
+    air: (opponentName, abilitiesText, maxSlot, status) => `
+You are currently in a 1v1 bending duel against ${opponentName}.
+
+# AVAILABLE ABILITIES (slots 1-${maxSlot})
+${abilitiesText}
+# DUEL STATUS
+${status}
+
+# STRATEGIES
+- defensive: keep distance, use ranged abilities, avoid trading hits.
+- reposition: MUST use when enemy is very close or closing in fast. MUST include a [MOVEMENT] slot.
+- chase: go all in, pursue and close the gap. MUST include a [MOVEMENT] slot.
+
+# IMPORTANT RULES
+- Return three slot numbers from 1 to ${maxSlot} to use.
+- Prioritize slots 10+ if off cooldown and at range.
+- "move_to" is where you want to move this turn.
+- If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
+- DO NOT use slots on cooldown.
+
+# RESPONSE FORMAT EXAMPLE
+{ 
+  "slot": [(1-${maxSlot}), (1-${maxSlot}), (1-${maxSlot})],
+  "move_to": { "x": 100, "z": 200 },
+  "strategy": "strategy_name",
+}
+- Reply ONLY with the JSON object, no extra text.
+`.trim(),
+
+    chi: (opponentName, abilitiesText, maxSlot, status) => `
+You are currently in a 1v1 bending duel against ${opponentName}.
+
+# AVAILABLE ABILITIES (slots 1-${maxSlot})
+${abilitiesText}
+# DUEL STATUS
+${status}
+
+# STRATEGIES
+- defensive: keep distance, use ranged abilities, avoid trading hits.
+- reposition: MUST use when enemy is very close or closing in fast. MUST include a [MOVEMENT] slot.
+- chase: go all in, pursue and close the gap. MUST include a [MOVEMENT] slot.
+
+# IMPORTANT RULES
+- Return three slot numbers from 1 to ${maxSlot} to use.
+- Prioritize slots 10+ if off cooldown and at range.
+- "move_to" is where you want to move this turn.
+- If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
+- DO NOT use slots on cooldown.
+
+# RESPONSE FORMAT EXAMPLE
+{ 
+  "slot": [(1-${maxSlot}), (1-${maxSlot}), (1-${maxSlot})],
+  "move_to": { "x": 100, "z": 200 },
+  "strategy": "strategy_name",
+}
+- Reply ONLY with the JSON object, no extra text.
+`.trim(),
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
 export function buildDuelPrompt(ctx, opponentName) {
     const opponent = ctx.players[opponentName]
     if (!opponent) return "Opponent not found."
 
-    const now     = Date.now()
+    const now = Date.now()
     const lilyPos = ctx.lilyPos
     if (!lilyPos) return "Lily position unknown."
 
-    const prevPos     = ctx.lilyPrevPos
-    const prevOpp     = ctx.opponentPrevPos?.[opponentName]
-  //  const lastStrategy = ctx.lastDuelStrategy ?? 'none'
+    const element = ctx.currentElement ?? 'fire'
+
+    const prevPos = ctx.lilyPrevPos
+    const prevOpp = ctx.opponentPrevPos?.[opponentName]
 
     // ── Distances ─────────────────────────────────────────────────────────────
-    const dist     = Math.hypot(lilyPos.x - opponent.x, lilyPos.z - opponent.z)
-    const distInt  = Math.floor(dist)
+    const dist = Math.hypot(lilyPos.x - opponent.x, lilyPos.z - opponent.z)
+    const distInt = Math.floor(dist)
     const prevDist = prevPos && prevOpp
         ? Math.floor(Math.hypot(prevPos.x - prevOpp.x, prevPos.z - prevOpp.z))
         : null
 
     // ── Height ────────────────────────────────────────────────────────────────
     const yDiff = Math.floor(lilyPos.y - opponent.y)
-    const heightDesc = yDiff > 2  ? `You are ${yDiff} blocks above opponent — projectiles arc further.`
-                     : yDiff < -2 ? `Opponent is ${Math.abs(yDiff)} blocks above you — you are at a disadvantage.`
-                     : 'Same elevation.'
 
     // ── Lily movement ─────────────────────────────────────────────────────────
     const lilyMoved = prevPos
@@ -31,10 +186,10 @@ export function buildDuelPrompt(ctx, opponentName) {
     const lilyDy = prevPos ? Math.floor(lilyPos.y - prevPos.y) : 0
 
     const lilyMovementDesc = lilyMoved === null ? 'No data yet.'
-        : lilyDy < -3  ? `You fell ${Math.abs(lilyDy)} blocks — you may be in a hole.`
-        : lilyDy > 3   ? `You were launched ${lilyDy} blocks upward.`
-        : lilyMoved < 0.5 ? 'You have not moved — you may be stuck or cornered.'
-        : `You moved ${Math.floor(lilyMoved)} blocks.`
+        : lilyDy < -3 ? `You fell ${Math.abs(lilyDy)} blocks — you may be in a hole.`
+            : lilyDy > 3 ? `You were launched ${lilyDy} blocks upward.`
+                : lilyMoved < 0.5 ? 'You have not moved — you may be stuck or cornered.'
+                    : `You moved ${Math.floor(lilyMoved)} blocks.`
 
     // ── Opponent movement ─────────────────────────────────────────────────────
     const oppMoved = prevOpp
@@ -43,38 +198,38 @@ export function buildDuelPrompt(ctx, opponentName) {
 
     const oppMovementDesc = oppMoved === null ? 'No data yet.'
         : oppMoved < 0.3 ? 'Opponent is standing still.'
-        : distInt > (prevDist ?? distInt) ? `Opponent is retreating (moved ${Math.floor(oppMoved)} blocks away).`
-        : distInt < (prevDist ?? distInt) ? `Opponent is closing in (moved ${Math.floor(oppMoved)} blocks closer).`
-        : `Opponent is moving laterally (moved ${Math.floor(oppMoved)} blocks).`
+            : distInt > (prevDist ?? distInt) ? `Opponent is retreating (moved ${Math.floor(oppMoved)} blocks away).`
+                : distInt < (prevDist ?? distInt) ? `Opponent is closing in (moved ${Math.floor(oppMoved)} blocks closer).`
+                    : `Opponent is moving laterally (moved ${Math.floor(oppMoved)} blocks).`
 
     const oppVelocity = oppMoved === null ? '' : oppMoved > 4 ? ' Fast.' : oppMoved > 1.75 ? ' Moderate speed.' : ' Slow.'
 
     // ── Situation summary ─────────────────────────────────────────────────────
     const situations = []
-    if (yDiff > 2)  situations.push('You have high ground advantage.')
+    if (yDiff > 2) situations.push('You have high ground advantage.')
     if (yDiff < -2) situations.push('Opponent has high ground — consider repositioning.')
-    if (ctx.lilyHp <= 6)  situations.push('Your health is critical — consider retreating.')
+    if (ctx.lilyHp <= 6) situations.push('Your health is critical — consider retreating.')
     if (opponent.hp <= 4) situations.push('Opponent is nearly dead — finish them.')
     if (lilyMoved !== null && lilyMoved < 0.5) situations.push('You are not moving — you may be stuck.')
     if (distInt > 15) situations.push('Opponent is very far — use long-range abilities or chase.')
-    if (distInt < 4)  situations.push('Opponent is very close — use close-range abilities.')
+    if (distInt < 4) situations.push('Opponent is very close — use close-range abilities.')
     const situationText = situations.length ? situations.map(s => `- ${s}`).join('\n') : '- No special situation.'
 
-    // ── Abilities (slots 1-9) ─────────────────────────────────────────────────
+    // ── Abilities (slots 1-9, excluding blacklisted) ──────────────────────────
     let abilitiesText = ''
     let maxSlot = 9
     for (let slot = 1; slot <= 9; slot++) {
         const raw = ctx.bindings[slot]
         if (!raw) continue
-        const ability  = cleanName(raw)
-        const stats    = ctx.abilityStats[ability] || { range: 10, cooldown: 0, description: 'No description.' }
+        const ability = cleanName(raw)
+        if (EXCLUDED_ABILITIES.has(ability.toLowerCase())) continue
+        const stats = ctx.abilityStats[ability] || { range: 10, cooldown: 0, description: 'No description.' }
         const remaining = ctx.abilityCooldowns[ability] ? Math.max(0, ctx.abilityCooldowns[ability] - now) : 0
-        const cdStatus  = remaining > 0 ? `${(remaining / 1000).toFixed(1)}s cooldown` : 'ready'
+        const cdStatus = remaining > 0 ? `${(remaining / 1000).toFixed(1)}s cooldown` : 'ready'
         abilitiesText += `Slot ${slot}: ${ability} — Range: ${stats.range}, ${cdStatus}, ${stats.description}\n`
     }
 
     // ── Combos (slots 10+) ────────────────────────────────────────────────────
-    let comboText = ''
     let virtualSlot = 10
     for (const combo of getCombos()) {
         if (!isComboAvailable(combo, ctx.bindings, cleanName)) continue
@@ -91,13 +246,8 @@ export function buildDuelPrompt(ctx, opponentName) {
         virtualSlot++
     }
 
-    return `
-You are currently in a 1v1 bending duel against ${opponentName}.
-
-# AVAILABLE ABILITIES (slots 1-${maxSlot})
-${abilitiesText}
-# DUEL STATUS
-
+    // ── Status block ──────────────────────────────────────────────────────────
+    const status = `
 ## You
 - Health: ${ctx.lilyHp ?? 20}/20
 - Position now: (${Math.floor(lilyPos.x)}, ${Math.floor(lilyPos.y)}, ${Math.floor(lilyPos.z)})
@@ -114,28 +264,11 @@ ${abilitiesText}
 - Opponent movement: ${oppMovementDesc}${oppVelocity}
 
 ## Situation
-${situationText}
+${situationText}`.trim()
 
-# STRATEGIES
-- defensive: keep distance, use ranged abilities, avoid trading hits.
-- reposition: MUST use when enemy is very close or closing in fast. MUST include a [MOVEMENT] slot.
-- chase: go all in, pursue and close the gap. MUST include a [MOVEMENT] slot.
-
-# IMPORTANT RULES
-- Return two slot numbers from 1 to ${maxSlot} to use.
-- Prioritize slots 10+ if off cooldown and at range.
-- "move_to" is where you want to move this turn.
-- If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
-- DO NOT use slots on cooldown.
-
-# RESPONSE FORMAT EXAMPLE
-{ 
-  "slot": [(1-${maxSlot}), (1-${maxSlot})],
-  "move_to": { "x": 100, "z": 200 },
-  "strategy": "strategy_name",
-}
-- Reply ONLY with the JSON object, no extra text.
-`.trim()
+    // ── Build final prompt ────────────────────────────────────────────────────
+    const promptFn = ELEMENT_PROMPTS[element] ?? ELEMENT_PROMPTS['fire']
+    return promptFn(opponentName, abilitiesText, maxSlot, status)
 }
 
 function cleanName(raw) {

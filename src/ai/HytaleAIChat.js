@@ -7,13 +7,14 @@ import { ToolExecutor, TOOLS, TOOL_NAMES } from './tools.js'
 
 const DEFAULT_OPTIONS = {
     model: "Lily",
+    truncation: true,
     temperature: 0.7,
     topP: 0.9,
     topK: 40,
     repeatPenalty: 1.1,
     repeatLastN: 64,
     maxReplyTokens: 2048,
-    contextWindow: 6096,
+    contextWindow: 6000,
     maxConvoMessages: 15,
     maxRawMessages: 15,
     maxToolLoops: 5,

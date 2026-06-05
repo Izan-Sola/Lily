@@ -38,7 +38,7 @@ export class StateController {
         this.bindings         = {}   // slot -> raw ability name
         this.abilityCooldowns = {}   // ability name -> expiry timestamp (ms)
         this.abilityStats     = {}   // ability name -> { range, cooldown, actions, actionTimes, description }
-
+        this.currentElement   = ""
         // Helpers
         this.sneak = new SneakHelper(mcSend)
         this.move  = new MovementHelper(mcSend)
@@ -142,6 +142,12 @@ export class StateController {
     // Helper methods for states
     getFollowTarget() { return this.players[this.opts.followTarget] ?? null }
 
+    handleSourceBlock(event) {
+        if (this.currentStateName === 'DUELING') {
+            this.currentState.onSourceBlock(event);
+        }
+    }
+    
     nearestHostile() {
         if (!this.lilyPos || !this.hostiles.length) return null
         let nearest     = null

@@ -2,7 +2,7 @@
 ### initially supposed to be a hytale bot, but oh well...
 
 - My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip, objective is to give her as much autonomy as possible considering limitations)
-- Related: https://github.com/Izan-Sola/Lily-Minecraft, https://lilyblog.duckdns.org/
+- Related: https://github.com/Izan-Sola/Lily-Minecraft
 
 ## Stuff used
 

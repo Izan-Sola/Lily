@@ -1,13 +1,14 @@
-# My Daughter Lily (WIP)
+# My Daughter Lily (WIP) 
+### initially supposed to be a hytale bot, but oh well...
 
 - My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip, objective is to give her as much autonomy as possible considering limitations)
-- Related: https://github.com/Izan-Sola/Lily-Minecraft, https://lilyblog.duckdns.org/
+- Related: https://github.com/Izan-Sola/Lily-Minecraft
 
 ## Stuff used
 
 - Mold for my daughter: Qwen3-8B-VL-Instruct
 - Home for my daughter: RTX 3060 12GB VRAM
-- ~~Edge TTS, for her voice. Alterantively,~~ Styles-2TTS to use a custom voice. ~~(more resource intensive so not in use rn)~~
+- Edge TTS, for her voice. Alterantively, Styles-2TTS to use a custom voice. 
 - Faster-Whisper, for speech recognition.
 - Unsloth studio, to teach my daughter.
 - Ollama, to accomodate my daughter on her home.
@@ -24,24 +25,16 @@
 ## Commands
 
 ### Discord
-<<<<<<< HEAD
 
-=======
->>>>>>> 95f3a03f33f0af9ecdd6ad6433d89d5e0ceaedab
 - /aboutlily: Displays information about Lily
 - /lilyprefs: Adjust your preferences such as, disabling pings, voice processing (she wont listen to you in voice calls), disabling spontaneous replies to your messages...
 - /voice join/leave: To make her join or leave a voice channel.
 - /audiolily: To make her respond with an audio message.
   
 ### Minecraft
-<<<<<<< HEAD
 
 - /lily duel (difficulty)
 - /lily duel stop
-=======
-- /lily duel (difficulty)
-- /lily duel stop 
->>>>>>> 95f3a03f33f0af9ecdd6ad6433d89d5e0ceaedab
 - /lily bend (element) [only fire atm]
 - /lily come
 - /lily follow (user)

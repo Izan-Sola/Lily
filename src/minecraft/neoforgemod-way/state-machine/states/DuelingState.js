@@ -1,110 +1,82 @@
 import { buildDuelPrompt } from '../prompt-builders/duelPromptBuilder.js';
-import { getComboByName, getCombos, isComboAvailable, executeCombo } from '../helpers/comboExecutor.js'
+import { getCombos, isComboAvailable, executeCombo, comboDuration } from '../helpers/comboExecutor.js'
 
-const MAX_BUSY_MS = 4500;
+const MAX_BUSY_MS = 6000;        // watchdog: max time an AI fetch is allowed to take
 const MAX_NEXT_PROMPT_DELAY = 8000;
+const MIN_PROMPT_DELAY = 1500;   // minimum gap between prompt dispatches
+const DATA_REQUEST_INTERVAL = 500;
 
 export class DuelingState {
     constructor(ctx) {
         this.ctx = ctx;
+
+        // ── Prompt timing ──────────────────────────────────────────
         this.nextPromptAt = 0;
         this.lastRequest = 0;
-        this.requestInterval = 2000;
-        this.busy = false;
-        this._busySince = null;
-        this.minPromptDelay = 2000;
-        this.lookInterval = 0;
+
+        // ── AI fetch gate ──────────────────────────────────────────
+        // true only while waiting for the HTTP response, not while executing
+        this.fetchBusy = false;
+        this._fetchBusySince = null;
+
+        // ── Action queue ───────────────────────────────────────────
+        // AI responses queue here; drained one at a time by _drainQueue()
+        this._actionQueue = [];
+        this._executing = false;   // true while an ability/combo is running
+
+        // ── Movement ───────────────────────────────────────────────
+        this.moveTarget = null;
+        this.lastMoveUpdate = 0;
+        this.forceMoveUntil = 0;
+        this.forceMoveDirection = null;
+
+        // ── Look ───────────────────────────────────────────────────
         this.retreatLookUntil = 0;
         this.retreatLookTarget = null;
         this.sourceLookUntil = 0;
         this.sourceLookTarget = null;
-        this._sourceResolve = null;  // resolves the pending promise
-
-        // Forced movement: while forceMoveUntil > now, normal moveTarget logic is suppressed
-        this.forceMoveUntil = 0;
-        this.forceMoveDirection = null; // 'forward' | 'back' | 'left' | 'right'
-    }
-
-    _isComboSlot(slot) {
-        return slot >= 10
-    }
-
-    _getComboForSlot(slot) {
-        const availableCombos = getCombos().filter(c =>
-            isComboAvailable(c, this.ctx.bindings, cleanName)
-        )
-        const idx = slot - 10
-        return availableCombos[idx] ?? null
-    }
-
-    _getAbilityDuration(slot) {
-        const raw = this.ctx.bindings[slot];
-        if (!raw) return 2000;
-        const ability = cleanName(raw);
-        const stats = this.ctx.abilityStats[ability];
-        if (!stats?.actionTimes?.length) return 2000;
-        return stats.actionTimes.reduce((a, b) => a + b, 0);
-    }
-
-    _getMoveDirection(lilyPos, moveTo, targetPos) {
-        const forwardX = targetPos.x - lilyPos.x;
-        const forwardZ = targetPos.z - lilyPos.z;
-        const forwardLen = Math.hypot(forwardX, forwardZ);
-        const fx = forwardX / forwardLen;
-        const fz = forwardZ / forwardLen;
-
-        const rx = fz;
-        const rz = -fx;
-
-        const dx = moveTo.x - lilyPos.x;
-        const dz = moveTo.z - lilyPos.z;
-        const len = Math.hypot(dx, dz);
-        if (len < 0.5) return null;
-
-        const mx = dx / len;
-        const mz = dz / len;
-
-        const dotForward = mx * fx + mz * fz;
-        const dotRight = mx * rx + mz * rz;
-
-        if (Math.abs(dotForward) >= Math.abs(dotRight)) {
-            return dotForward >= 0 ? 'forward' : 'back';
-        } else {
-            return dotRight >= 0 ? 'right' : 'left';
-        }
-    }
-
-    _setBusy(val) {
-        this.busy = val;
-        this._busySince = val ? Date.now() : null;
-    }
-
-    onSourceBlock(event) {
-        if (!this._sourceResolve) return;  // no one waiting
-        this._sourceResolve(event);
+        this.lockLookUntil = 0;
         this._sourceResolve = null;
     }
 
-    _setNextPromptAt(delay) {
-        // Clamp delay so nextPromptAt can never go further than MAX_NEXT_PROMPT_DELAY
-        const clamped = Math.min(Math.max(delay, 0), MAX_NEXT_PROMPT_DELAY);
-        this.nextPromptAt = Date.now() + clamped;
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // LIFECYCLE
+    // ─────────────────────────────────────────────────────────────────────────
 
     onEnter() {
         console.log(`[Dueling] Facing ${this.ctx.duelTarget}`);
         this.ctx.sneak.setSneaking(false);
         this.ctx.move.stop();
+
         this.nextPromptAt = 0;
-        this._setBusy(false);
-        this.lookBusy = false;
+        this.fetchBusy = false;
+        this._fetchBusySince = null;
+        this._actionQueue = [];
+        this._executing = false;
         this.moveTarget = null;
         this.lastMoveUpdate = 0;
         this.retreatLookUntil = 0;
         this.retreatLookTarget = null;
+        this.sourceLookUntil = 0;
+        this.sourceLookTarget = null;
+        this.lockLookUntil = 0;
         this.forceMoveUntil = 0;
         this.forceMoveDirection = null;
     }
+
+    onExit() {
+        console.log('[Dueling] Duel ended');
+        this.ctx.mcSend('unsprint', {});
+        this.fetchBusy = false;
+        this._actionQueue = [];
+        this._executing = false;
+        this.forceMoveUntil = 0;
+        this.forceMoveDirection = null;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TICK
+    // ─────────────────────────────────────────────────────────────────────────
 
     onTick() {
         const targetName = this.ctx.duelTarget;
@@ -121,21 +93,20 @@ export class DuelingState {
 
         const now = Date.now();
 
-        // Watchdog: if busy has been stuck for too long, force-reset
-        if (this.busy && this._busySince && now - this._busySince > MAX_BUSY_MS) {
-            console.warn(`[Dueling] busy stuck for ${MAX_BUSY_MS}ms — force-resetting`);
-            this._setBusy(false);
+        // Watchdog: unstick a hung fetch
+        if (this.fetchBusy && this._fetchBusySince && now - this._fetchBusySince > MAX_BUSY_MS) {
+            console.warn(`[Dueling] fetch stuck for ${MAX_BUSY_MS}ms — force-resetting`);
+            this.fetchBusy = false;
+            this._fetchBusySince = null;
             this.nextPromptAt = 0;
         }
 
-        // Normal moveTarget tracking — suppressed while a forced move is active
+        // Keep movement toward moveTarget while no forced move is active
         if (this.moveTarget && this.ctx.lilyPos && now >= this.forceMoveUntil && now - this.lastMoveUpdate >= 1000) {
             this.lastMoveUpdate = now;
             const dx = this.moveTarget.x - this.ctx.lilyPos.x;
             const dz = this.moveTarget.z - this.ctx.lilyPos.z;
-            const distToTarget = Math.hypot(dx, dz);
-
-            if (distToTarget < 1.0) {
+            if (Math.hypot(dx, dz) < 1.0) {
                 this.ctx.mcSend('move', { direction: 'stop' });
                 this.moveTarget = null;
             } else {
@@ -144,40 +115,316 @@ export class DuelingState {
             }
         }
 
-        // Keep duel data fresh
-        const requestInterval = this.lastAbilityDuration
-            ? Math.max(500, this.lastAbilityDuration / 2)
-            : 500;
-        if (now - this.lastRequest >= requestInterval) {
+        // Refresh duel data
+        if (now - this.lastRequest >= DATA_REQUEST_INTERVAL) {
             this.lastRequest = now;
             this.ctx.mcSend('get_duel_data', { opponent: targetName });
         }
 
-        // Combat loop
-        if (!this.busy && now >= this.nextPromptAt) {
-            this._setBusy(true);
-            this._sendPrompt(targetName).finally(() => { this._setBusy(false); });
+        // Dispatch a new AI prompt when:
+        //   - not currently fetching
+        //   - the cooldown has elapsed
+        // (we deliberately allow this even while _executing — results queue up)
+        if (!this.fetchBusy && now >= this.nextPromptAt) {
+            this._dispatchPrompt(targetName);
         }
 
-        // Look logic — source lock > retreat > normal
-        // Look logic — source lock > retreat > normal
+        // Look priority: source lock > retreat lock > direction lock > track target
         if (this.sourceLookUntil && now < this.sourceLookUntil && this.sourceLookTarget) {
             this.ctx.mcSend('look_at', this.sourceLookTarget);
         } else if (this.retreatLookUntil && now < this.retreatLookUntil && this.retreatLookTarget) {
             this.ctx.mcSend('look_at', this.retreatLookTarget);
         } else if (this.lockLookUntil && now < this.lockLookUntil) {
-            // locked — send nothing, don't touch look
+            // locked — don't touch look
         } else {
             this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1.75, z: target.z });
         }
     }
 
-    async _acquireSource(holdMs) {
+    // ─────────────────────────────────────────────────────────────────────────
+    // PROMPT DISPATCH  (non-blocking — returns immediately, queues the result)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _dispatchPrompt(targetName) {
+        const prompt = buildDuelPrompt(this.ctx, targetName);
+        if (!prompt || typeof prompt !== 'string'
+            || prompt === 'Opponent not found.'
+            || prompt === 'Lily position unknown.') {
+            console.warn('[Dueling] Prompt not ready:', prompt);
+            this._setNextPromptAt(MIN_PROMPT_DELAY);
+            return;
+        }
+
+        this.fetchBusy = true;
+        this._fetchBusySince = Date.now();
+        // Set next prompt time immediately so we don't pile up fetches if this
+        // one resolves quickly. _executeAction will extend it when needed.
+        this._setNextPromptAt(MIN_PROMPT_DELAY);
+
+        this._fetchAction(prompt, targetName)
+            .then(action => {
+                if (action) {
+                    this._actionQueue.push({ action, targetName });
+                    this._drainQueue();
+                }
+            })
+            .catch(err => {
+                console.error('[Dueling] AI fetch error:', err.message);
+            })
+            .finally(() => {
+                this.fetchBusy = false;
+                this._fetchBusySince = null;
+            });
+    }
+
+    async _fetchAction(prompt, targetName) {
+        const response = await fetch("http://localhost:11435/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                model: "Lily",
+                stream: false,
+                temperature: 0.35,
+                max_tokens: 120,
+                response_format: { type: "json_object" },
+                messages: [
+                    { role: "system", content: "Return ONLY valid JSON. No reasoning. No extra text." },
+                    { role: "user", content: prompt }
+                ]
+            })
+        });
+
+        const data = await response.json();
+        const text = data.choices?.[0]?.message?.content;
+        console.log('[Dueling] Lily decision:', text);
+        if (!text) return null;
+
+        try {
+            return JSON.parse(text);
+        } catch {
+            console.error('[Dueling] AI response was not valid JSON:', text);
+            return null;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ACTION QUEUE  (drains one entry at a time)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _drainQueue() {
+        if (this._executing || this._actionQueue.length === 0) return;
+        this._executing = true;
+
+        const { action, targetName } = this._actionQueue.shift();
+
+        this._executeAction(action, targetName)
+            .catch(err => console.error('[Dueling] Execute error:', err.message))
+            .finally(() => {
+                this._executing = false;
+                // Drain the next queued entry, if any
+                this._drainQueue();
+            });
+    }
+
+    async _executeAction(action, targetName) {
+        if (action.strategy) this.ctx.lastDuelStrategy = action.strategy;
+
+        // Reposition look
+        if (action.strategy === 'reposition') {
+            const lilyPos = this.ctx.lilyPos;
+            const opp = this.ctx.players[targetName];
+            if (lilyPos && opp) {
+                const awayX = lilyPos.x - opp.x;
+                const awayZ = lilyPos.z - opp.z;
+                const len = Math.hypot(awayX, awayZ) || 1;
+                const dist = 8 + Math.random() * 4;
+                const angle = (Math.random() - 0.5) * 0.8;
+                const cos = Math.cos(angle), sin = Math.sin(angle);
+                const nx = (awayX / len) * cos - (awayZ / len) * sin;
+                const nz = (awayX / len) * sin + (awayZ / len) * cos;
+                this.retreatLookUntil = Date.now() + 2100;
+                this.retreatLookTarget = {
+                    x: lilyPos.x + nx * dist,
+                    y: lilyPos.y + 1.75,
+                    z: lilyPos.z + nz * dist
+                };
+            }
+        }
+
+        // Movement target
+        const target = this.ctx.players[targetName];
+        if (action.move_to && this.ctx.lilyPos && target) {
+            const dx = action.move_to.x - this.ctx.lilyPos.x;
+            const dz = action.move_to.z - this.ctx.lilyPos.z;
+            if (Math.hypot(dx, dz) <= 0.75) {
+                this.ctx.mcSend('move', { direction: 'stop' });
+                this.moveTarget = null;
+            } else {
+                this.ctx.mcSend('move_to', { x: action.move_to.x, z: action.move_to.z });
+                this.moveTarget = action.move_to;
+            }
+        }
+
+        // Slots to execute
+        const slots = Array.isArray(action.slot)
+            ? action.slot
+            : action.slot != null ? [action.slot] : [];
+
+        for (const slot of slots) {
+            triggerCooldown(this.ctx, slot);
+            await this._executeSlot(slot);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SLOT EXECUTION
+    // ─────────────────────────────────────────────────────────────────────────
+
+    async _executeSlot(slot) {
+        if (this._isComboSlot(slot)) {
+            await this._executeComboSlot(slot);
+        } else {
+            await this._executeAbilitySlot(slot);
+        }
+    }
+
+    _isComboSlot(slot) {
+        return slot >= 10;
+    }
+
+    _getComboForSlot(slot) {
+        const available = getCombos().filter(c =>
+            isComboAvailable(c, this.ctx.bindings, cleanName)
+        );
+        return available[slot - 10] ?? null;
+    }
+
+    async _executeComboSlot(slot) {
+        const combo = this._getComboForSlot(slot);
+        if (!combo) {
+            console.warn(`[Dueling] No combo for virtual slot ${slot}`);
+            return;
+        }
+
+        const totalTime = comboDuration(combo);
+        // Block new prompts for the full combo duration BEFORE we start executing,
+        // so ticks that fire during execution don't queue up a repeat.
+        this._setNextPromptAt(totalTime + MIN_PROMPT_DELAY);
+
+        await executeCombo(
+            combo,
+            this.ctx.bindings,
+            cleanName,
+            this.ctx.mcSend,
+            {
+                onLockLook: (duration) => {
+                    this.lockLookUntil = Date.now() + duration;
+                },
+                onForceMove: (direction, duration) => {
+                    this._forceMove(direction, duration);
+                },
+                onSource: (holdMs) => this._acquireSource(holdMs),
+            }
+        );
+    }
+
+    async _executeAbilitySlot(slot) {
+        const raw = this.ctx.bindings[slot];
+        if (!raw) return;
+
+        const abilityName = cleanName(raw);
+        const stats = this.ctx.abilityStats[abilityName];
+        if (!stats?.actions?.length) return;
+
+        this.ctx.mcSend('hotbar', { slot });
+
+        // Build steps the same way comboExecutor does for consistency
+        const steps = [];
+        const actionTimes = stats.actionTimes ?? [];
+        let timeIdx = 0;
+
+        for (const actionStr of stats.actions) {
+            const parts = actionStr.split(':');
+            const type = parts[0];
+            const mode = parts[1] ?? '*';
+            const count = parseInt(parts[2] ?? '1') || 1;
+            const extra = parts[3];
+
+            for (let i = 0; i < count; i++) {
+                const duration = actionTimes[timeIdx++] ?? 200;
+                steps.push({ type, mode, extra, duration });
+            }
+        }
+
+        for (const step of steps) {
+            await this._fireStep(step);
+        }
+    }
+
+    async _fireStep(step) {
+        const { type, mode, extra, duration } = step;
+
+        switch (type) {
+            case 'source': {
+                const found = await this._acquireSource(duration);
+                if (!found) {
+                    console.warn(`[Dueling] No source block found — aborting ability`);
+                    throw new Error('source_not_found');
+                }
+                break;
+            }
+            case 'click': {
+                if (mode === 'right') this.ctx.mcSend('use', { mode: 'once' });
+                else this.ctx.mcSend('attack', { mode: 'once' });
+                await new Promise(r => setTimeout(r, duration));
+                await new Promise(r => setTimeout(r, 100)); // post-action gap
+                break;
+            }
+            case 'sneak': {
+                this.ctx.mcSend('fire_pk_event', { event: 'sneak' });
+                const releaseAfter = mode === 'tap' ? 50 : duration;
+                setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'unsneak' }), releaseAfter);
+                const blocking = extra !== 'continue';
+                if (blocking) await new Promise(r => setTimeout(r, duration));
+                break;
+            }
+            case 'jump': {
+                this.ctx.mcSend('jump', { mode: 'once' });
+                await new Promise(r => setTimeout(r, duration));
+                break;
+            }
+            case 'forward':
+            case 'back':
+            case 'left':
+            case 'right': {
+                this._forceMove(type, duration);
+                await new Promise(r => setTimeout(r, duration));
+                break;
+            }
+            case 'locklook': {
+                this.lockLookUntil = Date.now() + duration;
+                break;
+            }
+            default:
+                console.warn(`[Dueling] Unknown action type "${type}" — ignored`);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SOURCE ACQUISITION
+    // ─────────────────────────────────────────────────────────────────────────
+
+    onSourceBlock(event) {
+        if (!this._sourceResolve) return;
+        this._sourceResolve(event);
+        this._sourceResolve = null;
+    }
+
+    _acquireSource(holdMs) {
         return new Promise((resolve) => {
             this._sourceResolve = resolve;
             this.ctx.mcSend('get_source_block');
 
-            // safety timeout, if Java never replies, resolve with not_found
             setTimeout(() => {
                 if (this._sourceResolve) {
                     this._sourceResolve({ found: false });
@@ -186,8 +433,6 @@ export class DuelingState {
             }, 800);
         }).then(event => {
             if (!event.found) return false;
-
-            // lock look at source block
             this.sourceLookUntil = Date.now() + holdMs;
             this.sourceLookTarget = { x: event.x, y: event.y, z: event.z };
             this.ctx.mcSend('look_at', this.sourceLookTarget);
@@ -195,8 +440,34 @@ export class DuelingState {
         });
     }
 
-    // Force Lily to walk in a cardinal direction for durationMs,
-    // suppressing the normal moveTarget logic for that window.
+    // ─────────────────────────────────────────────────────────────────────────
+    // MOVEMENT HELPERS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _getMoveDirection(lilyPos, moveTo, targetPos) {
+        const forwardX = targetPos.x - lilyPos.x;
+        const forwardZ = targetPos.z - lilyPos.z;
+        const forwardLen = Math.hypot(forwardX, forwardZ);
+        const fx = forwardX / forwardLen;
+        const fz = forwardZ / forwardLen;
+        const rx = fz, rz = -fx;
+
+        const dx = moveTo.x - lilyPos.x;
+        const dz = moveTo.z - lilyPos.z;
+        const len = Math.hypot(dx, dz);
+        if (len < 0.5) return null;
+
+        const mx = dx / len, mz = dz / len;
+        const dotForward = mx * fx + mz * fz;
+        const dotRight = mx * rx + mz * rz;
+
+        if (Math.abs(dotForward) >= Math.abs(dotRight)) {
+            return dotForward >= 0 ? 'forward' : 'back';
+        } else {
+            return dotRight >= 0 ? 'right' : 'left';
+        }
+    }
+
     _forceMove(direction, durationMs) {
         this.forceMoveUntil = Date.now() + durationMs;
         this.forceMoveDirection = direction;
@@ -211,243 +482,19 @@ export class DuelingState {
         }, durationMs);
     }
 
-    async _sendPrompt(targetName) {
-        const prompt = buildDuelPrompt(this.ctx, targetName);
-        console.log("[DUELING PROMPT] ", prompt)
-        // buildDuelPrompt returns an error string on failure — bail out safely
-        if (!prompt || typeof prompt !== 'string' || prompt === 'Opponent not found.' || prompt === 'Lily position unknown.') {
-            console.warn('[Dueling] Prompt not ready:', prompt);
-            this._setNextPromptAt(this.minPromptDelay);
-            return;
-        }
+    // ─────────────────────────────────────────────────────────────────────────
+    // UTILITIES
+    // ─────────────────────────────────────────────────────────────────────────
 
-        try {
-            const response = await fetch("http://localhost:11435/v1/chat/completions", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    model: "Lily",
-                    stream: false,
-                    temperature: 0.35,
-                    max_tokens: 120,
-                    response_format: { type: "json_object" },
-                    messages: [
-                        {
-                            role: "system",
-                            content: "Return ONLY valid JSON. No reasoning. No extra text."
-                        },
-                        {
-                            role: "user",
-                            content: prompt
-                        }
-                    ]
-                })
-            });
-
-            const data = await response.json();
-            const text = data.choices?.[0]?.message?.content;
-
-            console.log('[Dueling] Lily decision:', text);
-            if (!text) {
-                this._setNextPromptAt(this.minPromptDelay);
-                return;
-            }
-
-            let action;
-            try {
-                action = JSON.parse(text);
-            } catch {
-                console.error('[Dueling] AI response was not valid JSON:', text);
-                this._setNextPromptAt(2000);
-                return;
-            }
-
-            if (action.strategy) this.ctx.lastDuelStrategy = action.strategy;
-
-            // Retreat/reposition — look toward move target for 1500ms
-            if (action.strategy === 'reposition') {
-                const lilyPos = this.ctx.lilyPos;
-                const opp = this.ctx.players[targetName];
-                if (lilyPos && opp) {
-                    const awayX = lilyPos.x - opp.x;
-                    const awayZ = lilyPos.z - opp.z;
-                    const len = Math.hypot(awayX, awayZ) || 1;
-                    const dist = 8 + Math.random() * 4;
-                    const angle = (Math.random() - 0.5) * 0.8;
-                    const cos = Math.cos(angle), sin = Math.sin(angle);
-                    const nx = (awayX / len) * cos - (awayZ / len) * sin;
-                    const nz = (awayX / len) * sin + (awayZ / len) * cos;
-                    this.retreatLookUntil = Date.now() + 2100;
-                    this.retreatLookTarget = {
-                        x: lilyPos.x + nx * dist,
-                        y: lilyPos.y + 1.75,
-                        z: lilyPos.z + nz * dist
-                    };
-                }
-            }
-
-            const target = this.ctx.players[targetName];
-
-            if (action.move_to && this.ctx.lilyPos && target) {
-                const dx = action.move_to.x - this.ctx.lilyPos.x;
-                const dz = action.move_to.z - this.ctx.lilyPos.z;
-                const distToGoal = Math.hypot(dx, dz);
-
-                if (distToGoal <= 0.75) {
-                    this.ctx.mcSend('move', { direction: 'stop' });
-                    this.moveTarget = null;
-                } else {
-                    this.ctx.mcSend('move_to', { x: action.move_to.x, z: action.move_to.z });
-                    this.moveTarget = action.move_to;
-                }
-            }
-
-            const slots = Array.isArray(action.slot)
-                ? action.slot
-                : action.slot != null
-                    ? [action.slot]
-                    : [];
-
-            if (slots.length > 0) {
-                for (const slot of slots) {
-                    triggerCooldown(this.ctx, slot);
-                    await this._executeAbility(slot);
-                }
-
-                this._setNextPromptAt(this.minPromptDelay);
-            } else {
-                this._setNextPromptAt(this.minPromptDelay);
-            }
-
-        } catch (err) {
-            console.error('[Dueling] AI error:', err.message);
-            this._setNextPromptAt(this.minPromptDelay);
-        }
-    }
-
-    async _executeAbility(slot) {
-        // ----------------------------
-        // COMBO SLOT
-        // ----------------------------
-        if (this._isComboSlot(slot)) {
-            const combo = this._getComboForSlot(slot)
-            if (!combo) {
-                console.warn(`[Dueling] No combo found for virtual slot ${slot}`)
-                return
-            }
-
-            // calculate total combo duration so next prompt waits for it
-            const totalTime = (combo.actionsTime ?? []).reduce((a, b) => a + b, 0)
-
-            await executeCombo(
-                combo,
-                this.ctx.bindings,
-                cleanName,
-                this.ctx.mcSend,
-                {
-                    onLockLook: (duration) => {
-                        this.lockLookUntil = Date.now() + duration
-                    },
-                    onForceMove: (direction, duration) => {
-                        this._forceMove(direction, duration)
-                    },
-                    onSource: (holdMs) => {
-                        this._acquireSource(holdMs)
-                    }
-                }
-            )
-
-            this._setNextPromptAt(Math.max(this.minPromptDelay, totalTime + 200))
-            return
-        }
-
-        // ----------------------------
-        // NORMAL ABILITY SLOT
-        // ----------------------------
-        const raw = this.ctx.bindings[slot]
-        if (!raw) return
-
-        const abilityName = cleanName(raw)
-        const stats = this.ctx.abilityStats[abilityName]
-        if (!stats?.actions?.length) return
-
-        // immediately switch slot
-        this.ctx.mcSend('hotbar', { slot })
-
-        const steps = []
-        for (const actionStr of stats.actions) {
-            const [type, mode, countStr] = actionStr.split(':')
-            const count = parseInt(countStr ?? '1')
-            for (let i = 0; i < count; i++) steps.push({ type, mode })
-        }
-
-        // ----------------------------
-        // SOURCE HANDLING (still safe)
-        // ----------------------------
-        if (steps[0]?.type === 'source') {
-            const holdMs = stats.actionTimes?.[0] ?? 700
-
-            const found = await this._acquireSource(holdMs)
-            if (!found) {
-                console.warn(`[Dueling] No source block found for ${abilityName}, aborting`)
-                this._setNextPromptAt(this.minPromptDelay)
-                return
-            }
-        }
-
-        // ----------------------------
-        // SEQUENTIAL EXECUTION 
-        // ----------------------------
-        for (let i = 0; i < steps.length; i++) {
-            const step = steps[i]
-            const holdDuration = stats.actionTimes?.[i] ?? 200
-
-            this._fireAction(step, holdDuration)
-            await new Promise(r => setTimeout(r, holdDuration))
-            await new Promise(r => setTimeout(r, 100)) // post action gap
-        }
-
-        this._setNextPromptAt(this.minPromptDelay)
-    }
-
-    _fireAction(step, holdDuration = 200) {
-        const { type, mode } = step;
-
-        if (type === 'sneak') {
-            this.ctx.mcSend('fire_pk_event', { event: 'sneak' });
-            if (mode === 'hold') {
-                setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'unsneak' }), holdDuration);
-            } else {
-                // Tap: release almost immediately
-                setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'unsneak' }), 50);
-            }
-        } else if (type === 'click') {
-            if (mode === 'right') {
-                this.ctx.mcSend('use', { mode: 'once' });
-            } else {
-                this.ctx.mcSend('attack', { mode: 'once' });
-            }
-        } else if (type === 'jump') {
-            this.ctx.mcSend('jump', { mode: 'once' });
-        } else if (type === 'forward' || type === 'back' || type === 'left' || type === 'right') {
-            // Forced directional movement for holdDuration ms.
-            // Suppresses the normal moveTarget logic for that window.
-            this._forceMove(type, holdDuration);
-        } else if (type === 'locklook') {
-            this.lockLookUntil = Date.now() + holdDuration;
-        } else {
-            console.warn(`[Dueling] Unknown action type "${type}" — ignored`);
-        }
-    }
-
-    onExit() {
-        console.log('[Dueling] Duel ended');
-        this.ctx.mcSend('unsprint', {});
-        this._setBusy(false);
-        this.forceMoveUntil = 0;
-        this.forceMoveDirection = null;
+    _setNextPromptAt(delay) {
+        const clamped = Math.min(Math.max(delay, 0), MAX_NEXT_PROMPT_DELAY);
+        this.nextPromptAt = Date.now() + clamped;
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
 
 function cleanName(raw) {
     return raw.replace(/§[0-9a-fk-orxA-FK-ORX]/g, '').replace(/^[>\s]+/, '').trim();
@@ -465,58 +512,63 @@ function triggerCooldown(ctx, slot) {
 /**
  * DUELING STATE
  * ─────────────────────────────────────────────────────────────────────────────
- * 1v1 bending combat against a specific player target. On each tick, looks at
- * the opponent and periodically sends a prompt to the AI with the full combat
- * context. The AI responds with JSON deciding which ability slot(s) to use and
- * where to move. Abilities are executed via fire_pk_event (PK Bukkit events).
+ * 1v1 bending combat against a specific player. Each tick dispatches an async
+ * AI prompt (non-blocking) and drains queued responses one at a time.
  *
- * LIFECYCLE:
- *   onEnter  → stops movement and sneak, resets prompt timing
- *   onTick   → looks at opponent, handles movement toward moveTarget,
- *              requests fresh duel data, fires AI prompt if ready
- *   onExit   → clears busy flag, sends unsprint
+ * PROMPT / QUEUE MODEL:
+ *   - _dispatchPrompt() fires an HTTP fetch immediately when fetchBusy=false
+ *     and the prompt cooldown has elapsed. It does NOT wait for execution.
+ *   - When the fetch resolves, the action is pushed onto _actionQueue.
+ *   - _drainQueue() processes one action at a time (FIFO). While _executing,
+ *     new responses queue up but don't interrupt the current action.
+ *   - nextPromptAt is extended by combo/ability duration so prompts don't
+ *     arrive faster than they can usefully be acted on, but overlap is OK
+ *     for light abilities.
  *
- * KEY VARIABLES:
- *   this.ctx.duelTarget          → name of the player being dueled, e.g. "shinyshadow_"
- *   this.ctx.players             → { name: { x, y, z, hp } } for all online players
- *   this.ctx.bindings            → { slot: abilityName } e.g. { 1: "FireBall", 2: "FireShots" }
- *   this.ctx.abilityStats        → { abilityName: { range, cooldown, actions, actionTimes, description } }
- *                                  e.g. { FireBall: { range: 20, cooldown: 1500, actions: ["click:left:1"], actionTimes: [200] } }
- *   this.ctx.abilityCooldowns    → { abilityName: expiryTimestamp } e.g. { FireBall: 1716123456789 }
- *   this.ctx.duelDifficulty      → "easy" | "medium" | "hard" — affects how many slots AI can pick
- *   this.nextPromptAt            → timestamp (ms) before which no new AI prompt is sent
- *   this.busy                    → boolean, true while waiting for AI response
- *   this._busySince              → timestamp when busy was last set to true (for watchdog)
- *   this.lastRequest             → timestamp of last get_duel_data request
- *   this.requestInterval         → how often duel data is refreshed, default 2000ms
- *   this.moveTarget              → { x, z } destination Lily is moving toward, or null
- *   this.lastMoveUpdate          → timestamp of last movement direction update
- *   this.forceMoveUntil          → timestamp until which forced movement suppresses moveTarget
- *   this.forceMoveDirection      → current forced direction ('forward'|'back'|'left'|'right'), or null
+ * WATCHDOG:
+ *   - fetchBusy is reset if stuck > MAX_BUSY_MS (fetch timeout / crash guard)
+ *   - _drainQueue is re-entered on every .finally() so nothing stalls
  *
- * STUCK PREVENTION:
- *   - _setBusy(val) tracks _busySince timestamp alongside busy flag
- *   - onTick watchdog resets busy + nextPromptAt if stuck > MAX_BUSY_MS
- *   - _setNextPromptAt(delay) clamps delay to MAX_NEXT_PROMPT_DELAY
- *   - executeCombo return value guarded against undefined/NaN
- *   - All early-return paths in _sendPrompt call _setNextPromptAt before returning
+ * COMBO EXECUTION:
+ *   - comboDuration() sums only blocking steps — the true wall-clock time
+ *   - parseComboSteps() resolves all timeIdx bookkeeping up-front so the
+ *     JSON you write maps 1:1 to what executes
  *
  * AI RESPONSE FORMAT:
- *   Single slot:  { "slot": 3, "move_to": { "x": 100, "z": 200 } }
- *   Multi slot:   { "slot": [3, 7], "move_to": { "x": 100, "z": 200 } }
- *
- * ACTION TYPES (in abilityStats.actions strings):
- *   click:left:N   → mcSend("attack", { mode: "once" })        ×N
- *   click:right:N  → mcSend("use",    { mode: "once" })        ×N
- *   sneak:hold:N   → fire_pk_event sneak, unsneak after actionTimes[i]
- *   sneak:tap:N    → fire_pk_event sneak + unsneak after 50ms
- *   jump:*:N       → mcSend("jump", { mode: "once" })          ×N
- *   source:*:N     → acquire nearest source block, lock look for actionTimes[0] ms (first step only)
- *   forward:*:N    → _forceMove("forward", actionTimes[i])     ×N
- *   back:*:N       → _forceMove("back",    actionTimes[i])     ×N
- *   left:*:N       → _forceMove("left",    actionTimes[i])     ×N
- *   right:*:N      → _forceMove("right",   actionTimes[i])     ×N
+ *   Single:  { "slot": 3, "move_to": { "x": 100, "z": 200 } }
+ *   Multi:   { "slot": [3, 7], "move_to": { "x": 100, "z": 200 } }
  *
  * TRANSITIONS OUT:
- *   → IDLE  when duelTarget is null or player leaves
+ *   → IDLE when duelTarget is null or target player leaves
+ */
+/**
+ * ACTION REFERENCE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Format: "type:mode:count:extra"  — trailing fields can be omitted if unused.
+ * Each blocking step consumes one entry from actionsTime (ms).
+ *
+ * swap:slot:<Ability>          Switch hotbar to the slot holding <Ability>.
+ *                              Uses fixed SWAP_LOCK_TIME (20ms), no time entry consumed.
+ *
+ * locklook                     Lock look direction for actionsTime[i] ms.
+ *                              NON-BLOCKING — next step starts immediately.
+ *                              Consumes one time entry.
+ *
+ * source:*:N[:block]           Acquire nearest source block, lock look at it.
+ *                              NON-BLOCKING by default. Add :block to await the hold.
+ *
+ * click:left:N                 Left-click (attack) N times, waiting actionsTime[i] between each.
+ * click:right:N                Right-click (use)   N times, waiting actionsTime[i] between each.
+ *
+ * sneak:hold:N[:continue]      Hold sneak for actionsTime[i] ms, release via setTimeout.
+ *                              BLOCKING unless :continue is appended.
+ * sneak:tap:N[:continue]       Tap sneak (release after 80ms).
+ *                              BLOCKING unless :continue is appended.
+ *
+ * jump:*:N                     Jump N times, waiting actionsTime[i] between each.
+ *
+ * forward:*:N                  Force-walk forward for actionsTime[i] ms. BLOCKING.
+ * back:*:N                     Force-walk backward.
+ * left:*:N                     Force-strafe left.
+ * right:*:N                    Force-strafe right.
  */

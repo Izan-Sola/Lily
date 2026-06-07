@@ -76,19 +76,23 @@ ${status}
 
 # STRATEGIES
 - defensive: keep distance, use ranged abilities, avoid trading hits.
-- reposition: MUST use when enemy is very close or closing in fast. MUST include a [MOVEMENT] slot.
-- chase: go all in, pursue and close the gap. MUST include a [MOVEMENT] slot.
+- chase: go all in, pursue and close the gap..
 
 # IMPORTANT RULES
-- Return one slot number from 1 to ${maxSlot} to use.
+- Return three slot numbers from 1 to ${maxSlot} to use.
 - Prioritize slots 10+ if off cooldown and at range.
 - "move_to" is where you want to move this turn.
-- If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
 - DO NOT use slots on cooldown.
+- DO NOT spam the same ability, use variety.
+
+# RANGE REFERENCE:
+- close: 0-5 blocks
+- medium: 5-10 blocks
+- long: +10
 
 # RESPONSE FORMAT EXAMPLE
 { 
-  "slot": [(1-${maxSlot})],
+  "slot": [(1-${maxSlot}), (1-${maxSlot}), (1-${maxSlot})],
   "move_to": { "x": 100, "z": 200 },
   "strategy": "strategy_name",
 }

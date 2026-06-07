@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-const SWAP_LOCK_TIME = 10
+const SWAP_LOCK_TIME = 50
 const DEFAULT_STEP_TIME = 50
 const POST_ACTION_GAP = 50  // hard gap after every blocking step before the next fires
 

@@ -147,8 +147,9 @@ export class DuelingState {
                 this._fetchBusySince = null;
             });
     }
-
+  
     async _fetchAction(prompt, targetName) {
+        console.log('[Dueling] DUELING PROMPT', prompt);
         const response = await fetch("http://localhost:11435/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },

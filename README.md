@@ -33,11 +33,11 @@
   
 ### Minecraft
 
-- /lily duel (difficulty)
-- /lily duel stop
+- /lily duel (start, stop)
 - /lily bend (element) [only fire and earth atm]
 - /lily come
 - /lily follow (user)
+- /lily stop
   
 ## Info
 

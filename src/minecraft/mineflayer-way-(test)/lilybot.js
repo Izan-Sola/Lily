@@ -58,24 +58,24 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
         const addressed = lower.includes("lily") || lower.includes("hylily")
         const randomButtin = Math.random() < 0.05
 
-        if (addressed || randomButtin) {
-            if (StateController?.currentStateName === State.DUELING) {
-                return {
-                    content: "Lily is currently in a duel, she can't reply right now!"
-                }
-            }
-            try {
-                const formattedMessage = addressed
-                    ? `[${sender}] says to you in Minecraft: ${message}`
-                    : `[${sender}] said in Minecraft nearby: ${message}`
+        // if (addressed || randomButtin) {
+        //     if (StateController?.currentStateName === State.DUELING) {
+        //         return {
+        //             content: "Lily is currently in a duel, she can't reply right now!"
+        //         }
+        //     }
+        //     try {
+        //         const formattedMessage = addressed
+        //             ? `[${sender}] says to you in Minecraft: ${message}`
+        //             : `[${sender}] said in Minecraft nearby: ${message}`
 
-                const reply = await aiInstance.chat("minecraft", formattedMessage)
-                const text = typeof reply === "object" ? reply.text : reply
-                if (text) splitMessage(text).forEach(chunk => mcBot.chat(chunk))
-            } catch (err) {
-                console.error("⛏️ [MC] Chat handler error:", err)
-            }
-        }
+        //         const reply = await aiInstance.chat("minecraft", formattedMessage)
+        //         const text = typeof reply === "object" ? reply.text : reply
+        //         if (text) splitMessage(text).forEach(chunk => mcBot.chat(chunk))
+        //     } catch (err) {
+        //         console.error("⛏️ [MC] Chat handler error:", err)
+        //     }
+        // }
     })
     mcBot.on("kicked", reason => {
         console.error("⛏️ [MC] Kicked:", JSON.stringify(reason, null, 2))

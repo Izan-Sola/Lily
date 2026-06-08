@@ -17,7 +17,7 @@ const DEFAULT_OPTIONS = {
     contextWindow: 6000,
     maxConvoMessages: 15,
     maxRawMessages: 15,
-    maxToolLoops: 5,
+    maxToolLoops: 10,
     maxToolRepeats: 1,
     memoryDuplicateMinScore: 0.9,
     memoryRemoveMinScore: 0.70,

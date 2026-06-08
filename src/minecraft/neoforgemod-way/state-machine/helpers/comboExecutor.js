@@ -6,9 +6,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-const SWAP_LOCK_TIME = 50
-const DEFAULT_STEP_TIME = 50
-const POST_ACTION_GAP = 50  // hard gap after every blocking step before the next fires
+const SWAP_LOCK_TIME = 100
+const DEFAULT_STEP_TIME = 200
+const POST_ACTION_GAP = 250  // hard gap after every blocking step before the next fires
 
 let combosData = {}
 
@@ -103,13 +103,14 @@ export function parseComboSteps(combo) {
         // always non-blocking, no count
         if (type === 'source') {
             const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
-            // parts[1] is the raw comma-separated block list (e.g. "water,ice")
+            // format: source:<block1,block2,...>:<distance>
             const rawBlocks = parts[1] ?? ''
             const blocks = rawBlocks
                 .split(',')
                 .map(b => b.trim().toLowerCase())
                 .filter(Boolean)
-            steps.push({ type: 'source', blocks, blocking: false, duration })
+            const distance = parseInt(parts[2] ?? '0') || 0  // 0 = use Java default
+            steps.push({ type: 'source', blocks, distance, blocking: false, duration })
             continue
         }
 
@@ -118,6 +119,14 @@ export function parseComboSteps(combo) {
         if (type === 'stop') {
             const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
             steps.push({ type: 'stop', blocking: false, duration })
+            continue
+        }
+
+        // ── WAIT ─────────────────────────────────────────────────
+        // format: wait  — blocking sleep, no side effects
+        if (type === 'wait') {
+            const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+            steps.push({ type: 'wait', blocking: true, duration })
             continue
         }
 
@@ -170,11 +179,11 @@ export function parseComboSteps(combo) {
  * Executes a pre-parsed steps array sequentially.
  *
  * handlers:
- *   onSource(blocks, ms)   — async, must resolve when source is acquired
+ *   onSource(blocks, dist, ms) — async, must resolve when source is acquired; dist=0 uses default
  *   onLockLook(ms)         — sync, sets look lock
  *   onForceMove(dir, ms)   — sync, starts forced movement
  *   onStop(ms)             — sync, stops movement for duration then resumes
- *   onLookDir(dir, ms)     — sync, locks look in relative direction for duration
+ *   onLookDir(dir, deg, ms) — sync, offsets look tracking by deg degrees for duration ms
  */
 export async function executeCombo(combo, bindings, cleanName, mcSend, handlers = {}) {
     const { onSource, onLockLook, onForceMove, onStop, onLookDir } = handlers
@@ -235,7 +244,7 @@ export async function executeCombo(combo, bindings, cleanName, mcSend, handlers 
 
             case 'source': {
                 // always non-blocking — fire and forget
-                if (onSource) onSource(step.blocks, step.duration)
+                if (onSource) onSource(step.blocks, step.distance, step.duration)
                 break
             }
 
@@ -246,6 +255,11 @@ export async function executeCombo(combo, bindings, cleanName, mcSend, handlers 
 
             case 'look': {
                 if (onLookDir) onLookDir(step.direction, step.degrees, step.duration)
+                break
+            }
+
+            case 'wait': {
+                await sleep(step.duration)
                 break
             }
         }

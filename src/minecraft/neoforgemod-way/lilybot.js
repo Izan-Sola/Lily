@@ -149,7 +149,7 @@ async function _handleEvent(event) {
             const message = event.message ?? ""
 
             if (player.toLowerCase() === "lily") break
-
+            if (!event.message.toLowerCase().includes("lily")) break
             console.log(`[MC CHAT] ${player}: ${message}`)
 
             try {

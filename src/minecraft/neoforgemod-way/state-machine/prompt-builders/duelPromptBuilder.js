@@ -2,7 +2,7 @@ import { getCombos, isComboAvailable } from '../helpers/comboExecutor.js'
 
 // ── Abilities to NEVER inject in the prompt ───────────────────────────────────
 const EXCLUDED_ABILITIES = new Set([
-    "shockwave", "raiseearth", "lavadisc", "catapult", "earthsmash", "lavathrow"
+    "shockwave", "raiseearth", "lavadisc", "catapult", "lavathrow", "lavadisc"
 ])
 
 // ── Element system prompts (full prompt per element) ──────────────────────────
@@ -27,6 +27,14 @@ ${status}
 - "move_to" is where you want to move this turn.
 - If strategy is reposition or chase, you MUST pick a [MOVEMENT] as one of your slots.
 - DO NOT use slots on cooldown.
+- ALWAYS MOVE to a different location than your current one.
+
+
+# RANGE REFERENCE:
+- close: 0-5 blocks
+- medium: 5-10 blocks
+- long: +10
+
 
 # RESPONSE FORMAT EXAMPLE
 { 
@@ -75,20 +83,19 @@ ${abilitiesText}
 ${status}
 
 # STRATEGIES
-- defensive: keep distance, use ranged abilities, avoid trading hits.
-- chase: go all in, pursue and close the gap..
+- defensive: keep distance, use ranged slots, avoid trading hits.
+- chase: go all in, pursue and close the gap.
 
 # IMPORTANT RULES
 - Return three slot numbers from 1 to ${maxSlot} to use.
-- Prioritize slots 10+ if off cooldown and at range.
 - "move_to" is where you want to move this turn.
-- DO NOT use slots on cooldown.
-- DO NOT spam the same ability, use variety.
+- DO NOT use slots that arent ready.
+- DO NOT use the same slots every time, mix them.
 
 # RANGE REFERENCE:
 - close: 0-5 blocks
 - medium: 5-10 blocks
-- long: +10
+- long: +10 blocks
 
 # RESPONSE FORMAT EXAMPLE
 { 

@@ -29,6 +29,7 @@ export class DuelingState {
         this.sourceLookUntil = 0;
         this.sourceLookTarget = null;
         this.lockLookUntil = 0;
+        this.lookOffset = null;  // { direction, degrees, until }
         this._sourceResolve = null;
     }
 
@@ -49,6 +50,7 @@ export class DuelingState {
         this.sourceLookUntil = 0;
         this.sourceLookTarget = null;
         this.lockLookUntil = 0;
+        this.lookOffset = null;
         this.forceMoveUntil = 0;
         this.forceMoveDirection = null;
     }
@@ -107,14 +109,28 @@ export class DuelingState {
             this._dispatchPrompt(targetName);
         }
 
+        // Expire lookOffset
+        if (this.lookOffset && now >= this.lookOffset.until) this.lookOffset = null;
+
         if (this.sourceLookUntil && now < this.sourceLookUntil && this.sourceLookTarget) {
             this.ctx.mcSend('look_at', this.sourceLookTarget);
         } else if (this.retreatLookUntil && now < this.retreatLookUntil && this.retreatLookTarget) {
             this.ctx.mcSend('look_at', this.retreatLookTarget);
         } else if (this.lockLookUntil && now < this.lockLookUntil) {
-            // locked
+            // locked — don't touch look
         } else {
-            this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1.75, z: target.z });
+            const baseY = target.y + 1.75;
+            if (this.lookOffset) {
+                const dx = target.x - (this.ctx.lilyPos?.x ?? target.x);
+                const dz = target.z - (this.ctx.lilyPos?.z ?? target.z);
+                const flatDist = Math.hypot(dx, dz) || 1;
+                const rad = (this.lookOffset.degrees * Math.PI) / 180;
+                const yShift = Math.tan(rad) * flatDist;
+                const offsetY = this.lookOffset.direction === 'down' ? baseY - yShift : baseY + yShift;
+                this.ctx.mcSend('look_at', { x: target.x, y: offsetY, z: target.z });
+            } else {
+                this.ctx.mcSend('look_at', { x: target.x, y: baseY, z: target.z });
+            }
         }
     }
 
@@ -147,9 +163,8 @@ export class DuelingState {
                 this._fetchBusySince = null;
             });
     }
-  
+
     async _fetchAction(prompt, targetName) {
-        console.log('[Dueling] DUELING PROMPT', prompt);
         const response = await fetch("http://localhost:11435/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -276,24 +291,20 @@ export class DuelingState {
             this.ctx.mcSend,
             {
                 onLockLook: (duration) => {
+                    this.sourceLookUntil = 0;
+                    this.sourceLookTarget = null;
+                    this.retreatLookUntil = 0;
+                    this.retreatLookTarget = null;
                     this.lockLookUntil = Date.now() + duration;
                 },
                 onForceMove: (direction, duration) => {
                     this._forceMove(direction, duration);
                 },
                 // blocks: string[], holdMs: number — fire and forget (non-blocking)
-                onSource: (blocks, holdMs) => this._acquireSource(blocks, holdMs),
+                onSource: (blocks, distance, holdMs) => this._acquireSource(blocks, distance, holdMs),
                 onStop: () => this._stopMove(),
                 onLookDir: (direction, degrees, duration) => {
-                    // Clear lower-priority locks so tick doesn't stomp
-                    this.sourceLookUntil = 0;
-                    this.sourceLookTarget = null;
-                    this.retreatLookUntil = 0;
-                    this.retreatLookTarget = null;
-                    // Extend lock for the duration so tick stays hands-off
-                    this.lockLookUntil = Date.now() + duration;
-                    // Fire the rotated look once — lock prevents tick from overriding
-                    this.ctx.mcSend('look_dir', { direction, degrees });
+                    this.lookOffset = { direction, degrees, until: Date.now() + duration };
                 },
             }
         );
@@ -316,13 +327,41 @@ export class DuelingState {
         for (const actionStr of stats.actions) {
             const parts = actionStr.split(':');
             const type = parts[0];
+            const duration = actionTimes[timeIdx++] ?? 200;
+
+            // Non-counting actions — must be handled before the count loop
+            if (type === 'source') {
+                // source:blocks:distance
+                steps.push({ type: 'source', mode: parts[1] ?? '*', extra: parts[2] ?? '0', duration });
+                continue;
+            }
+            if (type === 'stop') {
+                steps.push({ type: 'stop', mode: '*', extra: undefined, duration });
+                continue;
+            }
+            if (type === 'locklook') {
+                steps.push({ type: 'locklook', mode: '*', extra: undefined, duration });
+                continue;
+            }
+            if (type === 'look') {
+                // look:direction:degrees
+                steps.push({ type: 'look', mode: parts[1] ?? 'forward', extra: parts[2] ?? '90', duration });
+                continue;
+            }
+
+            if (type === 'wait') {
+                steps.push({ type: 'wait', mode: '*', extra: undefined, duration });
+                continue;
+            }
+
+            // Counting actions
             const mode = parts[1] ?? '*';
             const count = parseInt(parts[2] ?? '1') || 1;
             const extra = parts[3];
-
+            // timeIdx already advanced above for the first, advance for remaining count-1
             for (let i = 0; i < count; i++) {
-                const duration = actionTimes[timeIdx++] ?? 200;
-                steps.push({ type, mode, extra, duration });
+                const dur = i === 0 ? duration : (actionTimes[timeIdx++] ?? 200);
+                steps.push({ type, mode, extra, duration: dur });
             }
         }
 
@@ -336,12 +375,11 @@ export class DuelingState {
 
         switch (type) {
             case 'source': {
-                // mode is the comma-separated block list for single-ability steps
                 const blocks = (mode && mode !== '*')
                     ? mode.split(',').map(b => b.trim().toLowerCase()).filter(Boolean)
                     : [];
-                // non-blocking — fire and forget
-                this._acquireSource(blocks, duration);
+                const dist = parseInt(extra ?? '0') || 0;
+                this._acquireSource(blocks, dist, duration);
                 break;
             }
             case 'click': {
@@ -373,7 +411,25 @@ export class DuelingState {
                 break;
             }
             case 'locklook': {
+                this.sourceLookUntil = 0;
+                this.sourceLookTarget = null;
+                this.retreatLookUntil = 0;
+                this.retreatLookTarget = null;
                 this.lockLookUntil = Date.now() + duration;
+                break;
+            }
+            case 'wait': {
+                await new Promise(r => setTimeout(r, duration));
+                break;
+            }
+            case 'stop': {
+                this._stopMove();
+                break;
+            }
+            case 'look': {
+                const dir = mode && mode !== '*' ? mode : 'forward';
+                const deg = parseInt(extra ?? '90') || 90;
+                this.lookOffset = { direction: dir, degrees: deg, until: Date.now() + duration };
                 break;
             }
             default:
@@ -396,11 +452,12 @@ export class DuelingState {
      * Always non-blocking from the caller's perspective — returns a Promise
      * but the combo executor does NOT await it.
      */
-    _acquireSource(blocks, holdMs) {
+    _acquireSource(blocks, distance, holdMs) {
         return new Promise((resolve) => {
             this._sourceResolve = resolve;
             const msg = { get_source_block: true };
             if (blocks && blocks.length > 0) msg.blocks = blocks;
+            if (distance && distance > 0) msg.distance = distance;
             this.ctx.mcSend('get_source_block', msg);
 
             setTimeout(() => {
@@ -425,7 +482,7 @@ export class DuelingState {
         this.moveTarget = null;
         this.forceMoveUntil = 0;
         this.forceMoveDirection = null;
-        this.ctx.mcSend('stop', {});
+        this.ctx.mcSend('move', { direction: 'stop' });
     }
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -548,7 +605,5 @@ function triggerCooldown(ctx, slot) {
  * left:*:N                     Force-strafe left.
  * right:*:N                    Force-strafe right.
  * 
- * todo: look:direction (also can be look:random to randomize direction. non blocking.)
- * todo: source action needs specific block or tags like "waterbendable, earhtbendable..."
- * 
+
  */

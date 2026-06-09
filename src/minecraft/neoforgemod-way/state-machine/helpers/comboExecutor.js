@@ -4,13 +4,17 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+export const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
 const SWAP_LOCK_TIME = 100
 const DEFAULT_STEP_TIME = 200
-const POST_ACTION_GAP = 250  // hard gap after every blocking step before the next fires
+const POST_ACTION_GAP = 100
 
 let combosData = {}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATA LOADING
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function loadCombos() {
     try {
@@ -53,6 +57,34 @@ export function isComboAvailable(combo, bindings, cleanName) {
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ABILITY → COMBO NORMALIZATION
+//
+// Converts an ability's abilityStats entry into the same shape as a combo
+// object, so _everything_ can be routed through parseComboSteps + executeCombo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Wraps a single ability's stats into a minimal combo-shaped object.
+ * The returned object is ephemeral — it is never stored in combosData.
+ *
+ * @param {string} abilityName
+ * @param {object} stats  — the entry from ctx.abilityStats[abilityName]
+ * @returns {{ name, actions, actionsTime, bindsRequired }}
+ */
+export function abilityAsCombo(abilityName, stats) {
+    return {
+        name: abilityName,
+        actions: stats.actions ?? [],
+        actionsTime: stats.actionTimes ?? [],
+        bindsRequired: [abilityName],
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP PARSING
+// ─────────────────────────────────────────────────────────────────────────────
+
 function findSlot(abilityName, bindings, cleanName) {
     for (const [slot, raw] of Object.entries(bindings)) {
         if (cleanName(raw) === abilityName) return parseInt(slot)
@@ -65,7 +97,7 @@ function findSlot(abilityName, bindings, cleanName) {
  * each paired with its duration from actionsTime.
  *
  * Step shape:
- *   { type, mode?, ability?, blocking, duration, blocks? }
+ *   { type, mode?, direction?, ability?, blocking, duration, blocks?, distance?, degrees? }
  */
 export function parseComboSteps(combo) {
     const actions = combo.actions ?? []
@@ -77,97 +109,92 @@ export function parseComboSteps(combo) {
         const parts = actionStr.split(':')
         const type = parts[0]
 
-        // ── SWAP ──────────────────────────────────────────────────
-        // format: swap:slot:<AbilityName>
-        if (type === 'swap') {
-            const duration = times[timeIdx++] ?? SWAP_LOCK_TIME
-            steps.push({
-                type: 'swap',
-                ability: parts[2],
-                blocking: true,
-                duration,
-            })
-            continue
-        }
+        switch (type) {
 
-        // ── LOCKLOOK ─────────────────────────────────────────────
-        // format: locklook
-        if (type === 'locklook') {
-            const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
-            steps.push({ type: 'locklook', blocking: false, duration })
-            continue
-        }
+            // swap:slot:<AbilityName>
+            case 'swap': {
+                const duration = times[timeIdx++] ?? SWAP_LOCK_TIME
+                steps.push({ type: 'swap', ability: parts[2], blocking: true, duration })
+                break
+            }
 
-        // ── SOURCE ───────────────────────────────────────────────
-        // format: source:<block1,block2,...>
-        // always non-blocking, no count
-        if (type === 'source') {
-            const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
-            // format: source:<block1,block2,...>:<distance>
-            const rawBlocks = parts[1] ?? ''
-            const blocks = rawBlocks
-                .split(',')
-                .map(b => b.trim().toLowerCase())
-                .filter(Boolean)
-            const distance = parseInt(parts[2] ?? '0') || 0  // 0 = use Java default
-            steps.push({ type: 'source', blocks, distance, blocking: false, duration })
-            continue
-        }
+            // locklook  (non-blocking)
+            case 'locklook': {
+                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                steps.push({ type: 'locklook', blocking: false, duration })
+                break
+            }
 
-        // ── STOP ─────────────────────────────────────────────────
-        // format: stop  (non-blocking, duration from actionsTime)
-        if (type === 'stop') {
-            const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
-            steps.push({ type: 'stop', blocking: false, duration })
-            continue
-        }
+            // source:<block1,block2,...>:<distance>  (non-blocking)
+            case 'source': {
+                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                const blocks = (parts[1] ?? '')
+                    .split(',')
+                    .map(b => b.trim().toLowerCase())
+                    .filter(Boolean)
+                const distance = parseInt(parts[2] ?? '0') || 0
+                steps.push({ type: 'source', blocks, distance, blocking: false, duration })
+                break
+            }
 
-        // ── WAIT ─────────────────────────────────────────────────
-        // format: wait  — blocking sleep, no side effects
-        if (type === 'wait') {
-            const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
-            steps.push({ type: 'wait', blocking: true, duration })
-            continue
-        }
+            // stop  (non-blocking)
+            case 'stop': {
+                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                steps.push({ type: 'stop', blocking: false, duration })
+                break
+            }
 
-        // ── LOOK ─────────────────────────────────────────────────
-        // format: look:<direction>  direction: forward|back|left|right|up|down
-        // non-blocking, duration = how long to hold the look lock
-        if (type === 'look') {
-            const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
-            const direction = parts[1] ?? 'forward'
-            const degrees = parseInt(parts[2] ?? '90') || 90
-            steps.push({ type: 'look', direction, degrees, blocking: false, duration })
-            continue
-        }
+            // wait  (blocking sleep)
+            case 'wait': {
+                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                steps.push({ type: 'wait', blocking: true, duration })
+                break
+            }
 
-        // Everything else: [type, mode, count, extra]
-        const mode = parts[1] ?? '*'
-        const count = parseInt(parts[2] ?? '1') || 1
-        const extra = parts[3]
+            // look:<direction>:<degrees>  (non-blocking)
+            case 'look': {
+                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                steps.push({
+                    type: 'look',
+                    direction: parts[1] ?? 'forward',
+                    degrees: parseInt(parts[2] ?? '90') || 90,
+                    blocking: false,
+                    duration,
+                })
+                break
+            }
 
-        for (let c = 0; c < count; c++) {
-            const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+            // Everything else: type:mode:count[:extra]
+            default: {
+                const mode = parts[1] ?? '*'
+                const count = parseInt(parts[2] ?? '1') || 1
+                const extra = parts[3]
 
-            switch (type) {
-                case 'click':
-                    steps.push({ type: 'click', mode, blocking: true, duration })
-                    break
-                case 'sneak':
-                    steps.push({ type: 'sneak', mode, blocking: extra !== 'continue', duration })
-                    break
-                case 'jump':
-                    steps.push({ type: 'jump', blocking: true, duration })
-                    break
-                case 'forward':
-                case 'back':
-                case 'left':
-                case 'right':
-                    steps.push({ type: 'move', direction: type, blocking: true, duration })
-                    break
-                default:
-                    console.warn(`[COMBOS] Unknown action type "${type}" in combo "${combo.name}" — skipped`)
-                    break
+                for (let c = 0; c < count; c++) {
+                    const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+
+                    switch (type) {
+                        case 'click':
+                            steps.push({ type: 'click', mode, blocking: true, duration })
+                            break
+                        case 'sneak':
+                            steps.push({ type: 'sneak', mode, blocking: extra !== 'continue', duration })
+                            break
+                        case 'jump':
+                            steps.push({ type: 'jump', blocking: true, duration })
+                            break
+                        case 'forward':
+                        case 'back':
+                        case 'left':
+                        case 'right':
+                            steps.push({ type: 'move', direction: type, blocking: true, duration })
+                            break
+                        default:
+                            console.warn(`[COMBOS] Unknown action type "${type}" in combo "${combo.name}" — skipped`)
+                            break
+                    }
+                }
+                break
             }
         }
     }
@@ -175,100 +202,113 @@ export function parseComboSteps(combo) {
     return steps
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EXECUTION
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Executes a pre-parsed steps array sequentially.
  *
  * handlers:
- *   onSource(blocks, dist, ms) — async, must resolve when source is acquired; dist=0 uses default
- *   onLockLook(ms)         — sync, sets look lock
- *   onForceMove(dir, ms)   — sync, starts forced movement
- *   onStop(ms)             — sync, stops movement for duration then resumes
- *   onLookDir(dir, deg, ms) — sync, offsets look tracking by deg degrees for duration ms
+ *   onSource(blocks, dist, ms)    — non-blocking; fire and forget
+ *   onLockLook(ms)                — sync; sets look lock
+ *   onForceMove(dir, ms)          — sync; starts forced movement
+ *   onStop(lockMove)              — sync; stops movement
+ *   onLookDir(dir, deg, ms)       — sync; offsets look tracking
  */
 export async function executeCombo(combo, bindings, cleanName, mcSend, handlers = {}) {
     const { onSource, onLockLook, onForceMove, onStop, onLookDir } = handlers
     const steps = parseComboSteps(combo)
 
     for (const step of steps) {
-        switch (step.type) {
-
-            case 'swap': {
-                const slot = findSlot(step.ability, bindings, cleanName)
-                if (slot !== null) {
-                    mcSend('hotbar', { slot })
-                    await sleep(step.duration)
-                } else {
-                    console.warn(`[COMBOS] Cannot find slot for ability: ${step.ability}`)
-                }
-                await sleep(POST_ACTION_GAP)
-                break
-            }
-
-            case 'click': {
-                if (step.mode === 'left') mcSend('attack', { mode: 'once' })
-                else if (step.mode === 'right') mcSend('use', { mode: 'once' })
-                await sleep(step.duration)
-                await sleep(POST_ACTION_GAP)
-                break
-            }
-
-            case 'sneak': {
-                mcSend('fire_pk_event', { event: 'sneak' })
-                const releaseAfter = step.mode === 'tap' ? 80 : step.duration
-                setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), releaseAfter)
-                if (step.blocking) {
-                    await sleep(step.duration)
-                    await sleep(POST_ACTION_GAP)
-                }
-                break
-            }
-
-            case 'jump': {
-                mcSend('fire_pk_event', { event: 'jump' })
-                await sleep(step.duration)
-                await sleep(POST_ACTION_GAP)
-                break
-            }
-
-            case 'move': {
-                if (onForceMove) onForceMove(step.direction, step.duration)
-                await sleep(step.duration)
-                break
-            }
-
-            case 'locklook': {
-                if (onLockLook) onLockLook(step.duration)
-                // non-blocking — continue immediately
-                break
-            }
-
-            case 'source': {
-                // always non-blocking — fire and forget
-                if (onSource) onSource(step.blocks, step.distance, step.duration)
-                break
-            }
-
-            case 'stop': {
-                if (onStop) onStop()
-                break
-            }
-
-            case 'look': {
-                if (onLookDir) onLookDir(step.direction, step.degrees, step.duration)
-                break
-            }
-
-            case 'wait': {
-                await sleep(step.duration)
-                break
-            }
-        }
+        await executeStep(step, { bindings, cleanName, mcSend, onSource, onLockLook, onForceMove, onStop, onLookDir })
     }
 }
 
 /**
- * Returns total wall-clock duration of a combo in ms
- * (sum of all blocking step durations).
+ * Executes a single parsed step.
+ * Extracted so duelingState can route ability steps through the same logic.
+ */
+export async function executeStep(step, { bindings, cleanName, mcSend, onSource, onLockLook, onForceMove, onStop, onLookDir }) {
+    switch (step.type) {
+
+        case 'swap': {
+            const slot = findSlot(step.ability, bindings, cleanName)
+            if (slot !== null) {
+                mcSend('hotbar', { slot })
+                await sleep(step.duration)
+            } else {
+                console.warn(`[COMBOS] Cannot find slot for ability: ${step.ability}`)
+            }
+            await sleep(POST_ACTION_GAP)
+            break
+        }
+
+        case 'click': {
+            if (step.mode === 'left') mcSend('attack', { mode: 'once' })
+            else if (step.mode === 'right') mcSend('use', { mode: 'once' })
+            await sleep(step.duration)
+            await sleep(POST_ACTION_GAP)
+            break
+        }
+
+        case 'sneak': {
+            mcSend('fire_pk_event', { event: 'sneak' })
+            const releaseAfter = step.mode === 'tap' ? 80 : step.duration
+            setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), releaseAfter)
+            if (step.blocking) {
+                await sleep(step.duration)
+                await sleep(POST_ACTION_GAP)
+            }
+            break
+        }
+
+        case 'jump': {
+            mcSend('fire_pk_event', { event: 'jump' })
+            await sleep(step.duration)
+            await sleep(POST_ACTION_GAP)
+            break
+        }
+
+        case 'move': {
+            if (onForceMove) onForceMove(step.direction, step.duration)
+            await sleep(step.duration)
+            break
+        }
+
+        case 'locklook': {
+            if (onLockLook) onLockLook(step.duration)
+            break // non-blocking
+        }
+
+        case 'source': {
+            if (onSource) onSource(step.blocks, step.distance, step.duration)
+            break // non-blocking
+        }
+
+        case 'stop': {
+            if (onStop) onStop(true)
+            break
+        }
+
+        case 'look': {
+            if (onLookDir) onLookDir(step.direction, step.degrees, step.duration)
+            break
+        }
+
+        case 'wait': {
+            await sleep(step.duration)
+            break
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Total wall-clock duration of a combo in ms (sum of all blocking steps).
  */
 export function comboDuration(combo) {
     return parseComboSteps(combo)

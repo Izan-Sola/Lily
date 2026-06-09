@@ -1,10 +1,37 @@
 import { buildDuelPrompt } from '../prompt-builders/duelPromptBuilder.js';
-import { getCombos, isComboAvailable, executeCombo, comboDuration } from '../helpers/comboExecutor.js'
+import {
+    getCombos,
+    isComboAvailable,
+    executeCombo,
+    comboDuration,
+    abilityAsCombo,
+} from '../helpers/comboExecutor.js'
 
 const MAX_BUSY_MS = 6000;
 const MAX_NEXT_PROMPT_DELAY = 8000;
 const MIN_PROMPT_DELAY = 1500;
 const DATA_REQUEST_INTERVAL = 500;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cleanName(raw) {
+    return raw.replace(/§[0-9a-fk-orxA-FK-ORX]/g, '').replace(/^[>\s]+/, '').trim();
+}
+
+function triggerCooldown(ctx, slot) {
+    const raw = ctx.bindings[slot];
+    if (!raw) return;
+    const ability = cleanName(raw);
+    const stats = ctx.abilityStats[ability];
+    if (!stats) return;
+    ctx.abilityCooldowns[ability] = Date.now() + stats.cooldown;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DUELING STATE
+// ─────────────────────────────────────────────────────────────────────────────
 
 export class DuelingState {
     constructor(ctx) {
@@ -31,6 +58,7 @@ export class DuelingState {
         this.lockLookUntil = 0;
         this.lookOffset = null;  // { direction, degrees, until }
         this._sourceResolve = null;
+        this.moveLocked = false;
     }
 
     onEnter() {
@@ -53,6 +81,7 @@ export class DuelingState {
         this.lookOffset = null;
         this.forceMoveUntil = 0;
         this.forceMoveDirection = null;
+        this.moveLocked = false;
     }
 
     onExit() {
@@ -80,6 +109,7 @@ export class DuelingState {
 
         const now = Date.now();
 
+        // Watchdog: unstick fetchBusy if it has been held too long
         if (this.fetchBusy && this._fetchBusySince && now - this._fetchBusySince > MAX_BUSY_MS) {
             console.warn(`[Dueling] fetch stuck for ${MAX_BUSY_MS}ms — force-resetting`);
             this.fetchBusy = false;
@@ -87,7 +117,8 @@ export class DuelingState {
             this.nextPromptAt = 0;
         }
 
-        if (this.moveTarget && this.ctx.lilyPos && now >= this.forceMoveUntil && now - this.lastMoveUpdate >= 1000) {
+        // Movement toward a target position
+        if (!this.moveLocked && this.moveTarget && this.ctx.lilyPos && now >= this.forceMoveUntil && now - this.lastMoveUpdate >= 1000) {
             this.lastMoveUpdate = now;
             const dx = this.moveTarget.x - this.ctx.lilyPos.x;
             const dz = this.moveTarget.z - this.ctx.lilyPos.z;
@@ -100,39 +131,59 @@ export class DuelingState {
             }
         }
 
+        // Periodic duel data request
         if (now - this.lastRequest >= DATA_REQUEST_INTERVAL) {
             this.lastRequest = now;
             this.ctx.mcSend('get_duel_data', { opponent: targetName });
         }
 
+        // AI prompt dispatch
         if (!this.fetchBusy && now >= this.nextPromptAt) {
             this._dispatchPrompt(targetName);
         }
 
-        // Expire lookOffset
+        // Look logic (priority: source > retreat > locked > normal+offset)
+        this._tickLook(target, now);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LOOK
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _tickLook(target, now) {
+        // Expire look offset
         if (this.lookOffset && now >= this.lookOffset.until) this.lookOffset = null;
 
         if (this.sourceLookUntil && now < this.sourceLookUntil && this.sourceLookTarget) {
             this.ctx.mcSend('look_at', this.sourceLookTarget);
-        } else if (this.retreatLookUntil && now < this.retreatLookUntil && this.retreatLookTarget) {
+            return;
+        }
+        if (this.retreatLookUntil && now < this.retreatLookUntil && this.retreatLookTarget) {
             this.ctx.mcSend('look_at', this.retreatLookTarget);
-        } else if (this.lockLookUntil && now < this.lockLookUntil) {
-            // locked — don't touch look
+            return;
+        }
+        if (this.lockLookUntil && now < this.lockLookUntil) {
+            return; // locked — don't touch look
+        }
+
+        const baseY = target.y + 1.75;
+
+        if (this.lookOffset) {
+            const dx = target.x - (this.ctx.lilyPos?.x ?? target.x);
+            const dz = target.z - (this.ctx.lilyPos?.z ?? target.z);
+            const flatDist = Math.hypot(dx, dz) || 1;
+            const rad = (this.lookOffset.degrees * Math.PI) / 180;
+            const yShift = Math.tan(rad) * flatDist;
+            const offsetY = this.lookOffset.direction === 'down' ? baseY - yShift : baseY + yShift;
+            this.ctx.mcSend('look_at', { x: target.x, y: offsetY, z: target.z });
         } else {
-            const baseY = target.y + 1.75;
-            if (this.lookOffset) {
-                const dx = target.x - (this.ctx.lilyPos?.x ?? target.x);
-                const dz = target.z - (this.ctx.lilyPos?.z ?? target.z);
-                const flatDist = Math.hypot(dx, dz) || 1;
-                const rad = (this.lookOffset.degrees * Math.PI) / 180;
-                const yShift = Math.tan(rad) * flatDist;
-                const offsetY = this.lookOffset.direction === 'down' ? baseY - yShift : baseY + yShift;
-                this.ctx.mcSend('look_at', { x: target.x, y: offsetY, z: target.z });
-            } else {
-                this.ctx.mcSend('look_at', { x: target.x, y: baseY, z: target.z });
-            }
+            this.ctx.mcSend('look_at', { x: target.x, y: baseY, z: target.z });
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PROMPT DISPATCH
+    // ─────────────────────────────────────────────────────────────────────────
 
     _dispatchPrompt(targetName) {
         const prompt = buildDuelPrompt(this.ctx, targetName);
@@ -155,9 +206,7 @@ export class DuelingState {
                     this._drainQueue();
                 }
             })
-            .catch(err => {
-                console.error('[Dueling] AI fetch error:', err.message);
-            })
+            .catch(err => console.error('[Dueling] AI fetch error:', err.message))
             .finally(() => {
                 this.fetchBusy = false;
                 this._fetchBusySince = null;
@@ -165,6 +214,7 @@ export class DuelingState {
     }
 
     async _fetchAction(prompt, targetName) {
+        console.log('[Dueling] DUELING PROMPT', prompt);
         const response = await fetch("http://localhost:11435/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -194,6 +244,10 @@ export class DuelingState {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // ACTION QUEUE
+    // ─────────────────────────────────────────────────────────────────────────
+
     _drainQueue() {
         if (this._executing || this._actionQueue.length === 0) return;
         this._executing = true;
@@ -209,8 +263,11 @@ export class DuelingState {
     }
 
     async _executeAction(action, targetName) {
+        this.moveLocked = false;
+
         if (action.strategy) this.ctx.lastDuelStrategy = action.strategy;
 
+        // Reposition: look away from opponent before retreating
         if (action.strategy === 'reposition') {
             const lilyPos = this.ctx.lilyPos;
             const opp = this.ctx.players[targetName];
@@ -232,8 +289,9 @@ export class DuelingState {
             }
         }
 
+        // Move toward a requested position
         const target = this.ctx.players[targetName];
-        if (action.move_to && this.ctx.lilyPos && target) {
+        if (!this.moveLocked && action.move_to && this.ctx.lilyPos && target) {
             const dx = action.move_to.x - this.ctx.lilyPos.x;
             const dz = action.move_to.z - this.ctx.lilyPos.z;
             if (Math.hypot(dx, dz) <= 0.75) {
@@ -245,6 +303,7 @@ export class DuelingState {
             }
         }
 
+        // Execute each requested slot in order
         const slots = Array.isArray(action.slot)
             ? action.slot
             : action.slot != null ? [action.slot] : [];
@@ -255,16 +314,17 @@ export class DuelingState {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // SLOT DISPATCH
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Slots 10+ are virtual combo slots; 1-9 are hotbar ability slots. */
     async _executeSlot(slot) {
-        if (this._isComboSlot(slot)) {
+        if (slot >= 10) {
             await this._executeComboSlot(slot);
         } else {
             await this._executeAbilitySlot(slot);
         }
-    }
-
-    _isComboSlot(slot) {
-        return slot >= 10;
     }
 
     _getComboForSlot(slot) {
@@ -281,33 +341,8 @@ export class DuelingState {
             return;
         }
 
-        const totalTime = comboDuration(combo);
-        this._setNextPromptAt(totalTime + MIN_PROMPT_DELAY);
-
-        await executeCombo(
-            combo,
-            this.ctx.bindings,
-            cleanName,
-            this.ctx.mcSend,
-            {
-                onLockLook: (duration) => {
-                    this.sourceLookUntil = 0;
-                    this.sourceLookTarget = null;
-                    this.retreatLookUntil = 0;
-                    this.retreatLookTarget = null;
-                    this.lockLookUntil = Date.now() + duration;
-                },
-                onForceMove: (direction, duration) => {
-                    this._forceMove(direction, duration);
-                },
-                // blocks: string[], holdMs: number — fire and forget (non-blocking)
-                onSource: (blocks, distance, holdMs) => this._acquireSource(blocks, distance, holdMs),
-                onStop: () => this._stopMove(),
-                onLookDir: (direction, degrees, duration) => {
-                    this.lookOffset = { direction, degrees, until: Date.now() + duration };
-                },
-            }
-        );
+        this._setNextPromptAt(comboDuration(combo) + MIN_PROMPT_DELAY);
+        await executeCombo(combo, this.ctx.bindings, cleanName, this.ctx.mcSend, this._comboHandlers());
     }
 
     async _executeAbilitySlot(slot) {
@@ -318,123 +353,42 @@ export class DuelingState {
         const stats = this.ctx.abilityStats[abilityName];
         if (!stats?.actions?.length) return;
 
+        // Switch to the correct hotbar slot first
         this.ctx.mcSend('hotbar', { slot });
 
-        const steps = [];
-        const actionTimes = stats.actionTimes ?? [];
-        let timeIdx = 0;
-
-        for (const actionStr of stats.actions) {
-            const parts = actionStr.split(':');
-            const type = parts[0];
-            const duration = actionTimes[timeIdx++] ?? 200;
-
-            // Non-counting actions — must be handled before the count loop
-            if (type === 'source') {
-                // source:blocks:distance
-                steps.push({ type: 'source', mode: parts[1] ?? '*', extra: parts[2] ?? '0', duration });
-                continue;
-            }
-            if (type === 'stop') {
-                steps.push({ type: 'stop', mode: '*', extra: undefined, duration });
-                continue;
-            }
-            if (type === 'locklook') {
-                steps.push({ type: 'locklook', mode: '*', extra: undefined, duration });
-                continue;
-            }
-            if (type === 'look') {
-                // look:direction:degrees
-                steps.push({ type: 'look', mode: parts[1] ?? 'forward', extra: parts[2] ?? '90', duration });
-                continue;
-            }
-
-            if (type === 'wait') {
-                steps.push({ type: 'wait', mode: '*', extra: undefined, duration });
-                continue;
-            }
-
-            // Counting actions
-            const mode = parts[1] ?? '*';
-            const count = parseInt(parts[2] ?? '1') || 1;
-            const extra = parts[3];
-            // timeIdx already advanced above for the first, advance for remaining count-1
-            for (let i = 0; i < count; i++) {
-                const dur = i === 0 ? duration : (actionTimes[timeIdx++] ?? 200);
-                steps.push({ type, mode, extra, duration: dur });
-            }
-        }
-
-        for (const step of steps) {
-            await this._fireStep(step);
-        }
+        // Treat the ability's action list as a one-off combo and reuse the same pipeline
+        const combo = abilityAsCombo(abilityName, stats);
+        await executeCombo(combo, this.ctx.bindings, cleanName, this.ctx.mcSend, this._comboHandlers());
     }
 
-    async _fireStep(step) {
-        const { type, mode, extra, duration } = step;
-
-        switch (type) {
-            case 'source': {
-                const blocks = (mode && mode !== '*')
-                    ? mode.split(',').map(b => b.trim().toLowerCase()).filter(Boolean)
-                    : [];
-                const dist = parseInt(extra ?? '0') || 0;
-                this._acquireSource(blocks, dist, duration);
-                break;
-            }
-            case 'click': {
-                if (mode === 'right') this.ctx.mcSend('use', { mode: 'once' });
-                else this.ctx.mcSend('attack', { mode: 'once' });
-                await new Promise(r => setTimeout(r, duration));
-                await new Promise(r => setTimeout(r, 100));
-                break;
-            }
-            case 'sneak': {
-                this.ctx.mcSend('fire_pk_event', { event: 'sneak' });
-                const releaseAfter = mode === 'tap' ? 50 : duration;
-                setTimeout(() => this.ctx.mcSend('fire_pk_event', { event: 'unsneak' }), releaseAfter);
-                const blocking = extra !== 'continue';
-                if (blocking) await new Promise(r => setTimeout(r, duration));
-                break;
-            }
-            case 'jump': {
-                this.ctx.mcSend('jump', { mode: 'once' });
-                await new Promise(r => setTimeout(r, duration));
-                break;
-            }
-            case 'forward':
-            case 'back':
-            case 'left':
-            case 'right': {
-                this._forceMove(type, duration);
-                await new Promise(r => setTimeout(r, duration));
-                break;
-            }
-            case 'locklook': {
+    /**
+     * Returns the handler object wiring combo/ability step side-effects
+     * into this DuelingState's look/move tracking fields.
+     * Defined once here instead of duplicated in every execute method.
+     */
+    _comboHandlers() {
+        return {
+            onLockLook: (duration) => {
                 this.sourceLookUntil = 0;
                 this.sourceLookTarget = null;
                 this.retreatLookUntil = 0;
                 this.retreatLookTarget = null;
                 this.lockLookUntil = Date.now() + duration;
-                break;
-            }
-            case 'wait': {
-                await new Promise(r => setTimeout(r, duration));
-                break;
-            }
-            case 'stop': {
+            },
+            onForceMove: (direction, duration) => {
+                this._forceMove(direction, duration);
+            },
+            onSource: (blocks, distance, holdMs) => {
+                this._acquireSource(blocks, distance, holdMs);
+            },
+            onStop: (lock = false) => {
+                if (lock) this.moveLocked = true;
                 this._stopMove();
-                break;
-            }
-            case 'look': {
-                const dir = mode && mode !== '*' ? mode : 'forward';
-                const deg = parseInt(extra ?? '90') || 90;
-                this.lookOffset = { direction: dir, degrees: deg, until: Date.now() + duration };
-                break;
-            }
-            default:
-                console.warn(`[Dueling] Unknown action type "${type}" — ignored`);
-        }
+            },
+            onLookDir: (direction, degrees, duration) => {
+                this.lookOffset = { direction, degrees, until: Date.now() + duration };
+            },
+        };
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -449,17 +403,17 @@ export class DuelingState {
 
     /**
      * Sends get_source_block with an optional block filter list.
-     * Always non-blocking from the caller's perspective — returns a Promise
-     * but the combo executor does NOT await it.
+     * Always non-blocking from the caller's perspective.
      */
     _acquireSource(blocks, distance, holdMs) {
         return new Promise((resolve) => {
             this._sourceResolve = resolve;
             const msg = { get_source_block: true };
-            if (blocks && blocks.length > 0) msg.blocks = blocks;
-            if (distance && distance > 0) msg.distance = distance;
+            if (blocks?.length > 0) msg.blocks = blocks;
+            if (distance > 0) msg.distance = distance;
             this.ctx.mcSend('get_source_block', msg);
 
+            // Timeout fallback so a missing source block doesn't hang indefinitely
             setTimeout(() => {
                 if (this._sourceResolve) {
                     this._sourceResolve({ found: false });
@@ -477,6 +431,7 @@ export class DuelingState {
 
     // ─────────────────────────────────────────────────────────────────────────
     // MOVEMENT HELPERS
+    // ─────────────────────────────────────────────────────────────────────────
 
     _stopMove() {
         this.moveTarget = null;
@@ -484,15 +439,31 @@ export class DuelingState {
         this.forceMoveDirection = null;
         this.ctx.mcSend('move', { direction: 'stop' });
     }
-    // ─────────────────────────────────────────────────────────────────────────
 
+    _forceMove(direction, durationMs) {
+        if (this.moveLocked) return;
+        this.forceMoveUntil = Date.now() + durationMs;
+        this.forceMoveDirection = direction;
+        this.ctx.mcSend('move', { direction });
+        setTimeout(() => {
+            if (this.forceMoveDirection === direction) {
+                this.forceMoveDirection = null;
+                if (!this.moveTarget) this.ctx.mcSend('move', { direction: 'stop' });
+            }
+        }, durationMs);
+    }
+
+    /**
+     * Returns the dominant movement direction (relative to facing the target)
+     * needed to reach moveTo from lilyPos.
+     */
     _getMoveDirection(lilyPos, moveTo, targetPos) {
         const forwardX = targetPos.x - lilyPos.x;
         const forwardZ = targetPos.z - lilyPos.z;
         const forwardLen = Math.hypot(forwardX, forwardZ);
         const fx = forwardX / forwardLen;
         const fz = forwardZ / forwardLen;
-        const rx = fz, rz = -fx;
+        const rx = fz, rz = -fx;  // right = rotate forward 90° CW
 
         const dx = moveTo.x - lilyPos.x;
         const dz = moveTo.z - lilyPos.z;
@@ -510,38 +481,12 @@ export class DuelingState {
         }
     }
 
-    _forceMove(direction, durationMs) {
-        this.forceMoveUntil = Date.now() + durationMs;
-        this.forceMoveDirection = direction;
-        this.ctx.mcSend('move', { direction });
-        setTimeout(() => {
-            if (this.forceMoveDirection === direction) {
-                this.forceMoveDirection = null;
-                if (!this.moveTarget) {
-                    this.ctx.mcSend('move', { direction: 'stop' });
-                }
-            }
-        }, durationMs);
-    }
-
     _setNextPromptAt(delay) {
         const clamped = Math.min(Math.max(delay, 0), MAX_NEXT_PROMPT_DELAY);
         this.nextPromptAt = Date.now() + clamped;
     }
 }
 
-function cleanName(raw) {
-    return raw.replace(/§[0-9a-fk-orxA-FK-ORX]/g, '').replace(/^[>\s]+/, '').trim();
-}
-
-function triggerCooldown(ctx, slot) {
-    const raw = ctx.bindings[slot];
-    if (!raw) return;
-    const ability = cleanName(raw);
-    const stats = ctx.abilityStats[ability];
-    if (!stats) return;
-    ctx.abilityCooldowns[ability] = Date.now() + stats.cooldown;
-}
 /**
  * DUELING STATE
  * ─────────────────────────────────────────────────────────────────────────────
@@ -555,17 +500,17 @@ function triggerCooldown(ctx, slot) {
  *   - _drainQueue() processes one action at a time (FIFO). While _executing,
  *     new responses queue up but don't interrupt the current action.
  *   - nextPromptAt is extended by combo/ability duration so prompts don't
- *     arrive faster than they can usefully be acted on, but overlap is OK
- *     for light abilities.
+ *     arrive faster than they can usefully be acted on.
  *
  * WATCHDOG:
- *   - fetchBusy is reset if stuck > MAX_BUSY_MS (fetch timeout / crash guard)
+ *   - fetchBusy is reset if stuck > MAX_BUSY_MS
  *   - _drainQueue is re-entered on every .finally() so nothing stalls
  *
- * COMBO EXECUTION:
- *   - comboDuration() sums only blocking steps — the true wall-clock time
- *   - parseComboSteps() resolves all timeIdx bookkeeping up-front so the
- *     JSON you write maps 1:1 to what executes
+ * COMBO vs ABILITY SLOTS:
+ *   - Slots 1–9  → hotbar ability slots  (_executeAbilitySlot)
+ *   - Slots 10+  → virtual combo slots   (_executeComboSlot)
+ *   Both paths normalize to the same combo shape and execute through
+ *   executeCombo() in comboExecutor.js.
  *
  * AI RESPONSE FORMAT:
  *   Single:  { "slot": 3, "move_to": { "x": 100, "z": 200 } }
@@ -574,36 +519,18 @@ function triggerCooldown(ctx, slot) {
  * TRANSITIONS OUT:
  *   → IDLE when duelTarget is null or target player leaves
  */
-/**
- * ACTION REFERENCE
- * ─────────────────────────────────────────────────────────────────────────────
- * Format: "type:mode:count:extra"  — trailing fields can be omitted if unused.
- * Each blocking step consumes one entry from actionsTime (ms).
- *
- * swap:slot:<Ability>          Switch hotbar to the slot holding <Ability>.
- *                              Uses fixed SWAP_LOCK_TIME (20ms), no time entry consumed.
- *
- * locklook                     Lock look direction for actionsTime[i] ms.
- *                              NON-BLOCKING — next step starts immediately.
- *                              Consumes one time entry.
- *
- * source:*:N[:block]           Acquire nearest source block, lock look at it.
- *                              NON-BLOCKING by default. Add :block to await the hold.
- *
- * click:left:N                 Left-click (attack) N times, waiting actionsTime[i] between each.
- * click:right:N                Right-click (use)   N times, waiting actionsTime[i] between each.
- *
- * sneak:hold:N[:continue]      Hold sneak for actionsTime[i] ms, release via setTimeout.
- *                              BLOCKING unless :continue is appended.
- * sneak:tap:N[:continue]       Tap sneak (release after 80ms).
- *                              BLOCKING unless :continue is appended.
- *
- * jump:*:N                     Jump N times, waiting actionsTime[i] between each.
- *
- * forward:*:N                  Force-walk forward for actionsTime[i] ms. BLOCKING.
- * back:*:N                     Force-walk backward.
- * left:*:N                     Force-strafe left.
- * right:*:N                    Force-strafe right.
- * 
 
+/**
+ * ACTION REFERENCE  (actionsTime entries consumed left-to-right per blocking step)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * swap:slot:<Ability>          Switch hotbar to slot holding <Ability>. Blocking.
+ * locklook                     Lock look for actionsTime[i] ms. NON-BLOCKING.
+ * source:<blocks>:<dist>       Acquire nearest source block. NON-BLOCKING.
+ * click:left|right[:N]         Left/right click N times. Blocking per click.
+ * sneak:hold|tap[:N][:cont]    Hold/tap sneak. Blocking unless :continue.
+ * jump[:N]                     Jump N times. Blocking per jump.
+ * forward|back|left|right[:N]  Force movement for actionsTime[i] ms. Blocking.
+ * wait                         Sleep for actionsTime[i] ms. Blocking.
+ * look:<dir>:<deg>             Offset look tracking. NON-BLOCKING.
+ * stop                         Stop movement and lock it. NON-BLOCKING.
  */

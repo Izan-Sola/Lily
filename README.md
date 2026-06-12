@@ -1,7 +1,7 @@
 # My Daughter Lily (WIP) 
 ### initially supposed to be a hytale bot, but oh well...
 
-- My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip, objective is to give her as much autonomy as possible considering limitations)
+- My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
 - Related: https://github.com/Izan-Sola/Lily-Minecraft
 
 ## Stuff used
@@ -33,11 +33,11 @@
   
 ### Minecraft
 
-- /lily duel (difficulty)
-- /lily duel stop
-- /lily bend (element) [only fire atm]
+- /lily duel (start, stop)
+- /lily bend (element) [only fire and earth atm]
 - /lily come
 - /lily follow (user)
+- /lily stop
   
 ## Info
 

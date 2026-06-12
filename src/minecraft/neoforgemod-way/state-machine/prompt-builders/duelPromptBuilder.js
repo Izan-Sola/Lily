@@ -3,7 +3,7 @@ import { getCombos, isComboAvailable } from '../helpers/comboExecutor.js'
 // ── Abilities to NEVER inject in the prompt ───────────────────────────────────
 const EXCLUDED_ABILITIES = new Set([
     "shockwave", "raiseearth", "lavadisc", "catapult",
-    "lavathrow", "lavadisc", "firejet", 
+    "lavathrow", "lavadisc", 
     "airburst", "airshield", "tornado"
 ])
 

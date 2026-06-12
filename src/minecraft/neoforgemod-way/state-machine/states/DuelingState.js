@@ -9,7 +9,7 @@ import {
 
 const MAX_BUSY_MS = 6000;
 const MAX_NEXT_PROMPT_DELAY = 8000;
-const MIN_PROMPT_DELAY = 1500;
+const MIN_PROMPT_DELAY = 2500;
 const DATA_REQUEST_INTERVAL = 500;
 
 // ─────────────────────────────────────────────────────────────────────────────

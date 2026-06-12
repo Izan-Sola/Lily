@@ -1,8 +1,8 @@
 import { SlashCommandBuilder } from "discord.js"
-import { HytaleAIChat } from "../ai/HytaleAIChat.js"
+import { Lily } from "../ai/Lily.js"
 import { config } from "../utils/config.js"
 
-const ai = new HytaleAIChat({ 
+const ai = new Lily({ 
     model: config.model 
 });  
 

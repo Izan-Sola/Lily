@@ -15,7 +15,7 @@ import { fileURLToPath } from "url"
 import { exec, spawn } from "child_process"
 import { promisify } from "util"
 import prism from "prism-media"
-import { HytaleAIChat, initLogChannel } from "./ai/index.js"
+import { Lily, initLogChannel } from "./ai/index.js"
 import { config } from "./utils/config.js"
 import { getPrefs } from "./utils/userPreferences.js"
 
@@ -23,7 +23,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const execAsync = promisify(exec)
 
-export const ai = new HytaleAIChat({ model: config.modelName })
+export const ai = new Lily({ model: config.modelName })
 
 // ─── Voice helpers ────────────────────────────────────────────────────────────
 

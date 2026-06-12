@@ -200,6 +200,7 @@ export class ToolExecutor {
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args.query ?? "")
             case "query_episodic_memory": return this.episodicQuery(args.query ?? "", args.k ?? 5)
+            case "send_meme": return this.searchMeme(args.query ?? "")
             case "addto_episodic_memory": return this.episodicAdd({
                 title: args.title ?? "Untitled",
                 summary: args.summary ?? "",
@@ -215,6 +216,31 @@ export class ToolExecutor {
             default:
                 console.warn(`⚠️ [TOOL] Unknown: ${name}`)
                 return `Unknown tool: ${name}`
+        }
+    }
+    async searchMeme(query) {
+        log(`🎭 [MEME] "${query}"`)
+        try {
+            const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/static-memes/search`, {
+                params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
+                timeout: this.opts.dbTimeout
+            })
+        
+            log(`🎭 [MEME RAW] ${JSON.stringify(data).slice(0, 300)}`)
+
+            const results = data?.data?.data ?? []
+            if (!results.length) return JSON.stringify({ status: "not_found", message: "No meme found." })
+
+            const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
+            const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
+            if (!url) return JSON.stringify({ status: "not_found", message: "No meme URL." })
+
+            log(`✅ [MEME] Found`)
+            return JSON.stringify({ status: "ok", url })
+        } catch (err) {
+            logError(`[MEME] ${err.message}`)
+            if (err.response) logError(`[MEME RESPONSE] ${JSON.stringify(err.response.data)}`)
+            return JSON.stringify({ status: "error", message: "Failed to search for meme." })
         }
     }
 }
@@ -254,7 +280,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a new factual entry. Reply naturally after using the tool, and never mention you used it.",
+            description: "Store a new factual entry.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { text: { type: "string" }, source: { type: "string" } }, required: ["text"] }
         }
     },
@@ -262,7 +288,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "update_memory_database",
-            description: "Update an existing memory. Reply naturally after using the tool, and never mention you used it",
+            description: "Update an existing memory.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { query: { type: "string" }, text: { type: "string" } }, required: ["query", "text"] }
         }
     },
@@ -270,7 +296,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "remove_memory_database",
-            description: "Remove matching memories. Reply naturally after using the tool, and never mention you used it",
+            description: "Remove matching memories.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     },
@@ -278,7 +304,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "query_episodic_memory",
-            description: "Search episodic memory for past events. Use multiple keywords. Use the results to enhance your reply, and never mention the use of the tool. ",
+            description: "Search episodic memory for past events. Use multiple keywords.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it. ",
             parameters: { type: "object", properties: { query: { type: "string" }, k: { type: "number" } }, required: ["query"] }
         }
     },
@@ -286,7 +312,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "addto_episodic_memory",
-            description: "Store an episodic memory (event/experience). Reply naturally after using the tool, and never mention you used it",
+            description: "Store a significant event or shared experience worth remembering long-term. Only use ONCE per conversation turn, only for genuinely notable moments like first meetings, achievements, or important decisions. Do NOT store routine chat, greetings, or tool results as episodes. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { title: { type: "string" }, summary: { type: "string" }, participants: { type: "array", items: { type: "string" } }, emotions: { type: "array", items: { type: "string" } }, importance: { type: "number" } }, required: ["title", "summary"] }
         }
     },
@@ -294,7 +320,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "send_gif",
-            description: "Search and send a GIF. Reply naturally after using the tool, and never mention you used it",
+            description: "Search and send a GIF.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     },
@@ -310,6 +336,14 @@ export const TOOLS = [
                 },
                 required: ["query"]
             }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "send_meme",
+            description: "Search and send a meme image. Use when a meme would fit the moment. Use descriptive terms like 'drake approving', 'distracted boyfriend', 'this is fine fire'. Reply naturally after, never mention the tool.",
+            parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     }
 ]

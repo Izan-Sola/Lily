@@ -1,10 +1,10 @@
 import { SlashCommandBuilder } from "discord.js"
 import { speak } from "../bot.js"
-import { HytaleAIChat } from "../ai/HytaleAIChat.js"
+import { Lily } from "../ai/Lily.js"
 import { config } from "../utils/config.js"
 import fs from "fs"
 
-const ai = new HytaleAIChat(config.modelName)
+const ai = new Lily(config.modelName)
 
 export const data = new SlashCommandBuilder()
     .setName("audiolily")

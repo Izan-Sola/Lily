@@ -14,12 +14,12 @@ const DEFAULT_OPTIONS = {
     repeatPenalty: 1.1,
     repeatLastN: 64,
     maxReplyTokens: 2048,
-    contextWindow: 6000,
+    contextWindow: 8000,
     maxConvoMessages: 15,
     maxRawMessages: 15,
     maxToolLoops: 10,
     maxToolRepeats: 1,
-    memoryDuplicateMinScore: 0.9,
+    memoryDuplicateMinScore: 0.75,
     memoryRemoveMinScore: 0.70,
     memoryQueryMinScore: 0.35,
     memoryRemoveK: 2,
@@ -36,7 +36,7 @@ const DEFAULT_OPTIONS = {
     dbTimeout: 30000,
 }
 
-export class HytaleAIChat {
+export class Lily {
     constructor(options = {}) {
         this.opts = { ...DEFAULT_OPTIONS, ...options }
         this.convoHistories = new Map()
@@ -238,139 +238,178 @@ export class HytaleAIChat {
         })
     }
 
-    async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
-        const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
-        let pendingGifUrl = null
-        let firstIteration = true
+  async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
+    const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
+    let pendingGifUrl = null
+    let firstIteration = true
+    const toolsUsedThisTurn = new Set()
 
-        for (let i = 0; i < this.opts.maxToolLoops; i++) {
-            log(`🔄 [LOOP ${i + 1}]`)
+    for (let i = 0; i < this.opts.maxToolLoops; i++) {
+        log(`🔄 [LOOP ${i + 1}]`)
 
-            let messages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
+        let messages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
 
-            if (firstIteration && images.length > 0) {
-                firstIteration = false
-                for (let j = messages.length - 1; j >= 0; j--) {
-                    if (messages[j].role === "user") {
-                        const originalText = typeof messages[j].content === "string" ? messages[j].content : ""
-                        messages[j] = {
-                            ...messages[j],
-                            content: this.buildUserContent(originalText, images)
-                        }
-                        log(`🖼️ [VISION] Injected ${images.length} image(s) into user message`)
-                        break
+        if (firstIteration && images.length > 0) {
+            firstIteration = false
+            for (let j = messages.length - 1; j >= 0; j--) {
+                if (messages[j].role === "user") {
+                    const originalText = typeof messages[j].content === "string" ? messages[j].content : ""
+                    messages[j] = {
+                        ...messages[j],
+                        content: this.buildUserContent(originalText, images)
                     }
+                    log(`🖼️ [VISION] Injected ${images.length} image(s) into user message`)
+                    break
                 }
-            } else {
-                firstIteration = false
             }
+        } else {
+            firstIteration = false
+        }
 
-            const msg = await this.sendToOllama(messages)
-            if (!msg) return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
+        const msg = await this.sendToOllama(messages)
+        if (!msg) return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
 
-            const content = (msg.content ?? "").trim()
+        const content = (msg.content ?? "").trim()
 
-            // Native tool calls
-            if (msg.tool_calls?.length) {
-                log(`🔧 [NATIVE] ${msg.tool_calls.map(tc => tc.function.name).join(", ")}`)
+        // Native tool calls
+        if (msg.tool_calls?.length) {
+            log(`🔧 [NATIVE] ${msg.tool_calls.map(tc => tc.function.name).join(", ")}`)
 
-                this.pushToConvoHistory(channelId, {
-                    role: "assistant",
-                    content: msg.content ?? "",
-                    tool_calls: msg.tool_calls
-                })
+            this.pushToConvoHistory(channelId, {
+                role: "assistant",
+                content: msg.content ?? "",
+                tool_calls: msg.tool_calls
+            })
 
-                for (const tc of msg.tool_calls) {
-                    let args = {}
-                    try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
+            for (const tc of msg.tool_calls) {
+                let args = {}
+                try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
 
-                    const blocked = tracker.check(tc.function.name, args, log)
-                    if (blocked) {
-                        this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: blocked })
+                const name = tc.function.name
+
+                // Block media tools to one per turn
+                if ((name === "send_gif" || name === "send_meme") && toolsUsedThisTurn.has(name)) {
+                    log(`🚫 [BLOCKED] ${name} already used this turn`)
+                    this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: `You already sent a ${name === "send_gif" ? "GIF" : "meme"} this turn. Reply in text only.` })
+                    continue
+                }
+
+                // Block episodic to one per turn
+                if (name === "addto_episodic_memory" && toolsUsedThisTurn.has(name)) {
+                    log(`🚫 [BLOCKED] addto_episodic_memory already used this turn`)
+                    this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: "Already stored an episodic memory this turn. Do not store another." })
+                    continue
+                }
+
+                const blocked = tracker.check(name, args, log)
+                if (blocked) {
+                    this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: blocked })
+                    continue
+                }
+
+                toolsUsedThisTurn.add(name)
+                const result = await this.tools.execute(name, args)
+
+                if (name === "send_gif" || name === "send_meme") {
+                    try {
+                        const parsed = JSON.parse(result)
+                        if (parsed.status === "ok") pendingGifUrl = parsed.url
+                    } catch { }
+                }
+
+                this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: result })
+            }
+            continue
+        }
+
+        // Embedded tool calls
+        if (content.includes("<tool_call>")) {
+            const calls = this.parseEmbeddedToolCalls(content)
+            if (calls.length) {
+                this.pushToConvoHistory(channelId, { role: "assistant", content })
+
+                for (const tc of calls) {
+                    const name = tc.name
+
+                    if ((name === "send_gif" || name === "send_meme") && toolsUsedThisTurn.has(name)) {
+                        log(`🚫 [BLOCKED] ${name} already used this turn`)
+                        this.pushToConvoHistory(channelId, {
+                            role: "user",
+                            content: `<tool_response>\nYou already sent a ${name === "send_gif" ? "GIF" : "meme"} this turn. Reply in text only.\n</tool_response>`
+                        })
                         continue
                     }
 
-                    const result = await this.tools.execute(tc.function.name, args)
+                    if (name === "addto_episodic_memory" && toolsUsedThisTurn.has(name)) {
+                        log(`🚫 [BLOCKED] addto_episodic_memory already used this turn`)
+                        this.pushToConvoHistory(channelId, {
+                            role: "user",
+                            content: `<tool_response>\nAlready stored an episodic memory this turn. Do not store another.\n</tool_response>`
+                        })
+                        continue
+                    }
 
-                    if (tc.function.name === "send_gif") {
+                    const blocked = tracker.check(name, tc.args, log)
+                    if (blocked) {
+                        this.pushToConvoHistory(channelId, {
+                            role: "user",
+                            content: `<tool_response>\n${blocked}\n</tool_response>`
+                        })
+                        continue
+                    }
+
+                    toolsUsedThisTurn.add(name)
+                    const result = await this.tools.execute(name, tc.args)
+
+                    if (name === "send_gif" || name === "send_meme") {
                         try {
                             const parsed = JSON.parse(result)
                             if (parsed.status === "ok") pendingGifUrl = parsed.url
                         } catch { }
                     }
 
-                    this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: result })
+                    this.pushToConvoHistory(channelId, {
+                        role: "user",
+                        content: `<tool_response>\n${result}\n</tool_response>`
+                    })
                 }
                 continue
             }
 
-            // Embedded tool calls
-            if (content.includes("<tool_call>")) {
-                const calls = this.parseEmbeddedToolCalls(content)
-                if (calls.length) {
-                    this.pushToConvoHistory(channelId, { role: "assistant", content })
-
-                    for (const tc of calls) {
-                        const blocked = tracker.check(tc.name, tc.args, log)
-                        if (blocked) {
-                            this.pushToConvoHistory(channelId, {
-                                role: "user",
-                                content: `<tool_response>\n${blocked}\n</tool_response>`
-                            })
-                            continue
-                        }
-
-                        const result = await this.tools.execute(tc.name, tc.args)
-
-                        if (tc.name === "send_gif") {
-                            try {
-                                const parsed = JSON.parse(result)
-                                if (parsed.status === "ok") pendingGifUrl = parsed.url
-                            } catch { }
-                        }
-
-                        this.pushToConvoHistory(channelId, {
-                            role: "user",
-                            content: `<tool_response>\n${result}\n</tool_response>`
-                        })
-                    }
-                    continue
-                }
-
-                // Malformed tag
-                log(`⚠️ [MALFORMED] ${content.slice(0, 200)}`)
-                this.pushToConvoHistory(channelId, { role: "assistant", content })
-                this.pushToConvoHistory(channelId, {
-                    role: "user",
-                    content: `[System: Your <tool_call> was malformed. Use exact format:\n<tool_call>\n{"name": "tool_name", "arguments": {"arg": "value"}}\n</tool_call>]`
-                })
-                continue
-            }
-
-            // Narration guard
-            if ([...TOOL_NAMES].some(name => content.includes(name))) {
-                log(`⚠️ [NARRATE] Model described tool instead of calling`)
-                this.pushToConvoHistory(channelId, { role: "assistant", content })
-                this.pushToConvoHistory(channelId, {
-                    role: "user",
-                    content: `[System: Do NOT mention tool names in your reply. Use <tool_call> if needed, otherwise just reply naturally.]`
-                })
-                continue
-            }
-
-            // Real reply
-            if (content && content.toLowerCase() !== "none") {
-                this.pushToConvoHistory(channelId, { role: "assistant", content })
-                log(`✅ [LILY REPLY] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
-                return { text: content, gifUrl: pendingGifUrl }
-            }
-
-            log(`⚠️ [EMPTY] No content`)
-            return { text: "I'm not sure about that one!", gifUrl: null }
+            // Malformed tag
+            log(`⚠️ [MALFORMED] ${content.slice(0, 200)}`)
+            this.pushToConvoHistory(channelId, { role: "assistant", content })
+            this.pushToConvoHistory(channelId, {
+                role: "user",
+                content: `[System: Your <tool_call> was malformed. Use exact format:\n<tool_call>\n{"name": "tool_name", "arguments": {"arg": "value"}}\n</tool_call>]`
+            })
+            continue
         }
 
-        return { text: "Sorry, I got a bit lost. Could you repeat that?", gifUrl: null }
+        // Narration guard
+        if ([...TOOL_NAMES].some(name => content.includes(name))) {
+            log(`⚠️ [NARRATE] Model described tool instead of calling`)
+            this.pushToConvoHistory(channelId, { role: "assistant", content })
+            this.pushToConvoHistory(channelId, {
+                role: "user",
+                content: `[System: Do NOT mention tool names in your reply. Use <tool_call> if needed, otherwise just reply naturally.]`
+            })
+            continue
+        }
+
+        // Real reply
+        if (content && content.toLowerCase() !== "none") {
+            this.pushToConvoHistory(channelId, { role: "assistant", content })
+            log(`✅ [LILY REPLY] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
+            return { text: content, gifUrl: pendingGifUrl }
+        }
+
+        log(`⚠️ [EMPTY] No content`)
+        return { text: "I'm not sure about that one!", gifUrl: null }
     }
+
+    return { text: "Sorry, I got a bit lost. Could you repeat that?", gifUrl: null }
+}
 
     async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}, images = []) {
         const clean = sanitizeInput(rawInput)

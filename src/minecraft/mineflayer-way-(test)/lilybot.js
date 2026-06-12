@@ -55,7 +55,7 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
         aiInstance.pushRawMessage("minecraft", sender, message)
 
         const lower = message.toLowerCase()
-        const addressed = lower.includes("lily") || lower.includes("hylily")
+        const addressed = lower.includes("lily") || lower.includes("hylily") || lower.startsWith("!")
         const randomButtin = Math.random() < 0.05
 
         // if (addressed || randomButtin) {

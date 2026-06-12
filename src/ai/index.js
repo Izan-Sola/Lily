@@ -410,7 +410,7 @@
 
 // // ─── Main class ───────────────────────────────────────────────────────────────
 
-// export class HytaleAIChat {
+// export class Lily {
 //     constructor(options = {}) {
 //         this.opts = { ...DEFAULT_OPTIONS, ...options }
 //         this.convoHistories = new Map()
@@ -976,7 +976,7 @@
 //  * Used by both the Discord bot and the Minecraft bot.
 //  *
 //  * EXPORTS:
-//  *   HytaleAIChat class        → main AI interface
+//  *   Lily class        → main AI interface
 //  *   MINECRAFT_SYSTEM_PROMPT   → system prompt variant for in-game chat
 //  *
 //  * KEY OPTIONS (DEFAULT_OPTIONS):
@@ -1038,5 +1038,5 @@
 //  *   Both return Promise<{ text: string, gifUrl: string|null }>
 //  */
 
-export { HytaleAIChat, MINECRAFT_SYSTEM_PROMPT } from './HytaleAIChat.js'
+export { Lily, MINECRAFT_SYSTEM_PROMPT } from './Lily.js'
 export { initLogChannel, log, logError, sanitizeInput } from './utils.js'

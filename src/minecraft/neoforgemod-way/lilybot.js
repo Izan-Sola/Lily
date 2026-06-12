@@ -149,7 +149,7 @@ async function _handleEvent(event) {
             const message = event.message ?? ""
 
             if (player.toLowerCase() === "lily") break
-            if (!event.message.toLowerCase().includes("lily")) break
+            if (!event.message.toLowerCase().includes("lily") && !event.message.toLowerCase().startsWith("!")) break
             console.log(`[MC CHAT] ${player}: ${message}`)
 
             try {
@@ -160,11 +160,13 @@ async function _handleEvent(event) {
                 )
 
                 const text = aiReply?.text?.trim()
+                const gifUrl = aiReply?.gifUrl
 
                 if (text) {
-                    _splitMessage(text).forEach(msg => {
-                        mcChat(msg)
-                    })
+                    _splitMessage(text).forEach(msg => mcChat(msg))
+                }
+                if (gifUrl) {
+                    mcChat(gifUrl)
                 }
 
             } catch (err) {

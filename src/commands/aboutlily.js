@@ -20,15 +20,15 @@ export async function execute(interaction) {
                 "- I can chat with you! Just ping me or reply to me and I'll get to you asap!",
                 "  If you want to talk to me in voice chat, just join a voice channel and use /voice join! In voice chat, to avoid getting confused, I will only assume",
                 "  you are referring to me if you say my name, 'Lily', at some point in your sentence. If you want me to leave, use the /voice leave command!",
-                "- I can also send audios, if you want to hear my cute voice, just use /audiolily or reply to me with a voice message and I'll respond with an audio message asap!",
-                "- I can also answer questions about Hytale by searching its Wiki!",
+                "- I can use gifs and also send audios, if you want to hear my cute voice, just use /audiolily or reply to me with a voice message and I'll respond with an audio message asap!",
                 "- I'm very smart hehe~ so I can remember facts about you and the server!",
+                "- I can also play Minecraft (wip)"
             ].join("\n"), inline: false },
             {  
             name: "Info",     
             value: [ 
                      "- Update your preferences using the /lilyprefs command. Control pings, replies, voice processing etc..." ,
-                     "- Your voice is only processed in real time and not stored anywhere. An history of messages sent in the current channel is stored for memory and context enhancement purposes.\n", 
+                     "- Your voice is only processed in real time and not stored anywhere.\n", 
             ].join("\n"), inline: false 
         }
             

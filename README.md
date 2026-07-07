@@ -21,7 +21,7 @@
 - She can send gifs, audio messages, talk in voice calls, and listen to your voice.
 - ~~She has access to a vectorized database containing the scrapped Hytale Wiki that she can query using a tool~~ (Droping this).
 - She has a memory database that she can query, add, update and remove memory from using tools.
-- SUCCUMB TO HER MAD BENDING SKILLS IN A DUEL (wip)
+- SUCCUMB TO HER MAD BENDING SKILLS IN A DUEL (wip, showcasesa at https://www.youtube.com/@ShinyShadow_)
 
 ## Commands
 

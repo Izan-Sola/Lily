@@ -27,7 +27,7 @@ export class ToolExecutor {
         log(`🧠 [MEMORY QUERY] "${query}"`)
         try {
             const { data } = await axios.get(`${this.opts.knowledgeDbUrl}/search_get`, {
-                params: { query, k: 5, min_score: this.opts.memoryQueryMinScore },
+                params: { query, k: 10, min_score: this.opts.memoryQueryMinScore },
                 timeout: this.opts.dbTimeout
             })
             if (!data?.results?.length) return "No relevant information found in memory."
@@ -199,7 +199,7 @@ export class ToolExecutor {
             case "addto_memory_database": return this.memoryAdd(args.text ?? "", args.source ?? "user")
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args.query ?? "")
-            case "query_episodic_memory": return this.episodicQuery(args.query ?? "", args.k ?? 5)
+            case "query_episodic_memory": return this.episodicQuery(args.query ?? "", 5, args.days_back ?? 90)
             case "send_meme": return this.searchMeme(args.query ?? "")
             case "addto_episodic_memory": return this.episodicAdd({
                 title: args.title ?? "Untitled",
@@ -304,8 +304,15 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "query_episodic_memory",
-            description: "Search episodic memory for past events. Use multiple keywords.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it. ",
-            parameters: { type: "object", properties: { query: { type: "string" }, k: { type: "number" } }, required: ["query"] }
+            description: "Search episodic memory for past events or conversations. Use when asked about something specific that happened. Choose days_back based on context: 1 for 'yesterday'/'today', 7 for 'this week'/'recently', 30 for 'last month', 90+ for older memories.",
+            parameters: {
+                type: "object",
+                properties: {
+                    query: { type: "string", description: "Keywords describing the event to search for" },
+                    days_back: { type: "number", description: "How many days back to search. Pick based on context: 1=today/yesterday, 7=this week, 30=this month, 90=last few months, 365=last year" }
+                },
+                required: ["query"]
+            }
         }
     },
     {

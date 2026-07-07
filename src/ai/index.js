@@ -1038,5 +1038,5 @@
 //  *   Both return Promise<{ text: string, gifUrl: string|null }>
 //  */
 
-export { Lily, MINECRAFT_SYSTEM_PROMPT } from './Lily.js'
+export { Lily } from './Lily.js'
 export { initLogChannel, log, logError, sanitizeInput } from './utils.js'

@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws"
 import { StateController } from "./state-machine/StateController.js"
-import { MINECRAFT_SYSTEM_PROMPT } from '../../ai/index.js'
+import { MINECRAFT_SYSTEM_PROMPT } from '../../ai/prompts.js'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'

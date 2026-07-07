@@ -16,13 +16,9 @@ export async function initLogChannel(client) {
 }
 
 function sendToLogChannel(message) {
-    const truncated = message.length > 1900 ? message.slice(0, 1900) + "..." : message
+    const truncated = message.length > 3200 ? message.slice(0, 3200) + "..." : message
     logChannel?.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => { })
-    fetch("http://localhost:1234/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ msg: truncated })
-    }).catch(() => { console.error("Failed to send log to local server") })
+    axios.post("http://localhost:1234/log", { msg: truncated }, { timeout: 2000 }).catch(() => { })
 }
 
 export function log(message) { console.log(message); sendToLogChannel(message) }
@@ -43,28 +39,30 @@ export function sanitizeInput(raw) {
         .trim()
 }
 
+// ─── Trim a tool/memory result string to roughly maxTokens (≈4 chars/token) ──
+export function trimToTokens(text, maxTokens = 400) {
+    if (!text) return text
+    const maxChars = maxTokens * 4
+    if (text.length <= maxChars) return text
+    return text.slice(0, maxChars) + "\n...(truncated)"
+}
+
 // ─── Tool Call Tracker (repeat counter only, no cache) ───────────────────
 export class ToolCallTracker {
-    constructor(maxRepeats = 2) {
+    constructor(maxRepeats = 1) {
         this.maxRepeats = maxRepeats
-        this.reset()
-    }
-
-    reset() {
         this.calls = new Map()
-        return this
     }
 
-    check(name, args, logFn) {
+    check(name, args) {
         const key = `${name}:${JSON.stringify(args)}`
         const count = (this.calls.get(key) || 0) + 1
         this.calls.set(key, count)
 
         if (count > this.maxRepeats) {
-            logFn(`🚫 [BLOCKED] ${key} (x${count})`)
+            log(`🚫 [BLOCKED] ${key} (x${count})`)
             return `[System: You already called ${name} with these exact arguments ${count - 1} time(s). Stop calling it and reply now.]`
         }
-
         return null
     }
 }

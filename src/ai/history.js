@@ -1,20 +1,17 @@
 import { log } from './utils.js'
 
 /**
- * Clean conversation history — stores only actual exchanges,
- * filters out malformed tool nonsense.
+ * Clean conversation history — stores only real exchanges.
  */
 export class ConversationHistory {
-    constructor(maxMessages = 20) {
+    constructor(maxMessages = 10) {
         this.maxMessages = maxMessages
         this.messages = []
     }
 
     push(message) {
-        // Skip empty or invalid messages
         if (!message || (!message.content && !message.tool_calls)) return
 
-        // Don't store tool responses that are just system blocks
         if (message.role === "tool") {
             const content = message.content || ""
             if (content.includes("[System:") || content.includes("already called this tool")) return
@@ -22,7 +19,6 @@ export class ConversationHistory {
 
         this.messages.push(message)
 
-        // Trim to max
         if (this.messages.length > this.maxMessages) {
             this.messages.splice(0, this.messages.length - this.maxMessages)
         }
@@ -40,19 +36,18 @@ export class ConversationHistory {
         return this.messages.length
     }
 
-    // Get last N messages for context
     lastN(n) {
         return this.messages.slice(-n)
     }
 }
 
 /**
- * Raw chat buffer — keeps recent chat from all users.
- * Can be passively filled via push(), or replaced wholesale
- * via replace() when we have exact channel history (e.g. on a ping).
+ * Raw chat buffer — recent channel chat from all users.
+ * Filled passively via push(), or replaced wholesale via replace()
+ * when exact channel history is available (e.g. on a ping).
  */
 export class RawBuffer {
-    constructor(maxMessages = 20) {
+    constructor(maxMessages = 12) {
         this.maxMessages = maxMessages
         this.messages = []
     }
@@ -65,9 +60,7 @@ export class RawBuffer {
     }
 
     /**
-     * Replace the buffer's contents with a pre-fetched set of lines.
-     * Pass an array of already-formatted "AuthorName: content" strings,
-     * oldest first. Trims to maxMessages automatically.
+     * Replace buffer with pre-fetched lines (oldest first, "Author: content").
      */
     replace(lines) {
         this.messages = lines.slice(-this.maxMessages)

@@ -508,10 +508,10 @@ export async function createBot() {
                 if (match?.[1]) authorName = sanitizeInput(match[1].trim())
             } else return
         } else {
-            authorName = sanitizeInput(message.member.displayName)
+            authorName = sanitizeInput(message.member.username || message.author.username)
         }
-
-        if (!authorName || authorName === "pikarohan") return
+        const bannedUsers = ["pikarohan", "_helixer_", "H-Elixer", "[H-Elixer]" ]
+        if (!authorName || bannedUsers.includes(authorName)) return
 
         const channelId = message.channel.id
         const isMentioned = message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")

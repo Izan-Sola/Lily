@@ -35,7 +35,7 @@
 ### Minecraft
 
 - /lily duel (start, stop)
-- /lily bend (element) [only fire and earth atm]
+- /lily bend (element) [only fire, earth and air atm]
 - /lily come
 - /lily follow (user)
 - /lily stop

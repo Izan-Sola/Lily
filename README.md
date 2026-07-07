@@ -13,6 +13,7 @@
 - Unsloth studio, to teach my daughter.
 - Ollama, to accomodate my daughter on her home.
 - NodeJS, to allow her to communicate in discord.
+- Continue VSC extension, so she vibecode herself (lol)
 
 ## Features
 

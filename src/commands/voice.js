@@ -7,11 +7,11 @@ export const data = new SlashCommandBuilder()
     .setDescription("Control Lily's voice channel presence")
     .addSubcommand(sub =>
         sub.setName("join")
-           .setDescription("Lily joins your current voice channel")
+            .setDescription("Lily joins your current voice channel")
     )
     .addSubcommand(sub =>
         sub.setName("leave")
-           .setDescription("Lily leaves the voice channel")
+            .setDescription("Lily leaves the voice channel")
     )
 
 export async function execute(interaction) {
@@ -37,14 +37,14 @@ export async function execute(interaction) {
         }
 
         const connection = joinVoiceChannel({
-            channelId:      voiceChannel.id,
-            guildId:        interaction.guild.id,
+            channelId: voiceChannel.id,
+            guildId: interaction.guild.id,
             adapterCreator: interaction.guild.voiceAdapterCreator,
-            selfDeaf:       false,
-            selfMute:       false,
+            selfDeaf: false,
+            selfMute: false,
         })
 
-       startVoiceSession(connection, interaction.guild, interaction.channelId);
+        startVoiceSession(connection, interaction.guild, interaction.channelId);
 
         return interaction.reply({
             content: `Joined **${voiceChannel.name}**! 🎙️ I'm listening~`,
@@ -52,6 +52,8 @@ export async function execute(interaction) {
     }
 
     // ─── /voice leave ─────────────────────────────────────────────────────────
+    // Handles the 'leave' subcommand. Lily leaves the current voice channel.
+    // Checks if Lily is connected to any voice channel before disconnecting.
     if (subcommand === "leave") {
         const connection = getVoiceConnection(interaction.guild.id)
 

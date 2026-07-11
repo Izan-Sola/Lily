@@ -31,7 +31,7 @@ export async function execute(interaction) {
         const oggPath = await speak(clean)
 
         await interaction.editReply({
-            content: `💬 *"${clean}"*`,
+            content: `💬 *In response to "${userMessage}"*`,
             files: [{ attachment: oggPath, name: "lily_response.ogg" }]
         })
 

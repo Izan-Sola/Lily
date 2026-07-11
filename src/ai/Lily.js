@@ -7,7 +7,7 @@ import { ToolExecutor, TOOLS, TOOL_NAMES } from './tools.js'
 
 const DEFAULT_OPTIONS = {
     model: "Lily",
-    temperature: 0.75,
+    temperature: 0.7,
     top_p: 0.9,
     top_k: 40,
     min_p: 0.08,
@@ -18,14 +18,25 @@ const DEFAULT_OPTIONS = {
     max_tokens: 4096,       
     maxConvoMessages: 20,
     maxRawMessages: 24,
-    maxToolLoops: 10,
+    maxToolLoops: 15,
     maxToolRepeats: 1,
     memoryDuplicateMinScore: 0.75,
     memoryRemoveMinScore: 0.70,
     memoryQueryMinScore: 0.3,
     memoryRemoveK: 2,
-    episodicQueryMinScore: 0.40,
-    episodicDuplicateScore: 0.90,
+    // Raised from 0.40 — was loose enough that tangential queries (e.g.
+    // "server members") kept pulling back unrelated, already-resolved
+    // episodic entries (the Kiss Marry Kill saga) into every reply.
+    episodicQueryMinScore: 0.60,
+    // Lowered from 0.90 — was strict enough that reworded versions of the
+    // same event ("challenge involves..." vs "challenge involved...")
+    // were treated as distinct memories instead of duplicates, so the
+    // same event kept getting re-stored instead of collapsed.
+    episodicDuplicateScore: 0.78,
+    // Matches the episodic DB's own /remove_by_query defaults (k=3,
+    // min_score=0.70). Used by the new remove_episodic_memory tool.
+    episodicRemoveMinScore: 0.70,
+    episodicRemoveK: 3,
     summarizeEvery: 16,
     summarizeLastN: 16,
     observeEvery: 22,
@@ -48,6 +59,7 @@ export class Lily {
         this.observeBuffer = []
         this.tools = new ToolExecutor(this.opts)
         this._resumedIds = new Map()
+        this._replayCounts = new Map()
     }
     buildSystemPrompt(extraInstructions = null) {
         return extraInstructions ? `${SYSTEM_PROMPT}\n\n${extraInstructions}` : SYSTEM_PROMPT
@@ -70,6 +82,29 @@ export class Lily {
         while (this.channelLocks.get(channelId)) await new Promise(r => setTimeout(r, 50))
         this.channelLocks.set(channelId, true)
         try { return await fn() } finally { this.channelLocks.set(channelId, false) }
+    }
+
+    /**
+     * Like withChannelLock, but never waits. If the channel is already
+     * locked (Lily is still generating a reply / running tools), the
+     * caller is told to skip instead of queueing up behind it. This is
+     * what prevents two near-simultaneous messages from both feeding
+     * into her context — the second one is dropped rather than replayed
+     * after the first reply completes.
+     *
+     * NOTE: the check-then-set below is synchronous (no await between
+     * them), so it's safe from races in Node's single-threaded event loop.
+     */
+    async tryChannelLock(channelId, fn) {
+        if (this.channelLocks.get(channelId)) {
+            return { skipped: true }
+        }
+        this.channelLocks.set(channelId, true)
+        try {
+            return { skipped: false, result: await fn() }
+        } finally {
+            this.channelLocks.set(channelId, false)
+        }
     }
 
     pushRawMessage(channelId, authorName, content) {
@@ -279,17 +314,30 @@ export class Lily {
         pushFn(result)
         return gifUrl
     }
+
     async resumeToolLoop(channelId, toolResults, systemPromptOverride = null, opts = {}, images = []) {
         return this.withChannelLock(channelId, async () => {
-            const cached = toolResults.map(tr => this._resumedIds.get(tr.tool_call_id))
-            if (toolResults.length && cached.every(Boolean)) {
-                log(`⏭️ [DUPLICATE RESUME] Replaying cached result, not regenerating: ${toolResults.map(t => t.tool_call_id).join(", ")}`)
-                return cached[cached.length - 1]
+            // Duplicate resend from the client — every id already has a final
+            // answer, just hand it back instead of re-running inference.
+            const allSeen = toolResults.length > 0 && toolResults.every(tr => this._resumedIds.has(tr.tool_call_id))
+            if (allSeen) {
+                log(`⏭️ [DUPLICATE RESUME] Already answered: ${toolResults.map(t => t.tool_call_id).join(", ")}`)
+                return this._resumedIds.get(toolResults[toolResults.length - 1].tool_call_id)
             }
 
             for (const tr of toolResults) {
                 if (this._resumedIds.has(tr.tool_call_id)) continue
-                this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tr.tool_call_id, content: tr.content })
+
+                // "Failed to edit undefined" / "Failed to edit file://..." means
+                // the filepath the model sent didn't match the file the editor
+                // actually has open. Without this hint the model just retries
+                // the same relative path forever.
+                let content = tr.content
+                if (typeof content === "string" && content.startsWith("Failed to edit")) {
+                    content += " The filepath you sent didn't match. Use the exact path shown in your last read_file or read_currently_open_file result — not a shortened or relative guess."
+                }
+
+                this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tr.tool_call_id, content })
             }
 
             const result = await this.runToolLoop(channelId, systemPromptOverride, opts, images)
@@ -299,6 +347,32 @@ export class Lily {
             return result
         })
     }
+
+    /**
+     * Run the tool loop for one turn.
+     *
+     * IMPORTANT: native tool round-trips (memory lookups, GIF/meme
+     * searches, malformed-call corrections, narration-guard nudges) are
+     * kept in a *local scratch array* for this turn only — they're used
+     * to build the messages sent to Ollama during the loop, but they are
+     * NOT written into the persisted ConversationHistory. Only the final
+     * user-visible reply gets persisted.
+     *
+     * Why: previously every raw tool result (e.g. a full episodic memory
+     * dump) got permanently pushed into history. That meant one hot topic
+     * (e.g. a Kiss/Marry/Kill drama) could dominate the next several
+     * turns' context verbatim, causing Lily to keep dragging the
+     * conversation back to it even when the topic had clearly moved on —
+     * the model was just being handed the same raw text again and again
+     * as if it were freshly relevant. The final reply already incorporates
+     * whatever the tool found, so there's no need to keep the scratch
+     * work around after the turn ends.
+     *
+     * The one exception is a "foreign tool" handoff (an external/MCP tool
+     * call that this function returns early to await) — that DOES get
+     * persisted, because resumeToolLoop needs it later to match up the
+     * tool_call_id when the result comes back.
+     */
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
         let pendingGifUrl = null
@@ -306,10 +380,12 @@ export class Lily {
         let imagesInjected = false
         const foreignTools = opts.tools ?? []
         const foreignToolNames = new Set(foreignTools.map(t => t.function?.name).filter(Boolean))
+        const scratch = []
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
             log(`🔄 [LOOP ${i + 1}]`)
             let messages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
+            messages.push(...scratch)
 
             if (!imagesInjected && images.length > 0) {
                 imagesInjected = true
@@ -336,19 +412,21 @@ export class Lily {
                         log(`⚠️ [MULTI-TOOL] Model tried ${foreignCalls.length} tool calls at once — only forwarding the first`)
                     }
                     const single = foreignCalls[0]
+                    // Persisted: this genuinely needs to survive until the
+                    // external tool result comes back via resumeToolLoop.
                     this.pushToConvoHistory(channelId, { role: "assistant", content: msg.content ?? "", tool_calls: [single] })
                     return { text: msg.content ?? "", gifUrl: null, tool_calls: [single] }
                 }
 
                 log(`🔧 [NATIVE] ${msg.tool_calls.map(tc => tc.function.name).join(", ")}`)
-                this.pushToConvoHistory(channelId, { role: "assistant", content: msg.content ?? "", tool_calls: msg.tool_calls })
+                scratch.push({ role: "assistant", content: msg.content ?? "", tool_calls: msg.tool_calls })
 
                 for (const tc of msg.tool_calls) {
                     let args = {}
                     try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
                     const gif = await this.runOneToolCall(
                         channelId, tc.function.name, args, tracker, toolsUsedThisTurn,
-                        (text) => this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tc.id, content: text })
+                        (text) => scratch.push({ role: "tool", tool_call_id: tc.id, content: text })
                     )
                     if (gif) pendingGifUrl = gif
                 }
@@ -359,12 +437,12 @@ export class Lily {
             if (content.includes("<tool_call>")) {
                 const calls = this.parseEmbeddedToolCalls(content)
                 if (calls.length) {
-                    this.pushToConvoHistory(channelId, { role: "assistant", content })
+                    scratch.push({ role: "assistant", content })
 
                     for (const tc of calls) {
                         const gif = await this.runOneToolCall(
                             channelId, tc.name, tc.args, tracker, toolsUsedThisTurn,
-                            (text) => this.pushToConvoHistory(channelId, { role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
+                            (text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
                         )
                         if (gif) pendingGifUrl = gif
                     }
@@ -372,8 +450,8 @@ export class Lily {
                 }
 
                 log(`⚠️ [MALFORMED] ${content.slice(0, 200)}`)
-                this.pushToConvoHistory(channelId, { role: "assistant", content })
-                this.pushToConvoHistory(channelId, {
+                scratch.push({ role: "assistant", content })
+                scratch.push({
                     role: "user",
                     content: `[System: Your <tool_call> was malformed. Use exact format:\n<tool_call>\n{"name": "tool_name", "arguments": {"arg": "value"}}\n</tool_call>]`
                 })
@@ -383,15 +461,15 @@ export class Lily {
             // Narration guard
             if ([...TOOL_NAMES].some(name => content.includes(name))) {
                 log(`⚠️ [NARRATE] Model described tool instead of calling`)
-                this.pushToConvoHistory(channelId, { role: "assistant", content })
-                this.pushToConvoHistory(channelId, {
+                scratch.push({ role: "assistant", content })
+                scratch.push({
                     role: "user",
                     content: `[System: Do NOT mention tool names in your reply. Use <tool_call> if needed, otherwise just reply naturally.]`
                 })
                 continue
             }
 
-            // Real reply
+            // Real reply — only this gets persisted into ConversationHistory.
             if (content && content.toLowerCase() !== "none") {
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 log(`✅ [LILY REPLY] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
@@ -422,28 +500,50 @@ export class Lily {
             log(`📝 [BLOG HISTORY] Push failed (non-fatal): ${err.message}`)
         })
     }
+
+    /**
+     * Handle an incoming message. If Lily is already mid-reply for this
+     * channel (still generating / running tools from a previous message),
+     * the new message is dropped rather than queued. This is intentional:
+     * queueing meant a second, near-simultaneous message would still get
+     * processed right after the first reply finished, feeding Lily a
+     * "new" turn that was really written before she'd even replied to the
+     * first one — that's what was causing her to confuse herself.
+     */
     async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}, images = []) {
         const clean = sanitizeInput(rawInput)
         if (!clean && images.length === 0) return null
 
+        if (this.channelLocks.get(channelId)) {
+            log(`🚫 [BUSY] Ignoring message in channel ${channelId} while Lily is still replying: ${clean.slice(0, 100)}`)
+            return null
+        }
+
         log(`\n💬 [${logPrefix}] ${clean.slice(0, 200)}${images.length ? ` + ${images.length} image(s)` : ""}`)
 
-        return this.withChannelLock(channelId, async () => {
+        const { skipped, result } = await this.tryChannelLock(channelId, async () => {
             this.pushToConvoHistory(channelId, { role: "user", content: clean || "[sent an image]" })
 
             if (this.opts.summarizeEvery > 0 && ++this.userMessageCount % this.opts.summarizeEvery === 0) {
                 await this.summarizeConversationAndStore(channelId)
             }
 
-            const result = await this.runToolLoop(channelId, systemPromptOverride, opts, images)
+            const loopResult = await this.runToolLoop(channelId, systemPromptOverride, opts, images)
 
             // Push exchange to blog (fire and forget — blog might be down, that's fine)
-            if (result?.text) {
+            if (loopResult?.text) {
                 this.pushHistoryToBlog(channelId)
             }
 
-            return result
+            return loopResult
         })
+
+        if (skipped) {
+            log(`🚫 [BUSY] Ignoring message in channel ${channelId} while Lily is still replying (race)`)
+            return null
+        }
+
+        return result
     }
 
     chat(channelId, userInput, systemPromptOverride = null, opts = {}, images = []) {

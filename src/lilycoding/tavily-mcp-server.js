@@ -12,7 +12,7 @@ const server = new McpServer({
 })
 
 server.tool(
-    "search_web",
+    "image_search",
     "Search the web using Tavily",
     {
         query: z.string().describe("The search query"),
@@ -22,7 +22,7 @@ server.tool(
             const { data } = await axios.post("https://api.tavily.com/search", {
                 api_key: TAVILY_API_KEY,
                 query,
-                max_results: 2,
+                max_results: 3,
                 include_images: true,
             })
 

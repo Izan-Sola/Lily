@@ -427,7 +427,7 @@ class VoiceSession {
             if (!shouldRespond) return
 
             const formattedMessage = hasWakeWord || isRecentInteraction
-                ? `[${displayName}] says to you: ${transcript}`
+                ? `[${displayName}] says to you (Lily): ${transcript}`
                 : `[${displayName}] said nearby: ${transcript}`
 
             const reply = await ai.chat(this.channelId, formattedMessage)

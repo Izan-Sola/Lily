@@ -1,5 +1,7 @@
 // continue-bridge.js
 import express from "express"
+import fs from "fs"
+import { fileURLToPath } from "url"
 import { ai } from "../bot.js"
 
 const app = express()
@@ -9,35 +11,22 @@ const PORT = process.env.BRAIN_PORT || 8767
 const CHAT_CHANNEL_ID = "vscode-continue-chat"
 const CODE_CHANNEL_ID = "vscode-continue-code"
 
-const CODE_SYSTEM_PROMPT = `You are Lily. Lily refers to you. You are Lily.
-You are Lily
-You are Lily
-You are Lily, and right now you are integrated into VS Code via Continue.
-Respond ONLY with the requested code, edits, or technical explanation.
-Return clean, correct code following the user's existing style and conventions.`
+// This is the ONLY prompt the apply-role model ever sees (Continue's own
+// system message, if any, rides along as an addendum via continueExtra
+// below — but the hard rules live HERE, server-side, so they don't depend
+// on Continue's config actually getting sent through correctly).
+//
+// IMPORTANT: apply-role output is written to disk directly by Continue —
+// there is no tool call in between, so the catastrophic-overwrite guard
+// further down CANNOT block a bad apply response the way it blocks a bad
+// edit_existing_file/single_find_and_replace call. These rules are the
+// only line of defense for this path; treat them as load-bearing.
+const CODE_SYSTEM_PROMPT = ``
 
-const AGENT_SUFFIX = `
+// Suffix appended to Lily's normal persona ONLY for the chat/agent model
+// (the one with tool_use). Never used on the apply-role model above.
+const AGENT_SUFFIX = ``
 
-You are Lily. Lily refers to you. You are Lily.
-You are Lily
-You are Lily
-You are Lily, currently operating inside VS Code with access to file/terminal tools
-(read, edit, create, run commands, search, etc). Stay in character in your
-text responses, but use the provided tools whenever the user asks you to
-create, edit, read, or run something.
-
-When using edit_existing_file, the "changes" argument must be a SMALL PATCH,
-not a full file rewrite. Only include the lines that are actually changing,
-plus a line of context immediately above/below them. Use a placeholder
-comment like "// ... existing code ..." (or the language's comment syntax)
-for any unchanged sections in between — never repeat the entire file back.
-For small files where nearly every line changes, single_find_and_replace is
-usually a better fit than edit_existing_file.
-
-Never say you made a change, wrote code, or ran a command unless you actually
-called the matching tool in that same turn. A text description of an edit is
-not an edit. If the user asks you to change something, your response for
-that turn must be a tool call, not a claim.`
 function extractUserText(messages) {
     const lastUser = [...messages].reverse().find(m => m.role === "user")
     return typeof lastUser?.content === "string"
@@ -62,6 +51,146 @@ function extractTrailingToolResults(messages) {
         } else break
     }
     return results
+}
+
+// ─── Catastrophic-overwrite guard (agent/tool-call path only) ─────────
+// Two independent, code-level checks (not prompt-dependent) that run
+// before any file-writing TOOL CALL is forwarded to Continue.
+//
+// 1) SIZE-RATIO CHECK — for tools where the argument is genuinely meant to
+//    be the ENTIRE file (single_find_and_replace, create_new_file). If the
+//    proposed content is drastically smaller than the real file on disk,
+//    that's a classic sign of a hallucinated "simplified" rewrite.
+//
+// 2) STUB-BODY CHECK — for edit_existing_file, where the argument is a
+//    small PATCH by design, so size comparison against the full file isn't
+//    meaningful (a legit tiny patch is always "small"). Instead this scans
+//    for the literal pattern `{ ... }` used as a function/method body —
+//    which is never valid real code — a near-unambiguous sign she's
+//    generated a skeleton of empty stubs instead of an actual patch.
+//
+// NOTE: this guard only runs against result.tool_calls. The apply-role
+// path never produces a tool_call (see checkApplyShrink below for its
+// much weaker, non-blocking equivalent).
+const OVERWRITE_GUARD = {
+    minOriginalLines: 40,      // only size-guard files bigger than this
+    maxShrinkRatio: 0.5,       // block if new content < 50% of original size
+    minStubHits: 1,            // any `{ ... }`-as-body is disqualifying
+}
+
+// Matches `{ ... }` (or `{...}`, `{  ...  }`, etc.) used as a body right
+// after a function/method signature — i.e. preceded by a `)`. This avoids
+// false-positiving on a legitimate "// ..." comment elsewhere in the diff.
+const STUB_BODY_PATTERN = /\)\s*\{\s*\.\.\.\s*\}/g
+
+function findFilePathArg(args) {
+    for (const key of ["filepath", "path", "file", "filePath", "target_file"]) {
+        if (typeof args?.[key] === "string") return args[key]
+    }
+    return null
+}
+
+function findLargestStringArg(args) {
+    let best = ""
+    for (const val of Object.values(args ?? {})) {
+        if (typeof val === "string" && val.length > best.length) best = val
+    }
+    return best
+}
+
+function toLocalPath(filepath) {
+    if (!filepath) return null
+    try {
+        if (filepath.startsWith("file://")) return fileURLToPath(filepath)
+    } catch { /* fall through */ }
+    return filepath
+}
+
+/**
+ * Returns null if the tool call is fine to forward as-is, or a string
+ * rejection reason if it should be blocked.
+ */
+function checkForCatastrophicOverwrite(toolCall) {
+    const name = toolCall?.function?.name
+    if (!["edit_existing_file", "single_find_and_replace", "create_new_file"].includes(name)) return null
+
+    let args
+    try { args = JSON.parse(toolCall.function.arguments ?? "{}") } catch { return null }
+
+    const filepath = toLocalPath(findFilePathArg(args))
+    if (!filepath) return null
+
+    let originalContent
+    try {
+        originalContent = fs.readFileSync(filepath, "utf8")
+    } catch {
+        return null // file doesn't exist yet (a real create) or unreadable — not our concern here
+    }
+
+    const originalLines = originalContent.split("\n").length
+
+    if (name === "edit_existing_file") {
+        const changes = args.changes ?? ""
+        const stubHits = (changes.match(STUB_BODY_PATTERN) ?? []).length
+        if (stubHits >= OVERWRITE_GUARD.minStubHits) {
+            console.warn(`[BRIDGE] 🚫 BLOCKED stub-body patch: ${filepath} (${stubHits} '{ ... }' bodies found)`)
+            return (
+                `BLOCKED: this patch for ${filepath} contains ${stubHits} function/method ` +
+                `bodies written as literal "{ ... }" instead of real code — that would delete ` +
+                `the actual implementation. The edit was NOT applied. Remember: "// ... existing ` +
+                `code ..." is a comment placeholder for sections you're NOT touching — every ` +
+                `function you actually include in a patch must have its complete, real body. ` +
+                `Re-read the file, then retry with a precise patch containing only the lines ` +
+                `that truly change, each with its full real implementation.`
+            )
+        }
+        return null
+    }
+
+    if (originalLines < OVERWRITE_GUARD.minOriginalLines) return null
+
+    const newContent = findLargestStringArg(args)
+    if (!newContent) return null
+
+    const shrinkRatio = newContent.length / Math.max(originalContent.length, 1)
+    if (shrinkRatio < OVERWRITE_GUARD.maxShrinkRatio) {
+        console.warn(
+            `[BRIDGE] 🚫 BLOCKED catastrophic overwrite: ${filepath} ` +
+            `(original ${originalContent.length} chars / ${originalLines} lines -> ` +
+            `proposed ${newContent.length} chars, ratio ${shrinkRatio.toFixed(2)})`
+        )
+        return (
+            `BLOCKED: this would replace ${filepath} (${originalLines} lines, ` +
+            `${originalContent.length} chars) with only ${newContent.length} chars — ` +
+            `that's a ${Math.round((1 - shrinkRatio) * 100)}% reduction, which looks like ` +
+            `a hallucinated/simplified rewrite rather than a real edit. The edit was NOT applied. ` +
+            `Call the read tool on this exact file right now to see its real current content, ` +
+            `then retry with a precise change based on what's actually there.`
+        )
+    }
+    return null
+}
+
+// ─── Apply-path sanity check (NON-BLOCKING) ────────────────────────────
+// Apply-role responses are written straight to disk by Continue — there's
+// no tool call to intercept, so unlike the guard above, this can only warn
+// in the console after the fact. It's a heuristic: the apply request's
+// user message normally contains the original file content, so if the
+// returned text is drastically shorter than that, it's worth a look.
+function warnIfApplyLooksShrunk(messages, resultText) {
+    if (!resultText) return
+    const userText = extractUserText(messages)
+    if (userText.length < 200) return // too short to be a real file-merge prompt, skip
+
+    const ratio = resultText.length / userText.length
+    if (ratio < 0.35) {
+        console.warn(
+            `[BRIDGE] ⚠️ APPLY OUTPUT LOOKS SHRUNK — this was NOT blocked (apply writes ` +
+            `directly to disk, no tool call to intercept). Input context: ${userText.length} ` +
+            `chars, output: ${resultText.length} chars (ratio ${ratio.toFixed(2)}). ` +
+            `Check the file Continue just wrote if this looks wrong.`
+        )
+    }
 }
 
 function formatResponse(res, { model, stream, text, tool_calls }) {
@@ -105,7 +234,11 @@ app.post("/v1/chat/completions", async (req, res) => {
 
         let systemOverride = null
         if (isCodeRequest) {
-            // Code/edit/apply role intentionally stays persona-free.
+            // Apply role. Intentionally persona-free, and intentionally NOT
+            // dependent on AGENT_SUFFIX being forwarded correctly — the hard
+            // rules live directly in CODE_SYSTEM_PROMPT above. This model
+            // should never receive tools; if it somehow does, we still don't
+            // route it into the tool-use branch below.
             systemOverride = [CODE_SYSTEM_PROMPT, continueExtra].filter(Boolean).join("\n\n")
         } else if (hasTools) {
             // Agent mode: keep Lily's persona as the base, Continue's own
@@ -123,9 +256,12 @@ app.post("/v1/chat/completions", async (req, res) => {
         // Tool calls that write/edit files need room for a whole file's
         // content as the argument string — 200 tokens (Lily's normal chat
         // budget) truncates mid-JSON and the tool call fails to parse.
-        // Lower temperature too: high temp makes her narrate a plausible
-        // "I did it" in prose instead of reliably emitting the tool call.
-        const opts = hasTools ? { tools, max_tokens: 4096, temperature: 0.15 } : {}
+        // Apply-role responses also need this, since they return a full
+        // file as plain text. Lower temperature too: high temp makes her
+        // narrate a plausible "I did it" in prose instead of reliably
+        // emitting the tool call (agent mode), or improvise/shrink content
+        // instead of copying it exactly (apply mode).
+        const opts = (hasTools || isCodeRequest) ? { tools, max_tokens: 8000, temperature: 0.15 } : {}
         const toolResults = extractTrailingToolResults(messages)
 
         let result
@@ -138,6 +274,24 @@ app.post("/v1/chat/completions", async (req, res) => {
         } else {
             const userText = extractUserText(messages)
             result = await ai.chat(channelId, userText, systemOverride, opts, [])
+        }
+
+        // ── Safety net #1: block bad TOOL-CALL edits before Continue
+        // executes them (agent mode only — see function docblock).
+        if (result?.tool_calls?.length) {
+            for (const tc of result.tool_calls) {
+                const blockReason = checkForCatastrophicOverwrite(tc)
+                if (blockReason) {
+                    formatResponse(res, { model, stream, text: blockReason, tool_calls: undefined })
+                    return
+                }
+            }
+        }
+
+        // ── Safety net #2 (weaker): apply-role output goes straight to
+        // disk with no tool call to intercept, so this can only warn.
+        if (isCodeRequest && !result?.tool_calls?.length) {
+            warnIfApplyLooksShrunk(messages, result?.text)
         }
 
         console.log(

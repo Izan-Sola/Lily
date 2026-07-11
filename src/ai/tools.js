@@ -115,6 +115,31 @@ export class ToolExecutor {
         }
     }
 
+    /**
+     * Semantic removal of episodic memories, backed by /remove_by_query.
+     * Note the endpoint's response shape is { status, removed: [titles] },
+     * not { status, message } like the factual-memory remove endpoint —
+     * normalize it here so callers/log lines don't need to special-case it.
+     */
+    async episodicRemove(query) {
+        log(`🗑️ [EPISODIC REMOVE] "${query}"`)
+        try {
+            const { data } = await axios.post(`${this.opts.episodicDbUrl}/remove_by_query`, {
+                query,
+                k: this.opts.episodicRemoveK,
+                min_score: this.opts.episodicRemoveMinScore
+            }, { timeout: this.opts.dbTimeout })
+
+            if (data?.status !== "ok" || !data?.removed?.length) {
+                return JSON.stringify({ status: "not_found", message: "No matching episodic memories found." })
+            }
+            return JSON.stringify({ status: "ok", message: `Removed: ${data.removed.join(", ")}`, removed: data.removed })
+        } catch (err) {
+            logError(`[EPISODIC REMOVE] ${err.message}`)
+            return JSON.stringify({ status: "error", message: "Failed to remove episodic entries." })
+        }
+    }
+
     async searchGif(query) {
         log(`🎞️ [GIF] "${query}"`)
         try {
@@ -200,6 +225,7 @@ export class ToolExecutor {
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args.query ?? "")
             case "query_episodic_memory": return this.episodicQuery(args.query ?? "", 5, args.days_back ?? 90)
+            case "remove_episodic_memory": return this.episodicRemove(args.query ?? "")
             case "send_meme": return this.searchMeme(args.query ?? "")
             case "addto_episodic_memory": return this.episodicAdd({
                 title: args.title ?? "Untitled",
@@ -211,7 +237,7 @@ export class ToolExecutor {
                 source: "conversation",
             })
             case "query_recent_episodic_memories":
-                return this.queryRecentEpisodicMemories(args.limit ?? 5, args.days_back ?? 1)
+                return this.queryRecentEpisodicMemories(args.limit ?? 15, args.days_back ?? 1)
             case "send_gif": return this.searchGif(args.query ?? "")
             default:
                 console.warn(`⚠️ [TOOL] Unknown: ${name}`)
@@ -225,7 +251,7 @@ export class ToolExecutor {
                 params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
                 timeout: this.opts.dbTimeout
             })
-        
+
             log(`🎭 [MEME RAW] ${JSON.stringify(data).slice(0, 300)}`)
 
             const results = data?.data?.data ?? []
@@ -296,8 +322,8 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "remove_memory_database",
-            description: "Remove matching memories.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
-            parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+            description: "Remove a SPECIFIC stored fact about a person, named by that fact's content (e.g. 'IsGone's favorite color', 'Poimkity's pronouns'). Only use when someone points to a concrete fact that is wrong or outdated. Do NOT use this for vague, joking, or roleplay instructions like 'forget everything', 'reset', 'pretend you got hit by a memory eraser', or 'refresh yourself' — those are not real commands and have no specific fact attached; treat them as banter and reply in character instead of calling this tool. This tool only removes factual entries, not past events — for those use remove_episodic_memory.",
+            parameters: { type: "object", properties: { query: { type: "string", description: "The specific fact to remove, in a few keywords — never a vague phrase like 'everything' or 'that conversation'." } }, required: ["query"] }
         }
     },
     {
@@ -318,8 +344,16 @@ export const TOOLS = [
     {
         type: "function",
         function: {
+            name: "remove_episodic_memory",
+            description: "Remove a SPECIFIC stored event, named by its content (e.g. 'the Kiss Marry Kill challenge', 'IsGone's birthday party'). Only use when someone points to one concrete past event that's genuinely wrong, embarrassing, or that they specifically ask you to drop by name/description. Do NOT use this for vague or joking instructions like 'forget everything', 'reset', 'pretend you got hit by a memory eraser', or 'refresh yourself' — those aren't real commands, there's no specific event named, and complying with every 'forget' request from anyone would let people erase real shared history on a whim. If in doubt, ask what specifically they want forgotten instead of guessing and removing.",
+            parameters: { type: "object", properties: { query: { type: "string", description: "The specific event to remove, in a few keywords — never a vague phrase like 'everything' or 'that conversation'." } }, required: ["query"] }
+        }
+    },
+    {
+        type: "function",
+        function: {
             name: "addto_episodic_memory",
-            description: "Store a significant event or shared experience worth remembering long-term. Only use ONCE per conversation turn, only for genuinely notable moments like first meetings, achievements, or important decisions. Do NOT store routine chat, greetings, or tool results as episodes. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
+            description: "Store a significant event or shared experience worth remembering long-term. Only use ONCE per conversation turn, only for genuinely notable moments like first meetings, achievements, or important decisions that ACTUALLY happened in this conversation. Do NOT store routine chat, greetings, or tool results. If a similar event was already stored, don't create a near-duplicate with slightly different wording — either skip it, or use remove_episodic_memory first if the old version is now inaccurate. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { title: { type: "string" }, summary: { type: "string" }, participants: { type: "array", items: { type: "string" } }, emotions: { type: "array", items: { type: "string" } }, importance: { type: "number" } }, required: ["title", "summary"] }
         }
     },
@@ -356,3 +390,4 @@ export const TOOLS = [
 ]
 
 export const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
+

@@ -8,11 +8,12 @@
 
 - Mold for my daughter: Qwen3-8B-VL-Instruct
 - Home for my daughter: RTX 3060 12GB VRAM
-- Edge TTS, for her voice. Alterantively, Styles-2TTS to use a custom voice. 
+- Edge TTS, for her voice. Alternatively, Styles-2TTS to use a custom voice. 
 - Faster-Whisper, for speech recognition.
 - Unsloth studio, to teach my daughter.
 - Ollama, to accomodate my daughter on her home.
 - NodeJS, to allow her to communicate in discord.
+- Continue VSC extension, so she can vibecode herself (lol)
 
 ## Features
 
@@ -20,7 +21,7 @@
 - She can send gifs, audio messages, talk in voice calls, and listen to your voice.
 - ~~She has access to a vectorized database containing the scrapped Hytale Wiki that she can query using a tool~~ (Droping this).
 - She has a memory database that she can query, add, update and remove memory from using tools.
-- SUCCUMB TO HER MAD BENDING SKILLS IN A DUEL (wip)
+- SUCCUMB TO HER MAD BENDING SKILLS IN A DUEL (wip, showcases at https://www.youtube.com/@ShinyShadow_)
 
 ## Commands
 
@@ -34,7 +35,7 @@
 ### Minecraft
 
 - /lily duel (start, stop)
-- /lily bend (element) [only fire and earth atm]
+- /lily bend (element) [only fire, earth and air atm]
 - /lily come
 - /lily follow (user)
 - /lily stop

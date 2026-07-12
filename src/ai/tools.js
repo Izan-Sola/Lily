@@ -85,14 +85,33 @@ export class ToolExecutor {
         }
     }
 
-    async episodicQuery(query, k = 5) {
-        log(`🎞️ [EPISODIC QUERY] "${query}"`)
+    async episodicQuery(query, { daysAgo = null, windowDays = 2, k = 5 } = {}) {
+        log(`🎞️ [EPISODIC QUERY] "${query}" daysAgo=${daysAgo ?? "any"} window=${daysAgo !== null ? windowDays : "n/a"}`)
         try {
+            // When targeting a specific point in time, the semantic search endpoint
+            // can't filter by date itself — so we over-fetch candidates and filter
+            // by timestamp client-side, then trim back down to k.
+            const fetchK = daysAgo !== null ? Math.max(k * 5, 25) : k
             const { data } = await axios.post(`${this.opts.episodicDbUrl}/search`, {
-                query, k, min_score: this.opts.episodicQueryMinScore
+                query, k: fetchK, min_score: this.opts.episodicQueryMinScore
             }, { timeout: this.opts.dbTimeout })
+
             if (!data?.results?.length) return "No relevant episodic memories found."
-            return data.results.map(m =>
+
+            let results = data.results
+
+            if (daysAgo !== null) {
+                const nowSecs = Date.now() / 1000
+                const targetTs = nowSecs - daysAgo * 86400
+                const windowSecs = Math.max(windowDays, 0) * 86400
+                const lo = targetTs - windowSecs
+                const hi = targetTs + windowSecs
+                results = results.filter(m => m.timestamp >= lo && m.timestamp <= hi)
+                if (!results.length) return `No episodic memories found from around ${daysAgo} days ago.`
+            }
+
+            results = results.slice(0, k)
+            return results.map(m =>
                 `[${new Date(m.timestamp * 1000).toLocaleDateString()}] ${m.title}: ${m.summary}`
             ).join("\n")
         } catch (err) {
@@ -100,7 +119,6 @@ export class ToolExecutor {
             return "No relevant episodic memories found."
         }
     }
-
     async episodicAdd({ title, summary, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation" }) {
         log(`🎞️ [EPISODIC ADD] "${title}"`)
         try {
@@ -184,33 +202,28 @@ export class ToolExecutor {
         // This would integrate with your Minecraft bot
         return JSON.stringify({ status: "ok", message: `Action ${action} performed.` })
     }
-    async queryRecentEpisodicMemories(limit = 4, daysBack = 1) {
+    async queryRecentEpisodicMemories(limit = 5, daysBack = 7) {
         log(`📅 [RECENT EPISODIC] limit=${limit}, daysBack=${daysBack}`)
         try {
             const { data } = await axios.post(`${this.opts.episodicDbUrl}/recent`, {
                 limit: Math.min(limit, 10),
-                days_back: 1,
-                min_importance: 0.3  // Include moderately important memories too
+                days_back: daysBack, // was hardcoded to 1 before — always ignored the arg
+                min_importance: 0.3
             }, { timeout: this.opts.dbTimeout })
 
             if (!data?.results?.length) {
                 return "I don't have any recent memories to share! I've mostly just been hanging out and chatting with everyone~"
             }
 
-            // Format into a natural, conversational summary
             const memories = data.results.map(m => {
                 const date = new Date(m.timestamp * 1000).toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
+                    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
                 })
                 return `📅 ${date}: ${m.summary}`
-            }).join('\n')
+            }).join("\n")
 
             log(`✅ [RECENT EPISODIC] Found ${data.results.length} memories`)
             return `Here's what I remember happening recently:\n${memories}`
-
         } catch (err) {
             logError(`[RECENT EPISODIC] ${err.message}`)
             return "Hmm, I'm having trouble remembering right now. I've just been chatting and having fun with everyone~ (•ᴗ•)"
@@ -224,7 +237,12 @@ export class ToolExecutor {
             case "addto_memory_database": return this.memoryAdd(args.text ?? "", args.source ?? "user")
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args.query ?? "")
-            case "query_episodic_memory": return this.episodicQuery(args.query ?? "", 5, args.days_back ?? 90)
+            case "query_episodic_memory":
+                return this.episodicQuery(args.query ?? "", {
+                    daysAgo: args.days_ago ?? null,
+                    windowDays: args.window_days ?? 2,
+                    k: 5
+                })
             case "remove_episodic_memory": return this.episodicRemove(args.query ?? "")
             case "send_meme": return this.searchMeme(args.query ?? "")
             case "addto_episodic_memory": return this.episodicAdd({
@@ -237,7 +255,7 @@ export class ToolExecutor {
                 source: "conversation",
             })
             case "query_recent_episodic_memories":
-                return this.queryRecentEpisodicMemories(args.limit ?? 15, args.days_back ?? 1)
+                return this.queryRecentEpisodicMemories(args.limit ?? 5, args.days_back ?? 7)
             case "send_gif": return this.searchGif(args.query ?? "")
             default:
                 console.warn(`⚠️ [TOOL] Unknown: ${name}`)
@@ -277,18 +295,12 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "query_recent_episodic_memories",
-            description: "Retrieve the most recent events, conversations, or activities. Use when someone asks what Lily has been doing lately, what happened recently, or if anything interesting occurred while they were away.",
+            description: `Use for open-ended questions about a continuous recent stretch of time — "what have you been up to", "what'd I miss", "what did you do this week". This searches everything from NOW back to days_back days ago (a range), not a single point in time. Pick days_back based on wording: ~1 for "today/yesterday", ~7 for "this week", ~30 for "this month". For a specific past event or a vague "remember when" question, use query_episodic_memory instead.`,
             parameters: {
                 type: "object",
                 properties: {
-                    limit: {
-                        type: "number",
-                        description: "Number of recent memories to retrieve (default 5, max 10)"
-                    },
-                    days_back: {
-                        type: "number",
-                        description: "How many days back to look (default 7, max 30)"
-                    }
+                    limit: { type: "number", description: "Number of recent memories to retrieve (default 5, max 10)" },
+                    days_back: { type: "number", description: "How many days back from now to include, default 7" }
                 },
                 required: []
             }
@@ -330,12 +342,16 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "query_episodic_memory",
-            description: "Search episodic memory for past events or conversations. Use when asked about something specific that happened. Choose days_back based on context: 1 for 'yesterday'/'today', 7 for 'this week'/'recently', 30 for 'last month', 90+ for older memories.",
+            description: `Search episodic memory for a specific past event, either tied to roughly when it happened or with no time reference at all.
+                        - If the user gives a rough time reference ("2 weeks ago", "last Tuesday"), set days_ago to that many days back. This searches AROUND that point in time (days_ago ± window_days), NOT from now until then.
+                        - If the user asks "do you remember when X happened" with no time reference, OMIT days_ago entirely — this searches all time with no date filter.
+                        Use query_recent_episodic_memories instead for open-ended "what happened this week / what'd I miss" style questions.`,
             parameters: {
                 type: "object",
                 properties: {
                     query: { type: "string", description: "Keywords describing the event to search for" },
-                    days_back: { type: "number", description: "How many days back to search. Pick based on context: 1=today/yesterday, 7=this week, 30=this month, 90=last few months, 365=last year" }
+                    days_ago: { type: "number", description: "Roughly how many days ago the event happened. Omit this entirely for untethered 'remember when' questions with no time reference." },
+                    window_days: { type: "number", description: "Tolerance around days_ago, e.g. 2 means search days_ago-2 to days_ago+2. Default 2. Use a smaller window (0-1) for precise references like 'yesterday', larger (3-5) for vague ones like 'a couple weeks ago'." }
                 },
                 required: ["query"]
             }

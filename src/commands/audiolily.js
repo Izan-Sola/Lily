@@ -17,10 +17,14 @@ export const data = new SlashCommandBuilder()
     )
 
 export async function execute(interaction) {
+    const authorName  = interaction.member?.displayName || interaction.user.username 
+    const bannedUsers = config.bannedUsers
+    if (!authorName || bannedUsers.includes(authorName) || bannedUsers.includes(interaction.user.username)) return
+
     await interaction.deferReply()
 
     const userMessage = interaction.options.getString("message")
-    const authorName  = interaction.member?.displayName || interaction.user.username  // ← fixed
+   
 
     try {
         const formattedMessage = `[${authorName}] says to you: ${userMessage}`

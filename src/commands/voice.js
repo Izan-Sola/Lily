@@ -1,7 +1,7 @@
 import { SlashCommandBuilder } from "discord.js"
 import { joinVoiceChannel, getVoiceConnection } from "@discordjs/voice"
 import { startVoiceSession } from "../bot.js"
-
+import { config } from "../utils/config.js" 
 export const data = new SlashCommandBuilder()
     .setName("voice")
     .setDescription("Control Lily's voice channel presence")
@@ -16,6 +16,9 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
     const subcommand = interaction.options.getSubcommand()
+    const authorName  = interaction.member?.displayName || interaction.user.username 
+    const bannedUsers = config.bannedUsers
+    if (!authorName || bannedUsers.includes(authorName) || bannedUsers.includes(interaction.user.username)) return
 
     // ─── /voice join ─────────────────────────────────────────────────────────
     if (subcommand === "join") {

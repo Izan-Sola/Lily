@@ -14,8 +14,8 @@ const DEFAULT_OPTIONS = {
     repeat_penalty: 1.08,
     frequency_penalty: 0.15,
     repeat_last_n: 256,
-    presence_penalty: 0.35, 
-    max_tokens: 4096,       
+    presence_penalty: 0.35,
+    max_tokens: 4096,
     maxConvoMessages: 30,
     maxRawMessages: 30,
     maxToolLoops: 15,
@@ -24,17 +24,8 @@ const DEFAULT_OPTIONS = {
     memoryRemoveMinScore: 0.70,
     memoryQueryMinScore: 0.3,
     memoryRemoveK: 2,
-    // Raised from 0.40 — was loose enough that tangential queries (e.g.
-    // "server members") kept pulling back unrelated, already-resolved
-    // episodic entries (the Kiss Marry Kill saga) into every reply.
     episodicQueryMinScore: 0.60,
-    // Lowered from 0.90 — was strict enough that reworded versions of the
-    // same event ("challenge involves..." vs "challenge involved...")
-    // were treated as distinct memories instead of duplicates, so the
-    // same event kept getting re-stored instead of collapsed.
     episodicDuplicateScore: 0.78,
-    // Matches the episodic DB's own /remove_by_query defaults (k=3,
-    // min_score=0.70). Used by the new remove_episodic_memory tool.
     episodicRemoveMinScore: 0.70,
     episodicRemoveK: 3,
     summarizeEvery: 30,
@@ -50,17 +41,36 @@ const DEFAULT_OPTIONS = {
 }
 
 export class Lily {
-    constructor(options = {}) {
+    /**
+     * @param {object} options
+     * @param {(type: string, params: object) => void} [mcSend] - sends a
+     *   command to the Minecraft bridge (same function passed into
+     *   startSurvivalLoop). Forwarded to ToolExecutor so the
+     *   minecraft_action tool can actually act in-world when someone asks
+     *   Lily to do something via chat.
+     */
+    constructor(options = {}, mcSend = null) {
         this.opts = { ...DEFAULT_OPTIONS, ...options }
         this.convoHistories = new Map()
         this.rawBuffers = new Map()
         this.channelLocks = new Map()
         this.userMessageCount = 0
         this.observeBuffer = []
-        this.tools = new ToolExecutor(this.opts)
+        this.mcSend = mcSend
+        this.tools = new ToolExecutor(this.opts, mcSend)
         this._resumedIds = new Map()
         this._replayCounts = new Map()
     }
+
+    /**
+     * Wire (or replace) the Minecraft bridge sender after construction —
+     * useful if mcSend isn't available yet when Lily is first built.
+     */
+    setMcSend(mcSend) {
+        this.mcSend = mcSend
+        this.tools.mcSend = mcSend
+    }
+
     buildSystemPrompt(extraInstructions = null) {
         return extraInstructions ? `${SYSTEM_PROMPT}\n\n${extraInstructions}` : SYSTEM_PROMPT
     }
@@ -84,17 +94,6 @@ export class Lily {
         try { return await fn() } finally { this.channelLocks.set(channelId, false) }
     }
 
-    /**
-     * Like withChannelLock, but never waits. If the channel is already
-     * locked (Lily is still generating a reply / running tools), the
-     * caller is told to skip instead of queueing up behind it. This is
-     * what prevents two near-simultaneous messages from both feeding
-     * into her context — the second one is dropped rather than replayed
-     * after the first reply completes.
-     *
-     * NOTE: the check-then-set below is synchronous (no await between
-     * them), so it's safe from races in Node's single-threaded event loop.
-     */
     async tryChannelLock(channelId, fn) {
         if (this.channelLocks.get(channelId)) {
             return { skipped: true }
@@ -129,17 +128,6 @@ export class Lily {
         return this.getRawBuffer(channelId).get()
     }
 
-    /**
-     * Build the messages array for Ollama.
-     *
-     * KEY CHANGE: RECENT CHAT is no longer a separate `system` block.
-     * Instead, it's prepended as a "[Recent chat]" section on the FIRST
-     * user-turn content (or as its own leading user turn if history is
-     * empty). Chat models attend to user/assistant turns far better than
-     * to stacked system messages — this keeps the model's attention on
-     * "this is part of the conversation" rather than "this is an
-     * instruction".
-     */
     buildMessagesForOllama(channelId, systemPromptOverride = null, opts = {}) {
         const { skipHistory = false, skipRawContext = false } = opts
         const messages = []
@@ -153,9 +141,6 @@ export class Lily {
             if (rawContext.length) {
                 const block = `[Recent chat]\n${rawContext.join("\n")}\n[End recent chat]\n\n`
 
-                // Find the last user-role message and prepend the block to it.
-                // This keeps RECENT CHAT as part of the live conversation flow
-                // instead of a detached system instruction.
                 let injected = false
                 for (let i = history.length - 1; i >= 0; i--) {
                     if (history[i].role === "user" && typeof history[i].content === "string") {
@@ -165,7 +150,6 @@ export class Lily {
                     }
                 }
                 if (!injected) {
-                    // No prior user turn (fresh channel) — add it as its own turn
                     history.push({ role: "user", content: block.trim() })
                 }
             }
@@ -278,10 +262,6 @@ export class Lily {
         })
     }
 
-    /**
-     * Run one tool/reply turn for a tool call. Returns true if it produced
-     * a result that was pushed to history, false if blocked.
-     */
     async runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, pushFn) {
         if ((name === "send_gif" || name === "send_meme") && toolsUsedThisTurn.has(name)) {
             log(`🚫 [BLOCKED] ${name} already used this turn`)
@@ -291,6 +271,11 @@ export class Lily {
         if (name === "addto_episodic_memory" && toolsUsedThisTurn.has(name)) {
             log(`🚫 [BLOCKED] addto_episodic_memory already used this turn`)
             pushFn("Already stored an episodic memory this turn. Do not store another.")
+            return null
+        }
+        if (name === "minecraft_action" && toolsUsedThisTurn.has(name)) {
+            log(`🚫 [BLOCKED] minecraft_action already used this turn`)
+            pushFn("Already performed an action this turn. Only one action per turn.")
             return null
         }
 
@@ -317,8 +302,6 @@ export class Lily {
 
     async resumeToolLoop(channelId, toolResults, systemPromptOverride = null, opts = {}, images = []) {
         return this.withChannelLock(channelId, async () => {
-            // Duplicate resend from the client — every id already has a final
-            // answer, just hand it back instead of re-running inference.
             const allSeen = toolResults.length > 0 && toolResults.every(tr => this._resumedIds.has(tr.tool_call_id))
             if (allSeen) {
                 log(`⏭️ [DUPLICATE RESUME] Already answered: ${toolResults.map(t => t.tool_call_id).join(", ")}`)
@@ -328,10 +311,6 @@ export class Lily {
             for (const tr of toolResults) {
                 if (this._resumedIds.has(tr.tool_call_id)) continue
 
-                // "Failed to edit undefined" / "Failed to edit file://..." means
-                // the filepath the model sent didn't match the file the editor
-                // actually has open. Without this hint the model just retries
-                // the same relative path forever.
                 let content = tr.content
                 if (typeof content === "string" && content.startsWith("Failed to edit")) {
                     content += " The filepath you sent didn't match. Use the exact path shown in your last read_file or read_currently_open_file result — not a shortened or relative guess."
@@ -348,31 +327,6 @@ export class Lily {
         })
     }
 
-    /**
-     * Run the tool loop for one turn.
-     *
-     * IMPORTANT: native tool round-trips (memory lookups, GIF/meme
-     * searches, malformed-call corrections, narration-guard nudges) are
-     * kept in a *local scratch array* for this turn only — they're used
-     * to build the messages sent to Ollama during the loop, but they are
-     * NOT written into the persisted ConversationHistory. Only the final
-     * user-visible reply gets persisted.
-     *
-     * Why: previously every raw tool result (e.g. a full episodic memory
-     * dump) got permanently pushed into history. That meant one hot topic
-     * (e.g. a Kiss/Marry/Kill drama) could dominate the next several
-     * turns' context verbatim, causing Lily to keep dragging the
-     * conversation back to it even when the topic had clearly moved on —
-     * the model was just being handed the same raw text again and again
-     * as if it were freshly relevant. The final reply already incorporates
-     * whatever the tool found, so there's no need to keep the scratch
-     * work around after the turn ends.
-     *
-     * The one exception is a "foreign tool" handoff (an external/MCP tool
-     * call that this function returns early to await) — that DOES get
-     * persisted, because resumeToolLoop needs it later to match up the
-     * tool_call_id when the result comes back.
-     */
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
         let pendingGifUrl = null
@@ -412,8 +366,6 @@ export class Lily {
                         log(`⚠️ [MULTI-TOOL] Model tried ${foreignCalls.length} tool calls at once — only forwarding the first`)
                     }
                     const single = foreignCalls[0]
-                    // Persisted: this genuinely needs to survive until the
-                    // external tool result comes back via resumeToolLoop.
                     this.pushToConvoHistory(channelId, { role: "assistant", content: msg.content ?? "", tool_calls: [single] })
                     return { text: msg.content ?? "", gifUrl: null, tool_calls: [single] }
                 }
@@ -433,7 +385,6 @@ export class Lily {
                 continue
             }
 
-            // Embedded tool calls
             if (content.includes("<tool_call>")) {
                 const calls = this.parseEmbeddedToolCalls(content)
                 if (calls.length) {
@@ -458,7 +409,6 @@ export class Lily {
                 continue
             }
 
-            // Narration guard
             if ([...TOOL_NAMES].some(name => content.includes(name))) {
                 log(`⚠️ [NARRATE] Model described tool instead of calling`)
                 scratch.push({ role: "assistant", content })
@@ -469,7 +419,6 @@ export class Lily {
                 continue
             }
 
-            // Real reply — only this gets persisted into ConversationHistory.
             if (content && content.toLowerCase() !== "none") {
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 log(`✅ [LILY REPLY] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
@@ -483,9 +432,6 @@ export class Lily {
         return { text: "Sorry, I got a bit lost. Could you repeat that?", gifUrl: null }
     }
 
-    // ── Blog history push ──────────────────────────────────────────────────────
-    // Fire-and-forget: push the user↔lily exchange to the blog server so it
-    // can weave real conversation into the daily blog post.
     pushHistoryToBlog(channelId) {
         const messages = this.getHistory(channelId).get()
             .filter(m => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
@@ -501,15 +447,6 @@ export class Lily {
         })
     }
 
-    /**
-     * Handle an incoming message. If Lily is already mid-reply for this
-     * channel (still generating / running tools from a previous message),
-     * the new message is dropped rather than queued. This is intentional:
-     * queueing meant a second, near-simultaneous message would still get
-     * processed right after the first reply finished, feeding Lily a
-     * "new" turn that was really written before she'd even replied to the
-     * first one — that's what was causing her to confuse herself.
-     */
     async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}, images = []) {
         const clean = sanitizeInput(rawInput)
         if (!clean && images.length === 0) return null
@@ -530,7 +467,6 @@ export class Lily {
 
             const loopResult = await this.runToolLoop(channelId, systemPromptOverride, opts, images)
 
-            // Push exchange to blog (fire and forget — blog might be down, that's fine)
             if (loopResult?.text) {
                 this.pushHistoryToBlog(channelId)
             }

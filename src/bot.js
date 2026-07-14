@@ -503,15 +503,15 @@ export async function createBot() {
 
         if (message.author.bot) {
             if (message.author.displayName === "Coolade") {
-                if (message.content.includes("pikarohan")) return
+                if (config.bannedUsers.some(user => message.content.includes(user))) return
                 const match = message.content.match(/](.*)»/m)
                 if (match?.[1]) authorName = sanitizeInput(match[1].trim())
             } else return
         } else {
             authorName = sanitizeInput(message.member.username || message.author.username)
         }
-        const bannedUsers = ["pikarohan", "_helixer_", "H-Elixer", "[H-Elixer]" ]
-        if (!authorName || bannedUsers.includes(authorName)) return
+        const bannedUsers = config.bannedUsers
+        if (!authorName || bannedUsers.includes(authorName) || bannedUsers.includes(message.author.displayName)) return
 
         const channelId = message.channel.id
         const isMentioned = message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")

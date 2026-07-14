@@ -3,8 +3,17 @@ import { log, logError } from './utils.js'
 import { tavily } from "@tavily/core"
 // ─── Tool Executor ──────────────────────────────────────────────────────
 export class ToolExecutor {
-    constructor(opts) {
+    /**
+     * @param {object} opts
+     * @param {(type: string, params: object) => void} [mcSend] - sends a
+     *   command to the Minecraft bridge, same signature/shape used by
+     *   survivalLoop.js (e.g. mcSend('attack', { mode: 'once' })). Required
+     *   for minecraft_action to actually do anything in-world; wire it in
+     *   when constructing Lily, e.g. `new Lily({ ... }, mcSend)`.
+     */
+    constructor(opts, mcSend = null) {
         this.opts = opts
+        this.mcSend = mcSend
     }
 
     async wikiSearch(query) {
@@ -88,9 +97,6 @@ export class ToolExecutor {
     async episodicQuery(query, { daysAgo = null, windowDays = 2, k = 5 } = {}) {
         log(`🎞️ [EPISODIC QUERY] "${query}" daysAgo=${daysAgo ?? "any"} window=${daysAgo !== null ? windowDays : "n/a"}`)
         try {
-            // When targeting a specific point in time, the semantic search endpoint
-            // can't filter by date itself — so we over-fetch candidates and filter
-            // by timestamp client-side, then trim back down to k.
             const fetchK = daysAgo !== null ? Math.max(k * 5, 25) : k
             const { data } = await axios.post(`${this.opts.episodicDbUrl}/search`, {
                 query, k: fetchK, min_score: this.opts.episodicQueryMinScore
@@ -133,12 +139,6 @@ export class ToolExecutor {
         }
     }
 
-    /**
-     * Semantic removal of episodic memories, backed by /remove_by_query.
-     * Note the endpoint's response shape is { status, removed: [titles] },
-     * not { status, message } like the factual-memory remove endpoint —
-     * normalize it here so callers/log lines don't need to special-case it.
-     */
     async episodicRemove(query) {
         log(`🗑️ [EPISODIC REMOVE] "${query}"`)
         try {
@@ -197,17 +197,59 @@ export class ToolExecutor {
             return "Web search failed."
         }
     }
-    async minecraftAction(action, target) {
-        log(`⛏️ [MINECRAFT] ${action} → ${target || "none"}`)
-        // This would integrate with your Minecraft bot
-        return JSON.stringify({ status: "ok", message: `Action ${action} performed.` })
+    /**
+     * Performs ONE physical action in-world, on request from a chat message.
+     * Mirrors the action set the survival loop can pick from, just triggered
+     * directly instead of on a timer.
+     */
+    async minecraftAction(args = {}) {
+        const { action, slot, x, z, player, target } = args
+        log(`⛏️ [MINECRAFT] ${action} ${JSON.stringify(args)}`)
+
+        if (!this.mcSend) {
+            logError(`[MINECRAFT] No mcSend wired into ToolExecutor — action dropped`)
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+
+        switch (action) {
+            case "attack":
+                this.mcSend('attack', { mode: 'once' })
+                break
+            case "use":
+                // slot is optional — if given, Java swaps to it first, then uses.
+                this.mcSend('use', slot ? { mode: 'once', slot } : { mode: 'once' })
+                break
+            case "swap_slot":
+                if (!slot) return JSON.stringify({ status: "error", message: "swap_slot needs a slot number." })
+                this.mcSend('hotbar', { slot })
+                break
+            case "drop":
+                if (!slot) return JSON.stringify({ status: "error", message: "drop needs a slot number." })
+                this.mcSend('drop', { slot })
+                break
+            case "move_to":
+                if (x == null || z == null) return JSON.stringify({ status: "error", message: "move_to needs x and z." })
+                this.mcSend('move_to', { x, z })
+                break
+            case "follow":
+                if (!player) return JSON.stringify({ status: "error", message: "follow needs a player name." })
+                this.mcSend('follow', { player })
+                break
+            case "stop":
+                this.mcSend('stop', {})
+                break
+            default:
+                return JSON.stringify({ status: "error", message: `Unknown action: ${action}` })
+        }
+
+        return JSON.stringify({ status: "ok", message: `Action ${action} performed.`, target: target ?? null })
     }
     async queryRecentEpisodicMemories(limit = 5, daysBack = 7) {
         log(`📅 [RECENT EPISODIC] limit=${limit}, daysBack=${daysBack}`)
         try {
             const { data } = await axios.post(`${this.opts.episodicDbUrl}/recent`, {
                 limit: Math.min(limit, 10),
-                days_back: daysBack, // was hardcoded to 1 before — always ignored the arg
+                days_back: daysBack,
                 min_importance: 0.3
             }, { timeout: this.opts.dbTimeout })
 
@@ -232,7 +274,7 @@ export class ToolExecutor {
     async execute(name, args) {
         switch (name) {
             case "web_search": return this.webSearch(args.query ?? "")
-            case "minecraft_action": return this.minecraftAction(args.action ?? "", args.target ?? "")
+            case "minecraft_action": return this.minecraftAction(args)
             case "query_memory_database": return this.memoryQuery(args.query ?? "")
             case "addto_memory_database": return this.memoryAdd(args.text ?? "", args.source ?? "user")
             case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
@@ -402,8 +444,30 @@ export const TOOLS = [
             description: "Search and send a meme image. Use when a meme would fit the moment. Use descriptive terms like 'drake approving', 'distracted boyfriend', 'this is fine fire'. Reply naturally after, never mention the tool.",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action",
+            description: "Perform ONE physical action in the Minecraft world because someone directly asked you to (e.g. 'attack that zombie', 'come here', 'follow me', 'eat something', 'drop your sword', 'go stand over there'). This is the same set of actions you use during normal survival ticks, just triggered on request. Only call this when the message is actually asking you to DO something physical — not for banter. Pick exactly one action per call. Reply naturally afterward, don't narrate the tool call.",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: {
+                        type: "string",
+                        enum: ["attack", "use", "swap_slot", "drop", "move_to", "follow", "stop"],
+                        description: "attack: fight the nearest hostile. use: use/eat/place the currently held item (or the item in `slot` if given — it swaps to that slot first). swap_slot: switch held hotbar slot. drop: drop the item in a hotbar slot. move_to: walk to specific x/z coordinates. follow: follow a named player around. stop: stop whatever you're currently doing (moving, following, attacking)."
+                    },
+                    slot: { type: "number", description: "Hotbar slot 1-9. Required for swap_slot and drop. Optional for use (e.g. 'eat the bread in slot 3')." },
+                    x: { type: "number", description: "X coordinate, required for move_to." },
+                    z: { type: "number", description: "Z coordinate, required for move_to." },
+                    player: { type: "string", description: "Player name, required for follow." },
+                    target: { type: "string", description: "Optional entity id or short description of what's being acted on, for logging/context only." }
+                },
+                required: ["action"]
+            }
+        }
     }
 ]
 
 export const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
-

@@ -18,6 +18,9 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
     const message  = interaction.options.getString("message")
     const username = interaction.member?.displayName || interaction.user.username
+    const authorName = interaction.member?.displayName || interaction.user.username
+    const bannedUsers = config.bannedUsers
+    if (!authorName || bannedUsers.includes(authorName) || bannedUsers.includes(interaction.user.username)) return
 
     await interaction.deferReply()
 

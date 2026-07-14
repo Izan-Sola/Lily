@@ -73,19 +73,87 @@ export class StateController {
         console.log('[STATE] Controller stopped')
     }
 
-    transitionTo(stateName) {
-        if (this.currentStateName === stateName) return
-        const oldName  = this.currentStateName
+    transitionTo(stateName, payload = {}) {
+        if (this.currentStateName === stateName) {
+            // Already in this state — let it re-enter with fresh payload instead
+            // of no-op'ing, so e.g. "follow Bob" while already following Alice
+            // actually retargets instead of being silently ignored.
+            if (this.currentState?.onEnter) this.currentState.onEnter(payload)
+            return
+        }
+        const oldName = this.currentStateName
         const newState = this.states[stateName]
         if (!newState) {
             console.error(`[STATE] Unknown state: ${stateName}`)
             return
         }
-        if (this.currentState?.onExit)  this.currentState.onExit()
+        if (this.currentState?.onExit) this.currentState.onExit()
         this.currentStateName = stateName
-        this.currentState     = newState
-        if (this.currentState?.onEnter) this.currentState.onEnter()
-        console.log(`[STATE] ➡️ ${oldName} → ${stateName}`)
+        this.currentState = newState
+        if (this.currentState?.onEnter) this.currentState.onEnter(payload)
+        console.log(`[STATE] ➡️ ${oldName} → ${stateName}${payload?.player ? ` (${payload.player})` : ''}`)
+    }
+
+    getPlayerByName(name) {
+        return this.players[name] ?? null
+    }
+    /**
+ * Single entry point for explicit, player-requested actions (from
+ * ToolExecutor.minecraftAction). Autonomous entry into these same states
+ * still happens however your decision logic (IdleState, etc.) already
+ * does it — this just gives chat-triggered requests the same doorway in,
+ * so both paths end up going through transitionTo() instead of chat
+ * requests bypassing the state machine with raw mcSend calls.
+ *
+ * One-shot commands (use/swap_slot/drop/look_at) don't need a persistent
+ * state, so they still pass straight through to mcSend.
+ */
+    requestExplicit(action, args = {}) {
+        switch (action) {
+            case 'follow':
+                if (!args.player) return { ok: false, message: 'follow needs a player name.' }
+                this.setFollowTarget(args.player)
+                this.transitionTo(State.FOLLOWING)
+                return { ok: true }
+
+            case 'attack': {
+                const hostile = this.nearestHostile()
+                if (!hostile) return { ok: false, message: 'No hostile nearby to attack.' }
+                this.transitionTo(State.ATTACKING)
+                return { ok: true }
+            }
+
+            case 'retreat':
+                if (args.player) this.setFollowTarget(args.player)
+                this.transitionTo(State.RECOVERING, { explicit: true })
+                return { ok: true }
+
+            case 'stop':
+                this.transitionTo(State.IDLE)
+                return { ok: true }
+
+            case 'move_to':
+                if (args.x == null || args.z == null) return { ok: false, message: 'move_to needs x and z.' }
+                this.mcSend('move_to', { x: args.x, z: args.z })
+                return { ok: true }
+
+            case 'use':
+                this.mcSend('use', args.slot ? { mode: 'once', slot: args.slot } : { mode: 'once' })
+                return { ok: true }
+
+            case 'swap_slot':
+                if (!args.slot) return { ok: false, message: 'swap_slot needs a slot number.' }
+                this.mcSend('hotbar', { slot: args.slot })
+                return { ok: true }
+
+            case 'drop':
+                if (!args.slot) return { ok: false, message: 'drop needs a slot number.' }
+                this.mcSend('drop', { slot: args.slot })
+                return { ok: true }
+
+            default:
+                return { ok: false, message: `Unknown action: ${action}` }
+        }
     }
 
     // Data updaters

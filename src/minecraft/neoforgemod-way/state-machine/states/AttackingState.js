@@ -4,12 +4,10 @@ export class AttackingState {
     this.attackInterval = null
   }
 
-  onEnter() {
+  onEnter(payload = {}) {
     console.log('[Attacking] Engaging hostile')
-    // Start attack interval: every 1500ms
     if (this.attackInterval) clearInterval(this.attackInterval)
     this.attackInterval = setInterval(() => {
-      // Only attack if still in attacking state and have a valid hostile
       if (this.ctx.currentStateName === 'ATTACKING') {
         const hostile = this.ctx.nearestHostile()
         if (hostile) {

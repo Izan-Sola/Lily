@@ -57,7 +57,7 @@ export class Lily {
         this.userMessageCount = 0
         this.observeBuffer = []
         this.mcSend = mcSend
-        this.tools = new ToolExecutor(this.opts, mcSend)
+        this.tools = new ToolExecutor(this.opts, mcSend, getStateController)
         this._resumedIds = new Map()
         this._replayCounts = new Map()
     }

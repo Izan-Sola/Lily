@@ -31,7 +31,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
                     model: "Lily",
                     stream: false,
                     messages: [{ role: "user", content: prompt }],
-                    temperature: 0.7,
+                    temperature: 0.4,
                     max_tokens: 512
                 })
             })
@@ -69,14 +69,14 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
             if (actions.length > 1) {
                 console.warn(`[SURVIVAL] Model returned ${actions.length} actions, only using the first`)
             }
-            if (actions[0]) handleSurvivalAction(actions[0], mcSend)
+            if (actions[0]) handleSurvivalAction(actions[0], stateController, mcSend)
         } catch (err) {
             console.error('[SURVIVAL] AI error:', err.message)
         }
     }, ACTIONS_INTERVAL_MS)
 }
 
-function handleSurvivalAction(act, mcSend) {
+function handleSurvivalAction(act, stateController, mcSend) {
     switch (act.type) {
         case 'attack': mcSend('attack', { mode: 'once' }); break
         case 'use': mcSend('use', { mode: 'once' }); break
@@ -84,5 +84,14 @@ function handleSurvivalAction(act, mcSend) {
         case 'swap_slot': mcSend('hotbar', { slot: act.slot }); break
         case 'drop': mcSend('drop', { slot: act.slot }); break
         case 'move_to': mcSend('move_to', { x: act.x, z: act.z }); break
+        case 'follow':
+            if (act.player) stateController.setFollowTarget(act.player)
+            stateController.transitionTo('FOLLOWING')
+            break
+        case 'stop':
+            stateController.transitionTo('IDLE')
+            break
+        default:
+            console.warn(`[SURVIVAL] Unknown action type: ${act.type}`)
     }
 }

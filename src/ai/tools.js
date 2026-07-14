@@ -11,9 +11,10 @@ export class ToolExecutor {
      *   for minecraft_action to actually do anything in-world; wire it in
      *   when constructing Lily, e.g. `new Lily({ ... }, mcSend)`.
      */
-    constructor(opts, mcSend = null) {
+    constructor(opts, mcSend = null, getStateController = null) {
         this.opts = opts
         this.mcSend = mcSend
+        this.getStateController = getStateController
     }
 
     async wikiSearch(query) {
@@ -206,42 +207,17 @@ export class ToolExecutor {
         const { action, slot, x, z, player, target } = args
         log(`⛏️ [MINECRAFT] ${action} ${JSON.stringify(args)}`)
 
-        if (!this.mcSend) {
-            logError(`[MINECRAFT] No mcSend wired into ToolExecutor — action dropped`)
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            logError(`[MINECRAFT] No stateController wired into ToolExecutor — action dropped`)
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
 
-        switch (action) {
-            case "attack":
-                this.mcSend('attack', { mode: 'once' })
-                break
-            case "use":
-                // slot is optional — if given, Java swaps to it first, then uses.
-                this.mcSend('use', slot ? { mode: 'once', slot } : { mode: 'once' })
-                break
-            case "swap_slot":
-                if (!slot) return JSON.stringify({ status: "error", message: "swap_slot needs a slot number." })
-                this.mcSend('hotbar', { slot })
-                break
-            case "drop":
-                if (!slot) return JSON.stringify({ status: "error", message: "drop needs a slot number." })
-                this.mcSend('drop', { slot })
-                break
-            case "move_to":
-                if (x == null || z == null) return JSON.stringify({ status: "error", message: "move_to needs x and z." })
-                this.mcSend('move_to', { x, z })
-                break
-            case "follow":
-                if (!player) return JSON.stringify({ status: "error", message: "follow needs a player name." })
-                this.mcSend('follow', { player })
-                break
-            case "stop":
-                this.mcSend('stop', {})
-                break
-            default:
-                return JSON.stringify({ status: "error", message: `Unknown action: ${action}` })
-        }
+        const result = stateController.requestExplicit(action, { slot, x, z, player })
 
+        if (!result.ok) {
+            return JSON.stringify({ status: "error", message: result.message ?? `Unknown action: ${action}` })
+        }
         return JSON.stringify({ status: "ok", message: `Action ${action} performed.`, target: target ?? null })
     }
     async queryRecentEpisodicMemories(limit = 5, daysBack = 7) {
@@ -449,19 +425,19 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action",
-            description: "Perform ONE physical action in the Minecraft world because someone directly asked you to (e.g. 'attack that zombie', 'come here', 'follow me', 'eat something', 'drop your sword', 'go stand over there'). This is the same set of actions you use during normal survival ticks, just triggered on request. Only call this when the message is actually asking you to DO something physical — not for banter. Pick exactly one action per call. Reply naturally afterward, don't narrate the tool call.",
+            description: "Perform ONE physical action in the Minecraft world because someone directly asked you to (e.g. 'attack that zombie', 'come here', 'follow me', 'eat something', 'drop your sword', 'go stand over there', 'run away', 'retreat', 'back off'). This is the same set of actions you use during normal survival ticks, just triggered on request. Only call this when the message is actually asking you to DO something physical — not for banter. Pick exactly one action per call. Reply naturally afterward, don't narrate the tool call.",
             parameters: {
                 type: "object",
                 properties: {
                     action: {
                         type: "string",
-                        enum: ["attack", "use", "swap_slot", "drop", "move_to", "follow", "stop"],
-                        description: "attack: fight the nearest hostile. use: use/eat/place the currently held item (or the item in `slot` if given — it swaps to that slot first). swap_slot: switch held hotbar slot. drop: drop the item in a hotbar slot. move_to: walk to specific x/z coordinates. follow: follow a named player around. stop: stop whatever you're currently doing (moving, following, attacking)."
+                        enum: ["attack", "use", "swap_slot", "drop", "move_to", "follow", "retreat", "stop"],
+                        description: "attack: fight the nearest hostile. use: use/eat/place the currently held item (or the item in `slot` if given — it swaps to that slot first). swap_slot: switch held hotbar slot. drop: drop the item in a hotbar slot. move_to: walk to specific x/z coordinates. follow: follow a named player around. retreat: flee toward a named player (or your default companion if none given) — use when told to run away, back off, or retreat, regardless of current HP. stop: stop whatever you're currently doing (moving, following, attacking, retreating)."
                     },
                     slot: { type: "number", description: "Hotbar slot 1-9. Required for swap_slot and drop. Optional for use (e.g. 'eat the bread in slot 3')." },
                     x: { type: "number", description: "X coordinate, required for move_to." },
                     z: { type: "number", description: "Z coordinate, required for move_to." },
-                    player: { type: "string", description: "Player name, required for follow." },
+                    player: { type: "string", description: "Player name. Required for follow. Optional for retreat — who to flee toward, defaults to your regular companion if omitted." },
                     target: { type: "string", description: "Optional entity id or short description of what's being acted on, for logging/context only." }
                 },
                 required: ["action"]

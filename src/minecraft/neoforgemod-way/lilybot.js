@@ -1,12 +1,13 @@
 import { WebSocketServer } from "ws"
 import { StateController } from "./state-machine/StateController.js"
-import { MINECRAFT_SYSTEM_PROMPT } from '../../ai/prompts.js'
+
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { loadCombos, enrichCombosData } from './state-machine/helpers/comboExecutor.js'
 import { startSurvivalLoop } from './state-machine/helpers/survivalLoop.js'
 import axios from "axios"
+import { buildMinecraftSystemPrompt } from '../../ai/prompts.js'
 export function requestDuelData(opponentName) {
     mcSend('get_duel_data', { opponent: opponentName });
 }
@@ -156,7 +157,7 @@ async function _handleEvent(event) {
                 const aiReply = await aiInstance.chat(
                     "minecraft",
                     `${player}: ${message}`,
-                    MINECRAFT_SYSTEM_PROMPT
+                    buildMinecraftSystemPrompt(getStateController())
                 )
 
                 const text = aiReply?.text?.trim()
@@ -265,6 +266,9 @@ async function _handleEvent(event) {
                 event.hp ?? 20,
                 event.food ?? 20
             )
+            if (event.armor !== undefined) {
+                stateController.lilyArmor = event.armor
+            }
             break
         }
         case "element_changed": {
@@ -276,7 +280,24 @@ async function _handleEvent(event) {
             stateController?.updateHostiles(event.hostiles ?? [])
             break
         }
-
+        case "environment_scan": {
+            if (stateController) {
+                stateController.hostiles = event.hostiles ?? []
+                stateController.passives = event.passives ?? []
+                stateController.blocksOfInterest = event.blocks_of_interest ?? []
+                stateController.hotbarItems = event.hotbar ?? {}   // NEW — real items, separate from PK bindings
+            }
+            break
+        }
+        case "bindings_update": {
+            const bindingsMap = event.bindings ?? {}
+            if (stateController) {
+                for (const [slot, ability] of Object.entries(bindingsMap)) {
+                    stateController.bindAbility(parseInt(slot), ability)
+                }
+            }
+            break
+        }
         case "ability_data": {
             if (getMode() === 'survival') break
             mergeAbilityData(event.abilities)
@@ -361,6 +382,9 @@ async function _handleEvent(event) {
             stateController?.handleSourceBlock(event);
             break;
         }
+        case "break":
+            mcSend("break", { x: args.x, y: args.y, z: args.z })
+            break
     }
 }
 

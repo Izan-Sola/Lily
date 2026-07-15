@@ -7,54 +7,57 @@ import { SneakHelper } from './helpers/sneak.js'
 import { MovementHelper } from './helpers/movement.js'
 
 export const State = {
-    IDLE:       'IDLE',
-    FOLLOWING:  'FOLLOWING',
-    ATTACKING:  'ATTACKING',
+    IDLE: 'IDLE',
+    FOLLOWING: 'FOLLOWING',
+    ATTACKING: 'ATTACKING',
     RECOVERING: 'RECOVERING',
-    DUELING:    'DUELING'
+    DUELING: 'DUELING'
 }
 
 export class StateController {
     constructor(mcSend, opts = {}) {
         this.mcSend = mcSend
         this.opts = {
-            followTarget:    'shinyshadow_',
-            followDistance:  3,
-            attackRange:     4,
-            lowHpThreshold:  6,
-            tickMs:          25,
+            followTarget: 'shinyshadow_',
+            followDistance: 3,
+            attackRange: 4,
+            lowHpThreshold: 6,
+            tickMs: 25,
             ...opts
         }
 
         // Shared data
-        this.players    = {}
-        this.lilyPos    = null
-        this.lilyHp     = 20
-        this.hostiles   = []
+        this.players = {}
+        this.lilyPos = null
+        this.lilyHp = 20
+        this.lilyHunger = 20
+        this.lilyArmor = 0
+        this.hostiles = []
+        this.passives = []
+        this.blocksOfInterest = []
         this.duelTarget = null
-        this.ai         = opts.ai
-
+        this.ai = opts.ai
         // Ability tracking
-        this.bindings         = {}   // slot -> raw ability name
+        this.bindings = {}   // slot -> raw ability name
         this.abilityCooldowns = {}   // ability name -> expiry timestamp (ms)
-        this.abilityStats     = {}   // ability name -> { range, cooldown, actions, actionTimes, description }
-        this.currentElement   = ""
+        this.abilityStats = {}   // ability name -> { range, cooldown, actions, actionTimes, description }
+        this.currentElement = ""
         // Helpers
         this.sneak = new SneakHelper(mcSend)
-        this.move  = new MovementHelper(mcSend)
+        this.move = new MovementHelper(mcSend)
 
         // States
         this.states = {
-            [State.IDLE]:       new IdleState(this),
-            [State.FOLLOWING]:  new FollowingState(this),
-            [State.ATTACKING]:  new AttackingState(this),
+            [State.IDLE]: new IdleState(this),
+            [State.FOLLOWING]: new FollowingState(this),
+            [State.ATTACKING]: new AttackingState(this),
             [State.RECOVERING]: new RecoveringState(this),
-            [State.DUELING]:    new DuelingState(this)
+            [State.DUELING]: new DuelingState(this)
         }
 
         this.currentStateName = State.IDLE
-        this.currentState     = this.states[State.IDLE]
-        this.tickInterval     = null
+        this.currentState = this.states[State.IDLE]
+        this.tickInterval = null
     }
 
     start() {
@@ -115,7 +118,12 @@ export class StateController {
                 this.setFollowTarget(args.player)
                 this.transitionTo(State.FOLLOWING)
                 return { ok: true }
-
+            case 'break':
+                if (args.x == null || args.y == null || args.z == null) {
+                    return { ok: false, message: 'break needs x, y, and z.' }
+                }
+                this.mcSend('break', { x: args.x, y: args.y, z: args.z })
+                return { ok: true }
             case 'attack': {
                 const hostile = this.nearestHostile()
                 if (!hostile) return { ok: false, message: 'No hostile nearby to attack.' }
@@ -157,9 +165,13 @@ export class StateController {
     }
 
     // Data updaters
-    updatePlayers(players)          { this.players = players }
-    updateLilyState(pos, hp)        { this.lilyPos = pos; this.lilyHp = hp }
-    updateHostiles(hostiles)        { this.hostiles = hostiles }
+    updatePlayers(players) { this.players = players }
+    updateLilyState(pos, hp, hunger) {
+        this.lilyPos = pos
+        this.lilyHp = hp
+        if (hunger != null) this.lilyHunger = hunger
+    }
+    updateHostiles(hostiles) { this.hostiles = hostiles }
 
     setDuelTarget(targetName) {
         if (!targetName || targetName === '') {
@@ -184,11 +196,11 @@ export class StateController {
 
     getStatus() {
         return {
-            state:      this.currentStateName,
-            lilyHp:     this.lilyHp,
-            lilyPos:    this.lilyPos,
-            players:    Object.keys(this.players),
-            hostiles:   this.hostiles.length,
+            state: this.currentStateName,
+            lilyHp: this.lilyHp,
+            lilyPos: this.lilyPos,
+            players: Object.keys(this.players),
+            hostiles: this.hostiles.length,
             isSneaking: this.sneak.isSneaking
         }
     }
@@ -215,10 +227,10 @@ export class StateController {
             this.currentState.onSourceBlock(event);
         }
     }
-    
+
     nearestHostile() {
         if (!this.lilyPos || !this.hostiles.length) return null
-        let nearest     = null
+        let nearest = null
         let nearestDist = this.opts.attackRange
         for (const h of this.hostiles) {
             const d = this._dist(this.lilyPos, h)

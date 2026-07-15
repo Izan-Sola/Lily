@@ -204,7 +204,7 @@ export class ToolExecutor {
      * directly instead of on a timer.
      */
     async minecraftAction(args = {}) {
-        const { action, slot, x, z, player, target } = args
+        const { action, slot, x, y, z, player, target } = args
         log(`⛏️ [MINECRAFT] ${action} ${JSON.stringify(args)}`)
 
         const stateController = this.getStateController?.()
@@ -213,7 +213,7 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
 
-        const result = stateController.requestExplicit(action, { slot, x, z, player })
+        const result = stateController.requestExplicit(action, { slot, x, y, z, player })
 
         if (!result.ok) {
             return JSON.stringify({ status: "error", message: result.message ?? `Unknown action: ${action}` })
@@ -425,18 +425,19 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action",
-            description: "Perform ONE physical action in the Minecraft world because someone directly asked you to (e.g. 'attack that zombie', 'come here', 'follow me', 'eat something', 'drop your sword', 'go stand over there', 'run away', 'retreat', 'back off'). This is the same set of actions you use during normal survival ticks, just triggered on request. Only call this when the message is actually asking you to DO something physical — not for banter. Pick exactly one action per call. Reply naturally afterward, don't narrate the tool call.",
+            description: "Perform ONE physical action in the Minecraft world because someone directly asked you to (e.g. 'attack that zombie', 'come here', 'follow me', 'eat something', 'drop your sword', 'mine that ore', 'run away', 'retreat', 'back off'). This is the same set of actions you use during normal survival ticks, just triggered on request. Only call this when the message is actually asking you to DO something physical — not for banter. Pick exactly one action per call. Reply naturally afterward, don't narrate the tool call.",
             parameters: {
                 type: "object",
                 properties: {
                     action: {
                         type: "string",
-                        enum: ["attack", "use", "swap_slot", "drop", "move_to", "follow", "retreat", "stop"],
-                        description: "attack: fight the nearest hostile. use: use/eat/place the currently held item (or the item in `slot` if given — it swaps to that slot first). swap_slot: switch held hotbar slot. drop: drop the item in a hotbar slot. move_to: walk to specific x/z coordinates. follow: follow a named player around. retreat: flee toward a named player (or your default companion if none given) — use when told to run away, back off, or retreat, regardless of current HP. stop: stop whatever you're currently doing (moving, following, attacking, retreating)."
+                        enum: ["attack", "use", "swap_slot", "drop", "break", "follow", "retreat", "stop"],
+                        description: "attack: fight the nearest hostile. use: use/eat/place the currently held item (or the item in `slot` if given — it swaps to that slot first). swap_slot: switch held hotbar slot (requires slot). drop: drop the item in a hotbar slot (requires slot). break: mine/break the block at x,y,z — only use coordinates from the Blocks of Interest list you were given, never invent them. follow: follow a named player around. retreat: flee toward a named player (or your default companion if none given) — use when told to run away, back off, or retreat, regardless of current HP. stop: stop whatever you're currently doing (moving, following, attacking, retreating, mining)."
                     },
                     slot: { type: "number", description: "Hotbar slot 1-9. Required for swap_slot and drop. Optional for use (e.g. 'eat the bread in slot 3')." },
-                    x: { type: "number", description: "X coordinate, required for move_to." },
-                    z: { type: "number", description: "Z coordinate, required for move_to." },
+                    x: { type: "number", description: "X coordinate of the target block. Required for break." },
+                    y: { type: "number", description: "Y coordinate of the target block. Required for break." },
+                    z: { type: "number", description: "Z coordinate of the target block. Required for break." },
                     player: { type: "string", description: "Player name. Required for follow. Optional for retreat — who to flee toward, defaults to your regular companion if omitted." },
                     target: { type: "string", description: "Optional entity id or short description of what's being acted on, for logging/context only." }
                 },

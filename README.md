@@ -3,6 +3,7 @@
 
 - My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
 - Related: https://github.com/Izan-Sola/Lily-Minecraft
+- Currently working on her being able to play survival minecraft decently.
 
 ## Stuff used
 

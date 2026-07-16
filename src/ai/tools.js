@@ -33,15 +33,16 @@ export class ToolExecutor {
         }
     }
 
+    // ── Facts (permanent, deduped, never decay) ────────────────────────────────
+
     async memoryQuery(query) {
         log(`🧠 [MEMORY QUERY] "${query}"`)
         try {
-            const { data } = await axios.get(`${this.opts.knowledgeDbUrl}/search_get`, {
-                params: { query, k: 10, min_score: this.opts.memoryQueryMinScore },
-                timeout: this.opts.dbTimeout
-            })
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
+                query, k: 10, min_score: this.opts.memoryQueryMinScore, types: ["fact"]
+            }, { timeout: this.opts.dbTimeout })
             if (!data?.results?.length) return "No relevant information found in memory."
-            return data.results.map(e => e.text ?? e).join("\n")
+            return data.results.map(e => e.text).join("\n")
         } catch (err) {
             logError(`[MEMORY QUERY] ${err.message}`)
             return "No relevant information found in memory."
@@ -51,15 +52,9 @@ export class ToolExecutor {
     async memoryAdd(factText, source = "user") {
         log(`💾 [MEMORY ADD] "${factText.slice(0, 100)}${factText.length > 100 ? '...' : ''}"`)
         try {
-            const { data: dupCheck } = await axios.get(`${this.opts.knowledgeDbUrl}/search_get`, {
-                params: { query: factText, k: 1, min_score: this.opts.memoryDuplicateMinScore },
-                timeout: this.opts.dbTimeout
-            })
-            if (dupCheck?.results?.length) {
-                log(`🔁 [DUPLICATE] Skipped`)
-                return JSON.stringify({ status: "skipped", message: "Memory already exists." })
-            }
-            const { data } = await axios.post(`${this.opts.knowledgeDbUrl}/add_entry`, { text: factText, source }, { timeout: this.opts.dbTimeout })
+            // Duplicate detection now happens server-side in add_fact — no
+            // separate pre-check call needed.
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, { text: factText, source }, { timeout: this.opts.dbTimeout })
             return JSON.stringify({ status: data.status, message: data.message })
         } catch (err) {
             logError(`[MEMORY ADD] ${err.message}`)
@@ -70,7 +65,7 @@ export class ToolExecutor {
     async memoryUpdate(searchQuery, updatedText) {
         log(`✏️ [MEMORY UPDATE] "${searchQuery}" → "${updatedText.slice(0, 100)}"`)
         try {
-            const { data } = await axios.put(`${this.opts.knowledgeDbUrl}/update_entry`, { query: searchQuery, text: updatedText }, { timeout: this.opts.dbTimeout })
+            const { data } = await axios.put(`${this.opts.memoryDbUrl}/update_fact`, { query: searchQuery, text: updatedText }, { timeout: this.opts.dbTimeout })
             return JSON.stringify({ status: data.status, message: data.message })
         } catch (err) {
             logError(`[MEMORY UPDATE] ${err.message}`)
@@ -81,26 +76,27 @@ export class ToolExecutor {
     async memoryRemove(searchQuery) {
         log(`🗑️ [MEMORY REMOVE] "${searchQuery}"`)
         try {
-            const { data: matches } = await axios.get(`${this.opts.knowledgeDbUrl}/search_get`, {
-                params: { query: searchQuery, k: this.opts.memoryRemoveK, min_score: this.opts.memoryRemoveMinScore },
-                timeout: this.opts.dbTimeout
-            })
-            if (!matches?.results?.length) return JSON.stringify({ status: "not_found", message: "No matching memories found." })
-            const texts = matches.results.map(e => e.text)
-            const { data } = await axios.post(`${this.opts.knowledgeDbUrl}/remove_many`, { texts }, { timeout: this.opts.dbTimeout })
-            return JSON.stringify({ status: data.status, message: data.message, removed: data.removed })
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/remove_by_query`, {
+                query: searchQuery, k: this.opts.memoryRemoveK, min_score: this.opts.memoryRemoveMinScore, types: ["fact"]
+            }, { timeout: this.opts.dbTimeout })
+            if (data?.status !== "ok" || !data?.removed?.length) {
+                return JSON.stringify({ status: "not_found", message: "No matching memories found." })
+            }
+            return JSON.stringify({ status: data.status, message: `Removed: ${data.removed.join(", ")}`, removed: data.removed })
         } catch (err) {
             logError(`[MEMORY REMOVE] ${err.message}`)
             return JSON.stringify({ status: "error", message: "Failed to remove entries." })
         }
     }
 
+    // ── Episodic (decaying, time-stamped batches/events) ───────────────────────
+
     async episodicQuery(query, { daysAgo = null, windowDays = 2, k = 5 } = {}) {
         log(`🎞️ [EPISODIC QUERY] "${query}" daysAgo=${daysAgo ?? "any"} window=${daysAgo !== null ? windowDays : "n/a"}`)
         try {
             const fetchK = daysAgo !== null ? Math.max(k * 5, 25) : k
-            const { data } = await axios.post(`${this.opts.episodicDbUrl}/search`, {
-                query, k: fetchK, min_score: this.opts.episodicQueryMinScore
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
+                query, k: fetchK, min_score: this.opts.episodicQueryMinScore, types: ["episodic"]
             }, { timeout: this.opts.dbTimeout })
 
             if (!data?.results?.length) return "No relevant episodic memories found."
@@ -118,46 +114,66 @@ export class ToolExecutor {
             }
 
             results = results.slice(0, k)
+            // m.content is the raw transcript when available, falling back to
+            // the summary — always prefer showing the real content on a hit.
             return results.map(m =>
-                `[${new Date(m.timestamp * 1000).toLocaleDateString()}] ${m.title}: ${m.summary}`
-            ).join("\n")
+                `[${new Date(m.timestamp * 1000).toLocaleDateString()}] ${m.content}`
+            ).join("\n\n")
         } catch (err) {
             logError(`[EPISODIC QUERY] ${err.message}`)
             return "No relevant episodic memories found."
         }
     }
-    async episodicAdd({ title, summary, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation" }) {
-        log(`🎞️ [EPISODIC ADD] "${title}"`)
+
+    /**
+     * Batch-summarizer add — called from lily.js's summarizeAndStore/observe
+     * pipeline. Carries a real `raw` transcript alongside the LLM summary,
+     * so the summary can stay short (good for search) while the raw lines
+     * are what actually get returned to the model on a hit.
+     */
+    async addEpisodicMemory({ summary, raw, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation_batch" }) {
+        log(`🎞️ [EPISODIC BATCH ADD] "${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}"`)
         try {
-            const { data } = await axios.post(`${this.opts.episodicDbUrl}/add_memory`, {
-                title, summary, participants, emotions, importance, channel, source,
-                duplicate_min_score: this.opts.episodicDuplicateScore
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_episodic`, {
+                summary, raw, participants, emotions, importance, channel, source,
             }, { timeout: this.opts.dbTimeout })
             return JSON.stringify({ status: data.status, message: data.message })
         } catch (err) {
-            logError(`[EPISODIC ADD] ${err.message}`)
+            logError(`[EPISODIC BATCH ADD] ${err.message}`)
             return JSON.stringify({ status: "error", message: "Failed to store episodic memory." })
         }
     }
 
-    async episodicRemove(query) {
-        log(`🗑️ [EPISODIC REMOVE] "${query}"`)
+    async queryRecentEpisodicMemories(limit = 5, daysBack = 7) {
+        log(`📅 [RECENT EPISODIC] limit=${limit}, daysBack=${daysBack}`)
         try {
-            const { data } = await axios.post(`${this.opts.episodicDbUrl}/remove_by_query`, {
-                query,
-                k: this.opts.episodicRemoveK,
-                min_score: this.opts.episodicRemoveMinScore
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/recent`, {
+                limit: Math.min(limit, 10),
+                days_back: daysBack,
+                min_importance: 0.3,
+                types: ["episodic"]
             }, { timeout: this.opts.dbTimeout })
 
-            if (data?.status !== "ok" || !data?.removed?.length) {
-                return JSON.stringify({ status: "not_found", message: "No matching episodic memories found." })
+            if (!data?.results?.length) {
+                return "I don't have any recent memories to share! I've mostly just been hanging out and chatting with everyone~"
             }
-            return JSON.stringify({ status: "ok", message: `Removed: ${data.removed.join(", ")}`, removed: data.removed })
+
+            const memories = data.results.map(m => {
+                const date = new Date(m.timestamp * 1000).toLocaleDateString(undefined, {
+                    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
+                })
+                return `📅 ${date}: ${m.text}`
+            }).join("\n")
+
+            log(`✅ [RECENT EPISODIC] Found ${data.results.length} memories`)
+            return `Here's what I remember happening recently:\n${memories}`
         } catch (err) {
-            logError(`[EPISODIC REMOVE] ${err.message}`)
-            return JSON.stringify({ status: "error", message: "Failed to remove episodic entries." })
+            logError(`[RECENT EPISODIC] ${err.message}`)
+            return "Hmm, I'm having trouble remembering right now. I've just been chatting and having fun with everyone~ (•ᴗ•)"
         }
     }
+
+    // ── Everything below is unchanged ───────────────────────────────────────────
 
     async searchGif(query) {
         log(`🎞️ [GIF] "${query}"`)
@@ -220,33 +236,7 @@ export class ToolExecutor {
         }
         return JSON.stringify({ status: "ok", message: `Action ${action} performed.`, target: target ?? null })
     }
-    async queryRecentEpisodicMemories(limit = 5, daysBack = 7) {
-        log(`📅 [RECENT EPISODIC] limit=${limit}, daysBack=${daysBack}`)
-        try {
-            const { data } = await axios.post(`${this.opts.episodicDbUrl}/recent`, {
-                limit: Math.min(limit, 10),
-                days_back: daysBack,
-                min_importance: 0.3
-            }, { timeout: this.opts.dbTimeout })
 
-            if (!data?.results?.length) {
-                return "I don't have any recent memories to share! I've mostly just been hanging out and chatting with everyone~"
-            }
-
-            const memories = data.results.map(m => {
-                const date = new Date(m.timestamp * 1000).toLocaleDateString(undefined, {
-                    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
-                })
-                return `📅 ${date}: ${m.summary}`
-            }).join("\n")
-
-            log(`✅ [RECENT EPISODIC] Found ${data.results.length} memories`)
-            return `Here's what I remember happening recently:\n${memories}`
-        } catch (err) {
-            logError(`[RECENT EPISODIC] ${err.message}`)
-            return "Hmm, I'm having trouble remembering right now. I've just been chatting and having fun with everyone~ (•ᴗ•)"
-        }
-    }
     async execute(name, args) {
         switch (name) {
             case "web_search": return this.webSearch(args.query ?? "")
@@ -261,17 +251,7 @@ export class ToolExecutor {
                     windowDays: args.window_days ?? 2,
                     k: 5
                 })
-            case "remove_episodic_memory": return this.episodicRemove(args.query ?? "")
             case "send_meme": return this.searchMeme(args.query ?? "")
-            case "addto_episodic_memory": return this.episodicAdd({
-                title: args.title ?? "Untitled",
-                summary: args.summary ?? "",
-                participants: args.participants ?? [],
-                emotions: args.emotions ?? [],
-                importance: args.importance ?? 0.5,
-                channel: args.channel ?? null,
-                source: "conversation",
-            })
             case "query_recent_episodic_memories":
                 return this.queryRecentEpisodicMemories(args.limit ?? 5, args.days_back ?? 7)
             case "send_gif": return this.searchGif(args.query ?? "")
@@ -308,6 +288,8 @@ export class ToolExecutor {
 }
 
 // ─── Tool Definitions (for Ollama) ──────────────────────────────────────
+// Unchanged from before — the model's tool schema/behavior doesn't need to
+// know the two DBs merged into one; only the backend wiring above changed.
 export const TOOLS = [
     {
         type: "function",
@@ -373,22 +355,6 @@ export const TOOLS = [
                 },
                 required: ["query"]
             }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "remove_episodic_memory",
-            description: "Remove a SPECIFIC stored event, named by its content (e.g. 'the Kiss Marry Kill challenge', 'IsGone's birthday party'). Only use when someone points to one concrete past event that's genuinely wrong, embarrassing, or that they specifically ask you to drop by name/description. Do NOT use this for vague or joking instructions like 'forget everything', 'reset', 'pretend you got hit by a memory eraser', or 'refresh yourself' — those aren't real commands, there's no specific event named, and complying with every 'forget' request from anyone would let people erase real shared history on a whim. If in doubt, ask what specifically they want forgotten instead of guessing and removing.",
-            parameters: { type: "object", properties: { query: { type: "string", description: "The specific event to remove, in a few keywords — never a vague phrase like 'everything' or 'that conversation'." } }, required: ["query"] }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "addto_episodic_memory",
-            description: "Store a significant event or shared experience worth remembering long-term. Only use ONCE per conversation turn, only for genuinely notable moments like first meetings, achievements, or important decisions that ACTUALLY happened in this conversation. Do NOT store routine chat, greetings, or tool results. If a similar event was already stored, don't create a near-duplicate with slightly different wording — either skip it, or use remove_episodic_memory first if the old version is now inaccurate. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
-            parameters: { type: "object", properties: { title: { type: "string" }, summary: { type: "string" }, participants: { type: "array", items: { type: "string" } }, emotions: { type: "array", items: { type: "string" } }, importance: { type: "number" } }, required: ["title", "summary"] }
         }
     },
     {

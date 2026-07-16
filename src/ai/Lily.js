@@ -20,21 +20,19 @@ const DEFAULT_OPTIONS = {
     maxRawMessages: 30,
     maxToolLoops: 15,
     maxToolRepeats: 1,
-    memoryDuplicateMinScore: 0.75,
-    memoryRemoveMinScore: 0.70,
     memoryQueryMinScore: 0.3,
+    memoryRemoveMinScore: 0.70,
     memoryRemoveK: 2,
     episodicQueryMinScore: 0.60,
-    episodicDuplicateScore: 0.78,
     episodicRemoveMinScore: 0.70,
     episodicRemoveK: 3,
-    summarizeEvery: 30,
-    summarizeLastN: 30,
-    observeEvery: 40,
+    // Smaller, more frequent batches — each embedded summary stays topic-focused
+    // instead of blurring many unrelated exchanges into one blob.
+    summarizeEvery: 10,
+    summarizeLastN: 10,
+    observeEvery: 10,
     ollamaUrl: "http://localhost:11435",
-    vectorDbUrl: "http://localhost:8000",
-    knowledgeDbUrl: "http://localhost:8001",
-    episodicDbUrl: "http://localhost:8002",
+    memoryDbUrl: "http://localhost:8002",   // single unified DB, replaces knowledgeDbUrl + episodicDbUrl
     blogUrl: "http://localhost:1234",
     ollamaTimeout: 120000,
     dbTimeout: 30000,
@@ -169,7 +167,7 @@ export class Lily {
         return parts
     }
 
-    async summarizeAndStore(lines, { logPrefix, maxTokens = 300, memoryTitle, memorySource = "summary", participants = [], emotions = [], importance = 0.5 }) {
+    async summarizeAndStore(lines, { logPrefix, maxTokens = 300, memoryTitle, memorySource = "conversation_batch", participants = [], emotions = [], importance = 0.5 }) {
         if (lines.length < 2) return
         log(`📝 [${logPrefix}] Summarizing ${lines.length} entries...`)
         try {
@@ -187,7 +185,15 @@ export class Lily {
             const summary = data.choices?.[0]?.message?.content?.trim()
             if (!summary) return
 
-            await this.tools.episodicAdd({ title: memoryTitle, summary, participants, emotions, importance, source: memorySource })
+            // summary drives the embedding/search; raw is what comes back on a hit
+            await this.tools.addEpisodicMemory({
+                summary,
+                raw: lines.join("\n"),
+                participants,
+                emotions,
+                importance,
+                source: memorySource,
+            })
         } catch (err) {
             logError(`[${logPrefix}] ${err.message}`)
         }
@@ -203,9 +209,8 @@ export class Lily {
 
         await this.summarizeAndStore(lines, {
             logPrefix: "SUMMARIZE",
-            maxTokens: 300,
-            memoryTitle: `Conversation summary — ${new Date().toISOString().slice(0, 10)}`,
-            memorySource: "summary",
+            maxTokens: 150,
+            memorySource: "conversation_batch",
             importance: 0.5,
         })
     }
@@ -217,8 +222,7 @@ export class Lily {
         if (this.opts.observeEvery > 0 && this.observeBuffer.length >= this.opts.observeEvery) {
             this.summarizeAndStore(this.observeBuffer.splice(0, this.opts.observeEvery), {
                 logPrefix: "OBSERVE",
-                maxTokens: 150,
-                memoryTitle: `Observed chat — ${new Date().toISOString().slice(0, 10)}`,
+                maxTokens: 100,
                 memorySource: "observe",
                 importance: 0.3,
             })

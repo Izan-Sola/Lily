@@ -5,13 +5,15 @@ import { RecoveringState } from './states/RecoveringState.js'
 import { DuelingState } from './states/DuelingState.js'
 import { SneakHelper } from './helpers/sneak.js'
 import { MovementHelper } from './helpers/movement.js'
+import { MiningState } from './states/MiningState.js'
 
 export const State = {
     IDLE: 'IDLE',
     FOLLOWING: 'FOLLOWING',
     ATTACKING: 'ATTACKING',
     RECOVERING: 'RECOVERING',
-    DUELING: 'DUELING'
+    DUELING: 'DUELING',
+    MINING: 'MINING'
 }
 
 export class StateController {
@@ -52,7 +54,8 @@ export class StateController {
             [State.FOLLOWING]: new FollowingState(this),
             [State.ATTACKING]: new AttackingState(this),
             [State.RECOVERING]: new RecoveringState(this),
-            [State.DUELING]: new DuelingState(this)
+            [State.DUELING]: new DuelingState(this),
+            [State.MINING]: new MiningState(this)
         }
 
         this.currentStateName = State.IDLE
@@ -110,7 +113,27 @@ export class StateController {
  *
  * One-shot commands (use/swap_slot/drop/look_at) don't need a persistent
  * state, so they still pass straight through to mcSend.
- */
+ */_findBlockType({ x, y, z }) {
+        const match = this.blocksOfInterest?.find(b => b.x === x && b.y === y && b.z === z)
+        return match?.type ?? null
+    }
+
+    _collectMiningCluster(targetBlock, maxBlocks = 8, maxRadius = 6) {
+        const cluster = [targetBlock]
+        if (!targetBlock.type || !this.blocksOfInterest?.length) return cluster
+
+        const rest = this.blocksOfInterest
+            .filter(b => b.type === targetBlock.type &&
+                !(b.x === targetBlock.x && b.y === targetBlock.y && b.z === targetBlock.z))
+            .map(b => ({ ...b, dist: this._dist(targetBlock, b) }))
+            .filter(b => b.dist <= maxRadius)
+            .sort((a, b) => a.dist - b.dist)
+            .slice(0, maxBlocks - 1)
+        console.log('[MINE] cluster built:', cluster.length + rest.length, 'blocks')
+
+        return [...cluster, ...rest]
+        
+    }
     requestExplicit(action, args = {}) {
         switch (action) {
             case 'follow':
@@ -118,12 +141,21 @@ export class StateController {
                 this.setFollowTarget(args.player)
                 this.transitionTo(State.FOLLOWING)
                 return { ok: true }
-            case 'break':
+            case 'break': {
                 if (args.x == null || args.y == null || args.z == null) {
                     return { ok: false, message: 'break needs x, y, and z.' }
                 }
-                this.mcSend('break', { x: args.x, y: args.y, z: args.z })
+
+                const targetBlock = {
+                    x: args.x, y: args.y, z: args.z,
+                    type: this._findBlockType(args)
+                }
+
+                this.sneak.cancelHold()
+                this.move.stop()
+                this.transitionTo(State.MINING, { blocks: this._collectMiningCluster(targetBlock) })
                 return { ok: true }
+            }
             case 'attack': {
                 const hostile = this.nearestHostile()
                 if (!hostile) return { ok: false, message: 'No hostile nearby to attack.' }

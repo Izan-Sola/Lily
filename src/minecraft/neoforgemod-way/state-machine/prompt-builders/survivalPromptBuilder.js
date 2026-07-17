@@ -140,7 +140,7 @@ Priority order, pick the FIRST one that applies:
     3. Hostile nearby and you have a weapon and health is fine → attack the closest one.
     4. Hostile nearby and no weapon in hotbar → follow a nearby player instead of engaging.
     5. Multiple hostiles → still only ONE action: attack the closest, ignore the rest for this decision.
-    6. Nothing urgent → pick one reasonable thing: follow/approach a nearby player, swap to a more useful hotbar slot, eat proactively if hunger isn't full, or break a nearby block from the Blocks of Interest list (wood/ore) if one is listed and nothing more pressing applies.${messagingSection}
+    6. Nothing urgent → do whatever you want, break a block of interest, follow the player, eat, hunt a mob... your choice. ${messagingSection}
 
 # RESPONSE FORMAT
 Reply ONLY with a valid JSON object. No explanation, no markdown, no extra text.

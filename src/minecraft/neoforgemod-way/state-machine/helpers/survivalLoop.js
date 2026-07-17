@@ -1,6 +1,6 @@
 import { buildSurvivalPrompt } from '../prompt-builders/survivalPromptBuilder.js'
 
-const ACTIONS_INTERVAL_MS = 20000
+const ACTIONS_INTERVAL_MS = 60000
 const MSG_MIN_MS = 2 * 60 * 1000
 const MSG_MAX_MS = 6 * 60 * 1000
 

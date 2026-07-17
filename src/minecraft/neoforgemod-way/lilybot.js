@@ -281,13 +281,13 @@ async function _handleEvent(event) {
             break
         }
         case "environment_scan": {
-            console.log('[DEBUG] env_scan received:', JSON.stringify(event)) // TEMP
+         //   console.log('[DEBUG] env_scan received:', JSON.stringify(event)) // TEMP
             if (stateController) {
                 stateController.hostiles = event.hostiles ?? []
                 stateController.passives = event.passives ?? []
                 stateController.blocksOfInterest = event.blocks_of_interest ?? []
                 stateController.hotbarItems = event.hotbar ?? {}
-                console.log('[DEBUG] after assign:', stateController.hotbarItems, stateController.hostiles) // TEMP
+               // console.log('[DEBUG] after assign:', stateController.hotbarItems, stateController.hostiles) // TEMP
             }
             break
         }
@@ -384,9 +384,6 @@ async function _handleEvent(event) {
             stateController?.handleSourceBlock(event);
             break;
         }
-        case "break":
-            mcSend("break", { x: args.x, y: args.y, z: args.z })
-            break
     }
 }
 

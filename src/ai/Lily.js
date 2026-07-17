@@ -19,7 +19,7 @@ const DEFAULT_OPTIONS = {
     maxConvoMessages: 30,
     maxRawMessages: 30,
     maxToolLoops: 15,
-    maxToolRepeats: 1,
+    maxToolRepeats: 3,
     memoryQueryMinScore: 0.3,
     memoryRemoveMinScore: 0.70,
     memoryRemoveK: 2,
@@ -53,13 +53,20 @@ export class Lily {
         this.rawBuffers = new Map()
         this.channelLocks = new Map()
         this.userMessageCount = 0
+        // constructor
+        this.channelMessageCounts = new Map()   // channelId -> count, replaces this.userMessageCount
+        this.observeBuffers = new Map()         // channelId -> string[], replaces this.observeBuffer
+        this.observeParticipants = new Map()    // channelId -> Set<string>, if you added the participants fix
         this.observeBuffer = []
         this.mcSend = mcSend
         this.tools = new ToolExecutor(this.opts, mcSend, getStateController)
         this._resumedIds = new Map()
         this._replayCounts = new Map()
     }
-
+    getObserveBuffer(channelId) {
+        if (!this.observeBuffers.has(channelId)) this.observeBuffers.set(channelId, [])
+        return this.observeBuffers.get(channelId)
+    }
     /**
      * Wire (or replace) the Minecraft bridge sender after construction —
      * useful if mcSend isn't available yet when Lily is first built.
@@ -214,18 +221,28 @@ export class Lily {
             importance: 0.5,
         })
     }
-
-    observe(rawMessage) {
+    observe(channelId, rawMessage, authorName = null) {
         const clean = sanitizeInput(rawMessage)
         if (!clean) return
-        this.observeBuffer.push(clean)
-        if (this.opts.observeEvery > 0 && this.observeBuffer.length >= this.opts.observeEvery) {
-            this.summarizeAndStore(this.observeBuffer.splice(0, this.opts.observeEvery), {
+
+        const buffer = this.getObserveBuffer(channelId)
+        buffer.push(clean)
+        if (authorName && authorName.toLowerCase() !== "lily") {
+            if (!this.observeParticipants.has(channelId)) this.observeParticipants.set(channelId, new Set())
+            this.observeParticipants.get(channelId).add(authorName)
+        }
+
+        if (this.opts.observeEvery > 0 && buffer.length >= this.opts.observeEvery) {
+            const batch = buffer.splice(0, this.opts.observeEvery)
+            const participants = [...(this.observeParticipants.get(channelId) ?? [])]
+            this.summarizeAndStore(batch, {
                 logPrefix: "OBSERVE",
                 maxTokens: 100,
                 memorySource: "observe",
                 importance: 0.3,
+                participants,
             })
+            this.observeParticipants.set(channelId, new Set())
         }
     }
 
@@ -465,7 +482,9 @@ export class Lily {
         const { skipped, result } = await this.tryChannelLock(channelId, async () => {
             this.pushToConvoHistory(channelId, { role: "user", content: clean || "[sent an image]" })
 
-            if (this.opts.summarizeEvery > 0 && ++this.userMessageCount % this.opts.summarizeEvery === 0) {
+            const count = (this.channelMessageCounts.get(channelId) ?? 0) + 1
+            this.channelMessageCounts.set(channelId, count)
+            if (this.opts.summarizeEvery > 0 && count % this.opts.summarizeEvery === 0) {
                 await this.summarizeConversationAndStore(channelId)
             }
 
@@ -485,7 +504,6 @@ export class Lily {
 
         return result
     }
-
     chat(channelId, userInput, systemPromptOverride = null, opts = {}, images = []) {
         return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts, images)
     }

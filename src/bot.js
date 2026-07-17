@@ -529,7 +529,7 @@ export async function createBot() {
 
         // ─── Spontaneous butt-in ──────────────────────────────────────────────
         if (!isMentioned && !isReplyToBot) {
-            ai.observe(`${authorName} said ${userInput}`)
+            ai.observe(channelId, `${authorName} said ${userInput}`)
 
             if (Math.random() < 0.005) {
                 const prefs = getPrefs(message.author.id)

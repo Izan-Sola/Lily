@@ -1,20 +1,14 @@
 import axios from "axios"
 import { log, logError } from './utils.js'
 import { tavily } from "@tavily/core"
+
 // ─── Tool Executor ──────────────────────────────────────────────────────
 export class ToolExecutor {
-    /**
-     * @param {object} opts
-     * @param {(type: string, params: object) => void} [mcSend] - sends a
-     *   command to the Minecraft bridge, same signature/shape used by
-     *   survivalLoop.js (e.g. mcSend('attack', { mode: 'once' })). Required
-     *   for minecraft_action to actually do anything in-world; wire it in
-     *   when constructing Lily, e.g. `new Lily({ ... }, mcSend)`.
-     */
     constructor(opts, mcSend = null, getStateController = null) {
         this.opts = opts
         this.mcSend = mcSend
         this.getStateController = getStateController
+        this.lastMineTime = 0  // ← ADD THIS
     }
 
     async wikiSearch(query) {
@@ -33,17 +27,12 @@ export class ToolExecutor {
         }
     }
 
-    // ── Facts (permanent, deduped, never decay) ────────────────────────────────
-
     async memoryQuery(query, { daysAgo = null, windowDays = 2, daysBack = null } = {}) {
-        // Pure recency mode — "what did we talk about this week/past 10 days".
-        // No semantic search at all: just chronological listing, no query text needed.
         if (daysBack !== null) {
             log(`🧠 [MEMORY QUERY] recency-only daysBack=${daysBack}`)
             try {
                 const { data } = await axios.post(`${this.opts.memoryDbUrl}/recent`, {
                     limit: 10, days_back: daysBack, min_importance: 0.3
-                    // no `types` — recent facts and events both count
                 }, { timeout: this.opts.dbTimeout })
 
                 if (!data?.results?.length) return `No memories found from the last ${daysBack} days.`
@@ -60,12 +49,9 @@ export class ToolExecutor {
 
         log(`🧠 [MEMORY QUERY] "${query}" daysAgo=${daysAgo ?? "any"}`)
         try {
-            // Over-fetch when a time window is requested, since filtering happens
-            // client-side after the similarity search.
             const k = daysAgo !== null ? 25 : 10
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
                 query, k, min_score: this.opts.memoryQueryMinScore
-                // no `types` filter — searches facts and episodic memories together
             }, { timeout: this.opts.dbTimeout })
 
             if (!data?.results?.length) return "No relevant information found in memory."
@@ -99,8 +85,6 @@ export class ToolExecutor {
     async memoryAdd(factText, source = "user") {
         log(`💾 [MEMORY ADD] "${factText.slice(0, 100)}${factText.length > 100 ? '...' : ''}"`)
         try {
-            // Duplicate detection now happens server-side in add_fact — no
-            // separate pre-check call needed.
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, { text: factText, source }, { timeout: this.opts.dbTimeout })
             return JSON.stringify({ status: data.status, message: data.message })
         } catch (err) {
@@ -136,16 +120,6 @@ export class ToolExecutor {
         }
     }
 
-    // ── Episodic (decaying, time-stamped batches/events) ───────────────────────
-
-    /**
-     * Called only by lily.js's automatic batch summarizer (summarizeAndStore/
-     * observe) — NOT exposed to Lily as a tool. She never decides to call
-     * this; episodic memory is purely ambient from her perspective. Carries
-     * a real `raw` transcript alongside the LLM summary, so the summary can
-     * stay short (good for search) while the raw lines are what actually get
-     * returned on a hit via memoryQuery.
-     */
     async addEpisodicMemory({ summary, raw, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation_batch" }) {
         log(`🎞️ [EPISODIC BATCH ADD] "${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}"`)
         try {
@@ -158,8 +132,6 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Failed to store episodic memory." })
         }
     }
-
-    // ── Everything below is unchanged ───────────────────────────────────────────
 
     async searchGif(query) {
         log(`🎞️ [GIF] "${query}"`)
@@ -180,6 +152,7 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Failed to search for GIF." })
         }
     }
+
     async webSearch(query) {
         log(`🌐 [WEB SEARCH] "${query}"`)
         try {
@@ -200,51 +173,7 @@ export class ToolExecutor {
             return "Web search failed."
         }
     }
-    /**
-     * Performs ONE physical action in-world, on request from a chat message.
-     * Mirrors the action set the survival loop can pick from, just triggered
-     * directly instead of on a timer.
-     */
-    async minecraftAction(args = {}) {
-        const { action, slot, x, y, z, player, target } = args
-        log(`⛏️ [MINECRAFT] ${action} ${JSON.stringify(args)}`)
 
-        const stateController = this.getStateController?.()
-        if (!stateController) {
-            logError(`[MINECRAFT] No stateController wired into ToolExecutor — action dropped`)
-            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
-        }
-
-        const result = stateController.requestExplicit(action, { slot, x, y, z, player })
-
-        if (!result.ok) {
-            return JSON.stringify({ status: "error", message: result.message ?? `Unknown action: ${action}` })
-        }
-        return JSON.stringify({ status: "ok", message: `Action ${action} performed.`, target: target ?? null })
-    }
-
-    async execute(name, args) {
-        switch (name) {
-            case "web_search": return this.webSearch(args.query ?? "")
-            case "minecraft_action": return this.minecraftAction(args)
-            case "query_memory_database":
-                return this.memoryQuery(args.query ?? "", {
-                    daysAgo: args.days_ago ?? null,
-                    windowDays: args.window_days ?? 2,
-                    daysBack: args.days_back ?? null
-                })
-            case "addto_memory_database": return this.memoryAdd(args.text ?? "", args.source ?? "user")
-            case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
-            case "remove_memory_database": return this.memoryRemove(args.query ?? "")
-            case "send_meme": return this.searchMeme(args.query ?? "")
-            case "send_gif": return this.searchGif(args.query ?? "")
-            case "break":
-                return stateController.requestExplicit('break', { blocks: args.blocks })
-            default:
-                console.warn(`⚠️ [TOOL] Unknown: ${name}`)
-                return `Unknown tool: ${name}`
-        }
-    }
     async searchMeme(query) {
         log(`🎭 [MEME] "${query}"`)
         try {
@@ -252,8 +181,6 @@ export class ToolExecutor {
                 params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
                 timeout: this.opts.dbTimeout
             })
-
-            log(`🎭 [MEME RAW] ${JSON.stringify(data).slice(0, 300)}`)
 
             const results = data?.data?.data ?? []
             if (!results.length) return JSON.stringify({ status: "not_found", message: "No meme found." })
@@ -270,11 +197,173 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Failed to search for meme." })
         }
     }
+
+    // ─── Minecraft Actions ──────────────────────────────────────────────────────
+
+    async minecraftActionAttack() {
+        log(`⚔️ [MINECRAFT] attack`)
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+        const result = stateController.requestExplicit('attack', {})
+        return result.ok 
+            ? JSON.stringify({ status: "ok", message: "Attack performed." })
+            : JSON.stringify({ status: "error", message: result.message ?? "Attack failed." })
+    }
+
+    async minecraftActionUse(args = {}) {
+        const { slot } = args
+        log(`🖐️ [MINECRAFT] use${slot ? ` slot:${slot}` : ''}`)
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+        const result = stateController.requestExplicit('use', { slot })
+        return result.ok 
+            ? JSON.stringify({ status: "ok", message: "Use performed." })
+            : JSON.stringify({ status: "error", message: result.message ?? "Use failed." })
+    }
+
+    async minecraftActionSwapSlot(args = {}) {
+        const { slot } = args
+        if (!slot || slot < 1 || slot > 9) {
+            return JSON.stringify({ status: "error", message: "slot (1-9) required." })
+        }
+        log(`🔄 [MINECRAFT] swap_slot → ${slot}`)
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+        const result = stateController.requestExplicit('swap_slot', { slot })
+        return result.ok 
+            ? JSON.stringify({ status: "ok", message: `Swapped to slot ${slot}.` })
+            : JSON.stringify({ status: "error", message: result.message ?? "Swap failed." })
+    }
+
+    async minecraftActionDrop(args = {}) {
+        const { slot } = args
+        if (!slot || slot < 1 || slot > 9) {
+            return JSON.stringify({ status: "error", message: "slot (1-9) required." })
+        }
+        log(`📤 [MINECRAFT] drop → ${slot}`)
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+        const result = stateController.requestExplicit('drop', { slot })
+        return result.ok 
+            ? JSON.stringify({ status: "ok", message: `Dropped from slot ${slot}.` })
+            : JSON.stringify({ status: "error", message: result.message ?? "Drop failed." })
+    }
+
+    async minecraftActionFollow(args = {}) {
+        const { player } = args
+        if (!player) {
+            return JSON.stringify({ status: "error", message: "player name required." })
+        }
+        log(`🚶 [MINECRAFT] follow → ${player}`)
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+        const result = stateController.requestExplicit('follow', { player })
+        return result.ok 
+            ? JSON.stringify({ status: "ok", message: `Following ${player}.` })
+            : JSON.stringify({ status: "error", message: result.message ?? "Follow failed." })
+    }
+
+    async minecraftActionRetreat(args = {}) {
+        const { player } = args
+        log(`🏃 [MINECRAFT] retreat${player ? ` → ${player}` : ''}`)
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+        const result = stateController.requestExplicit('retreat', { player })
+        return result.ok 
+            ? JSON.stringify({ status: "ok", message: "Retreating." })
+            : JSON.stringify({ status: "error", message: result.message ?? "Retreat failed." })
+    }
+
+    async minecraftActionStop() {
+        log(`✋ [MINECRAFT] stop`)
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+        const result = stateController.requestExplicit('stop', {})
+        return result.ok 
+            ? JSON.stringify({ status: "ok", message: "Stopped." })
+            : JSON.stringify({ status: "error", message: result.message ?? "Stop failed." })
+    }
+
+    async minecraftActionBreak(args = {}) {
+        const { x, y, z } = args
+        if (x === undefined || y === undefined || z === undefined) {
+            return JSON.stringify({ status: "error", message: "x, y, z coordinates required." })
+        }
+
+        // ⭐ COOLDOWN CHECK - prevents spam
+        const now = Date.now()
+        if (now - this.lastMineTime < 3000) { // 1.5 second cooldown
+            return JSON.stringify({
+                status: "cooldown",
+                message: "Mining too fast! Wait a moment."
+            })
+        }
+        this.lastMineTime = now
+
+        log(`⛏️ [MINECRAFT] break → (${x}, ${y}, ${z})`)
+
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+
+        const result = stateController.requestExplicit('break', { x, y, z })
+
+        // ⭐ STATIC DELAY - always 1.5 seconds
+        await new Promise(resolve => setTimeout(resolve, 1500))
+
+        return result.ok
+            ? JSON.stringify({ status: "ok", message: `Mined block at (${x}, ${y}, ${z}).` })
+            : JSON.stringify({ status: "error", message: result.message ?? "Break failed." })
+    }
+
+    // ─── Generic Execute ─────────────────────────────────────────────────────────
+
+    async execute(name, args) {
+        switch (name) {
+            case "web_search": return this.webSearch(args.query ?? "")
+            case "query_memory_database": return this.memoryQuery(args.query ?? "", {
+                daysAgo: args.days_ago ?? null,
+                windowDays: args.window_days ?? 2,
+                daysBack: args.days_back ?? null
+            })
+            case "addto_memory_database": return this.memoryAdd(args.text ?? "", args.source ?? "user")
+            case "update_memory_database": return this.memoryUpdate(args.query ?? "", args.text ?? "")
+            case "remove_memory_database": return this.memoryRemove(args.query ?? "")
+            case "send_meme": return this.searchMeme(args.query ?? "")
+            case "send_gif": return this.searchGif(args.query ?? "")
+            // Minecraft actions
+            case "minecraft_action_attack": return this.minecraftActionAttack()
+            case "minecraft_action_use": return this.minecraftActionUse(args)
+            case "minecraft_action_swap_slot": return this.minecraftActionSwapSlot(args)
+            case "minecraft_action_drop": return this.minecraftActionDrop(args)
+            case "minecraft_action_follow": return this.minecraftActionFollow(args)
+            case "minecraft_action_retreat": return this.minecraftActionRetreat(args)
+            case "minecraft_action_stop": return this.minecraftActionStop()
+            case "minecraft_action_break": return this.minecraftActionBreak(args)
+            default:
+                console.warn(`⚠️ [TOOL] Unknown: ${name}`)
+                return `Unknown tool: ${name}`
+        }
+    }
 }
 
-// ─── Tool Definitions (for Ollama) ──────────────────────────────────────
-// Unchanged from before — the model's tool schema/behavior doesn't need to
-// know the two DBs merged into one; only the backend wiring above changed.
+// ─── Tool Definitions ──────────────────────────────────────────────────────
+
 export const TOOLS = [
     {
         type: "function",
@@ -302,7 +391,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a new factual entry.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
+            description: "Store a new factual entry. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { text: { type: "string" }, source: { type: "string" } }, required: ["text"] }
         }
     },
@@ -310,7 +399,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "update_memory_database",
-            description: "Update an existing memory.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
+            description: "Update an existing memory. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { query: { type: "string" }, text: { type: "string" } }, required: ["query", "text"] }
         }
     },
@@ -326,7 +415,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "send_gif",
-            description: "Search and send a GIF.  Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
+            description: "Search and send a GIF. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     },
@@ -352,21 +441,114 @@ export const TOOLS = [
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     },
+    // ─── Separate Minecraft Action Tools ────────────────────────────────
     {
         type: "function",
         function: {
-            name: 'minecraft_action',
-            description: "Perform ONE physical action in the Minecraft world because someone directly asked you to (e.g. 'attack that zombie', 'come here', 'follow me', 'eat something', 'drop your sword', 'mine that ore', 'run away', 'retreat', 'back off'). This is the same set of actions you use during normal survival ticks, just triggered on request. Only call this when the message is actually asking you to DO something physical — not for banter. Pick exactly one action per call. Reply naturally afterward, don't narrate the tool call.",
+            name: "minecraft_action_attack",
+            description: "Attack the nearest hostile mob. Use when someone tells you to attack, fight, or kill a mob. No arguments needed.",
             parameters: {
-                type: 'object',
+                type: "object",
+                properties: {},
+                required: []
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_use",
+            description: "Use, eat, or place the item you're currently holding. Optional slot (1-9) to swap to that item first. Use when someone tells you to eat, drink, place a block, use a tool, or interact with an item.",
+            parameters: {
+                type: "object",
                 properties: {
-                    action: { type: 'string', enum: ['follow', 'break', 'attack', 'retreat', 'stop', 'move_to', 'use', 'swap_slot', 'drop'] },
-                    player: { type: 'string' },
-                    x: { type: 'number' },
-                    y: { type: 'number' },
-                    z: { type: 'number' }
+                    slot: { type: "number", minimum: 1, maximum: 9, description: "Optional slot to swap to first (1-9). Omit to use current slot." }
                 },
-                required: ['action']
+                required: []
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_swap_slot",
+            description: "Switch to a specific hotbar slot. Requires slot (1-9). Use when someone tells you to swap, switch, or select a slot.",
+            parameters: {
+                type: "object",
+                properties: {
+                    slot: { type: "number", minimum: 1, maximum: 9, description: "Slot to switch to (1-9)." }
+                },
+                required: ["slot"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_drop",
+            description: "Drop an item from a hotbar slot. Requires slot (1-9). Use when someone tells you to drop, throw, or discard an item.",
+            parameters: {
+                type: "object",
+                properties: {
+                    slot: { type: "number", minimum: 1, maximum: 9, description: "Slot to drop from (1-9)." }
+                },
+                required: ["slot"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_follow",
+            description: "Follow a player continuously until told to stop. Requires the exact player name. Use when someone tells you to follow, come with, or stick with them.",
+            parameters: {
+                type: "object",
+                properties: {
+                    player: { type: "string", description: "Exact name of the player to follow." }
+                },
+                required: ["player"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_retreat",
+            description: "Flee toward a player for safety. Optional player name — defaults to your regular companion if omitted. Use when someone tells you to retreat, run away, fall back, or get to safety.",
+            parameters: {
+                type: "object",
+                properties: {
+                    player: { type: "string", description: "Optional player to retreat toward. Omit to use default companion." }
+                },
+                required: []
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_stop",
+            description: "Stop all current actions — attacking, following, moving, mining. Stay in place. Use when someone tells you to stop, halt, cease, wait, or hold.",
+            parameters: {
+                type: "object",
+                properties: {},
+                required: []
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_break",
+            description: "Break or mine a specific block at coordinates. Requires x, y, z. Use when someone tells you to mine, break, dig, or destroy a specific block. Only use coordinates from Blocks of Interest.",
+            parameters: {
+                type: "object",
+                properties: {
+                    x: { type: "number", description: "X coordinate of the block." },
+                    y: { type: "number", description: "Y coordinate of the block." },
+                    z: { type: "number", description: "Z coordinate of the block." }
+                },
+                required: ["x", "y", "z"]
             }
         }
     }

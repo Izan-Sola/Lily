@@ -174,19 +174,27 @@ export class StateController {
                 this.mcSend('move_to', { x: args.x, z: args.z })
                 return { ok: true }
 
-            case 'use':
-                this.mcSend('use', args.slot ? { mode: 'once', slot: args.slot } : { mode: 'once' })
-                return { ok: true }
+            case 'use': {
+                if (args.slot) {
+                    // Pass slot to Java so it swaps first
+                    this.mcSend('use', { mode: 'once', slot: args.slot });
+                } else {
+                    this.mcSend('use', { mode: 'once' });
+                }
+                return { ok: true };
+            }
 
-            case 'swap_slot':
-                if (!args.slot) return { ok: false, message: 'swap_slot needs a slot number.' }
-                this.mcSend('hotbar', { slot: args.slot })
-                return { ok: true }
+            case 'swap_slot': {
+                if (!args.slot) return { ok: false, message: 'swap_slot needs a slot number.' };
+                this.mcSend('swap_slot', { slot: args.slot });
+                return { ok: true };
+            }
 
-            case 'drop':
-                if (!args.slot) return { ok: false, message: 'drop needs a slot number.' }
-                this.mcSend('drop', { slot: args.slot })
-                return { ok: true }
+            case 'drop': {
+                if (!args.slot) return { ok: false, message: 'drop needs a slot number.' };
+                this.mcSend('drop', { slot: args.slot });
+                return { ok: true };
+            }
 
             default:
                 return { ok: false, message: `Unknown action: ${action}` }

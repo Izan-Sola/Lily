@@ -4,6 +4,7 @@
 - My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
 - Related: https://github.com/Izan-Sola/Lily-Minecraft
 - Currently working on her being able to play survival minecraft decently, plus reworking memory database (the moment where you come up with a better idea and realize how bad something you made is)
+- Eventually I want her to have a vtuber model.
 
 ## Stuff used
 

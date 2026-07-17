@@ -294,11 +294,11 @@ export class Lily {
             pushFn("Already stored an episodic memory this turn. Do not store another.")
             return null
         }
-        if (name === "minecraft_action" && toolsUsedThisTurn.has(name)) {
-            log(`🚫 [BLOCKED] minecraft_action already used this turn`)
-            pushFn("Already performed an action this turn. Only one action per turn.")
-            return null
-        }
+        // if (name === "minecraft_action" && toolsUsedThisTurn.has(name)) {
+        //     log(`🚫 [BLOCKED] minecraft_action already used this turn`)
+        //     pushFn("Already performed an action this turn. Only one action per turn.")
+        //     return null
+        // }
 
         const blocked = tracker.check(name, args)
         if (blocked) {

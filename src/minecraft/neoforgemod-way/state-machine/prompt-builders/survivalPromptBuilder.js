@@ -11,8 +11,8 @@ function formatPlayer(name, p, lilyPos) {
     return `- ${name} — ${dist} blocks away at (${Math.floor(p.x)}, ${Math.floor(p.y)}, ${Math.floor(p.z)}) HP: ${p.hp}/20`
 }
 
-function formatBlockOfInterest(b) {
-    return `- ${b.category}: ${b.block} at (${b.x}, ${b.y}, ${b.z})`
+function formatBlockOfInterest(b, i) {
+  return ` ${b.category}: ${b.block} at (${b.x}, ${b.y}, ${b.z})`
 }
 
 function getStateDescription(ctx) {
@@ -101,9 +101,9 @@ export function buildSurvivalPrompt(ctx, { allowMessage = false } = {}) {
 You can also say something in chat right now if it feels natural — a reaction to what's around you, banter with a nearby player, whatever fits. Don't force it, silence is fine too.` : ''
 
     const actionTypes = `  { "type": "attack", "target": "entity_id" }
-  { "type": "use", "slot": (number) }
-  { "type": "swap_slot", "slot": (number) }
-  { "type": "drop", "slot": (number) }
+  { "type": "use", "slot": (1-9) }) }
+  { "type": "swap_slot", "slot": (1-9) }
+  { "type": "drop", "slot": (1-9) }
   { "type": "follow", "player": (string) }
   { "type": "break", "x": (number), "y": (number), "z": (number) } `
 

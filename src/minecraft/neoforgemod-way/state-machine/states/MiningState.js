@@ -2,8 +2,6 @@ export class MiningState {
     constructor(ctx) { this.ctx = ctx }
 
     onEnter({ blocks = [] } = {}) {
-        console.log('[MINE] onEnter received', blocks.length, 'blocks:', blocks.map(b => `${b.x},${b.y},${b.z}`))
-
         this.queue = [...blocks]
         this.current = null
         this.mining = false
@@ -17,7 +15,6 @@ export class MiningState {
         this.mining = false
     }
 
-    // MiningState.js
     async onTick() {
         const { ctx } = this
 

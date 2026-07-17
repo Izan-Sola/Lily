@@ -145,15 +145,12 @@ export class StateController {
                 if (args.x == null || args.y == null || args.z == null) {
                     return { ok: false, message: 'break needs x, y, and z.' }
                 }
-
                 const targetBlock = {
                     x: args.x, y: args.y, z: args.z,
-                    type: this._findBlockType(args)
+                    type: args.blockType ?? this._findBlockType(args)
                 }
-
-                this.sneak.cancelHold()
-                this.move.stop()
-                this.transitionTo(State.MINING, { blocks: this._collectMiningCluster(targetBlock) })
+                const cluster = this._collectMiningCluster(targetBlock)
+                this.transitionTo(State.MINING, { blocks: cluster })
                 return { ok: true }
             }
             case 'attack': {

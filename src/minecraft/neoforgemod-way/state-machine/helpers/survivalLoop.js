@@ -1,8 +1,11 @@
 import { buildSurvivalPrompt } from '../prompt-builders/survivalPromptBuilder.js'
-
+import { ToolExecutor, TOOLS } from '../../../../ai/tools.js'
 const ACTIONS_INTERVAL_MS = 60000
 const MSG_MIN_MS = 2 * 60 * 1000
 const MSG_MAX_MS = 6 * 60 * 1000
+
+// Survival loop only ever needs the minecraft_action_* tools — no memory/web/meme tools here.
+const SURVIVAL_TOOLS = TOOLS.filter(t => t.function.name.startsWith('minecraft_action_'))
 
 function randomMsgDelay() {
     return MSG_MIN_MS + Math.random() * (MSG_MAX_MS - MSG_MIN_MS)
@@ -10,6 +13,9 @@ function randomMsgDelay() {
 
 export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "http://localhost:11435") {
     let nextMessageAt = Date.now() + randomMsgDelay()
+
+    // Single shared executor — always reads the *current* stateController via the getter.
+    const toolExecutor = new ToolExecutor({}, mcSend, () => stateController)
 
     setInterval(async () => {
         if (!stateController) return
@@ -31,6 +37,8 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
                     model: "Lily",
                     stream: false,
                     messages: [{ role: "user", content: prompt }],
+                    tools: SURVIVAL_TOOLS,
+                    tool_choice: "auto",
                     temperature: 0.4,
                     max_tokens: 512
                 })
@@ -43,55 +51,50 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
             }
 
             const data = await response.json()
-            const rawText = data.choices?.[0]?.message?.content
-            if (!rawText) {
-                console.error('[SURVIVAL] No content in response:', JSON.stringify(data))
+            const message = data.choices?.[0]?.message
+            if (!message) {
+                console.error('[SURVIVAL] No message in response:', JSON.stringify(data))
                 return
             }
 
-            const cleanText = rawText.replace(/```json|```/g, '').trim()
-
-            let action
-            try { action = JSON.parse(cleanText) } catch {
-                console.error('[SURVIVAL] Invalid JSON:', rawText)
-                return
-            }
-            console.log('[SURVIVAL] Lily response:', JSON.stringify(action, null, 2))
+            console.log('[SURVIVAL] Lily response:', JSON.stringify(message, null, 2))
 
             // Only allow chat output on the ticks that actually offered it —
-            // ignore a stray "msg" if the model hallucinates one anyway.
-            if (allowMessage && action.msg) mcChat(action.msg)
+            // ignore stray content if the model produces text anyway.
+            const chatText = message.content?.trim()
+            if (allowMessage && chatText) mcChat(chatText)
 
-            // Defensive cap: the prompt demands exactly one action, but if the
-            // model ever returns more, only take the first rather than firing
-            // several actions in the same tick.
-            const actions = action.actions ?? []
-            if (actions.length > 1) {
-                console.warn(`[SURVIVAL] Model returned ${actions.length} actions, only using the first`)
+            // Defensive cap: the prompt demands at most one action, but if the
+            // model ever returns more tool calls, only take the first rather
+            // than firing several actions in the same tick.
+            const toolCalls = message.tool_calls ?? []
+            if (toolCalls.length > 1) {
+                console.warn(`[SURVIVAL] Model returned ${toolCalls.length} tool calls, only using the first`)
             }
-            if (actions[0]) handleSurvivalAction(actions[0], stateController, mcSend)
+
+            const call = toolCalls[0]
+            if (call) await handleSurvivalToolCall(call, toolExecutor)
         } catch (err) {
             console.error('[SURVIVAL] AI error:', err.message)
         }
     }, ACTIONS_INTERVAL_MS)
 }
 
-function handleSurvivalAction(act, stateController, mcSend) {
-    switch (act.type) {
-        case 'attack': mcSend('attack', { mode: 'once' }); break
-        case 'use': mcSend('use', { mode: 'once' }); break
-        case 'eat': mcSend('use', { mode: 'once' }); break
-        case 'swap_slot': mcSend('hotbar', { slot: act.slot }); break
-        case 'drop': mcSend('drop', { slot: act.slot }); break
-        case 'move_to': mcSend('move_to', { x: act.x, z: act.z }); break
-        case 'follow':
-            if (act.player) stateController.setFollowTarget(act.player)
-            stateController.transitionTo('FOLLOWING')
-            break
-        case 'stop':
-            stateController.transitionTo('IDLE')
-            break
-        default:
-            console.warn(`[SURVIVAL] Unknown action type: ${act.type}`)
+async function handleSurvivalToolCall(call, toolExecutor) {
+    const name = call.function?.name
+    if (!name) {
+        console.warn('[SURVIVAL] Tool call missing function name:', JSON.stringify(call))
+        return
     }
+
+    let args = {}
+    try {
+        args = call.function.arguments ? JSON.parse(call.function.arguments) : {}
+    } catch (err) {
+        console.error(`[SURVIVAL] Invalid tool call arguments for ${name}:`, call.function.arguments)
+        return
+    }
+
+    const result = await toolExecutor.execute(name, args)
+    console.log(`[SURVIVAL] ${name} →`, result)
 }

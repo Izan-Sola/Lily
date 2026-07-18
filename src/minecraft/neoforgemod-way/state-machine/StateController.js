@@ -134,7 +134,7 @@ export class StateController {
         return [...cluster, ...rest]
         
     }
-    requestExplicit(action, args = {}) {
+    dispatchAction(action, args = {}) {
         switch (action) {
             case 'follow':
                 if (!args.player) return { ok: false, message: 'follow needs a player name.' }
@@ -154,8 +154,10 @@ export class StateController {
                 return { ok: true }
             }
             case 'attack': {
+                if (!args.slot) return { ok: false, message: 'attack needs a weapon slot.' }
                 const hostile = this.nearestHostile()
                 if (!hostile) return { ok: false, message: 'No hostile nearby to attack.' }
+                this.mcSend('swap_slot', { slot: args.slot })
                 this.transitionTo(State.ATTACKING)
                 return { ok: true }
             }

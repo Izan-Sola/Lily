@@ -12,7 +12,7 @@ function formatPlayer(name, p, lilyPos) {
 }
 
 function formatBlockOfInterest(b, i) {
-  return ` ${b.category}: ${b.block} at (${b.x}, ${b.y}, ${b.z})`
+    return ` ${b.category}: ${b.block} at (${b.x}, ${b.y}, ${b.z})`
 }
 
 function getStateDescription(ctx) {
@@ -96,33 +96,10 @@ export function buildSurvivalPrompt(ctx, { allowMessage = false } = {}) {
     if (!worldState) return null
 
     const messagingSection = allowMessage ? `
-
 # MESSAGING
-You can also say something in chat right now if it feels natural — a reaction to what's around you, banter with a nearby player, whatever fits. Don't force it, silence is fine too.` : ''
-
-    const actionTypes = `  { "type": "attack", "target": "entity_id" }
-  { "type": "use", "slot": (1-9) }) }
-  { "type": "swap_slot", "slot": (1-9) }
-  { "type": "drop", "slot": (1-9) }
-  { "type": "follow", "player": (string) }
-  { "type": "break", "x": (number), "y": (number), "z": (number) } `
-
-    const responseSchema = allowMessage
-        ? `{
-  "actions": [ /* pick exactly ONE of the following, always: */
-${actionTypes}
-  ],
-  "msg": "optional — casual in-game chat, written like a real player would type it"
-}
-
-"actions" must contain exactly one action object — never zero, never more than one. "msg" is optional and independent of the action.`
-        : `{
-  "actions": [ /* pick exactly ONE of the following, always: */
-${actionTypes}
-  ]
-}
-
-"actions" must contain exactly one action object — never zero, never more than one. Do NOT include a "msg" field or say anything in chat — you are not talking right now, just deciding what to do.`
+You can also say something in chat right now if it feels natural — a reaction to what's around you, banter with a nearby player, whatever fits. Don't force it, silence is fine too. Just write it as your normal reply text alongside your action — do not call a tool for it, it's not one of the available tools.` : `
+# NO CHAT THIS TICK
+Do not say anything in chat right now — you're not talking this tick, only deciding what to do. Don't include any reply text, just call the tool.`
 
     return `
 # WHO YOU ARE
@@ -132,20 +109,18 @@ Use ascii kaomoji naturally: (◕‿◕✿) (｡◕‿◕｡) (ᵔᴥᵔ) (✿�
 ${worldState}
 
 # DECISION GUIDELINES
-You must ALWAYS decide on exactly ONE action — the single best thing to do right now given the situation. Never leave "actions" empty and never return more than one. If genuinely nothing needs doing, that itself is a decision: pick the most sensible idle/maintenance action (e.g. move toward a player, keep exploring, eat if hunger isn't full) rather than doing nothing.
+Every tick you must call EXACTLY ONE minecraft_action_* tool — the single best thing to do right now given the situation. Never respond without calling a tool, and never call more than one.
 
 Priority order, pick the FIRST one that applies:
-    1. Health ≤ 8 → follow toward a nearby player to get help, or eat, whichever fixes the immediate problem.
-    2. Hunger ≤ 10 and you have food → eat.
-    3. Hostile nearby and you have a weapon and health is fine → attack the closest one.
-    4. Hostile nearby and no weapon in hotbar → follow a nearby player instead of engaging.
-    5. Multiple hostiles → still only ONE action: attack the closest, ignore the rest for this decision.
-    6. Nothing urgent → do whatever you want, break a block of interest, follow the player, eat, hunt a mob... your choice. ${messagingSection}
+    1. Health ≤ 8 → minecraft_action_retreat toward a nearby player to get help, or minecraft_action_use to eat, whichever fixes the immediate problem.
+    2. Hunger ≤ 10 and you have food → minecraft_action_use to eat.
+    3. Hostile nearby, you have a weapon, and health is fine → minecraft_action_attack the closest one.
+    4. Hostile nearby and no weapon in hotbar → minecraft_action_follow a nearby player instead of engaging.
+    5. Multiple hostiles → still only ONE action: minecraft_action_attack the closest, ignore the rest for this decision.
+    6. Nothing urgent → do whatever you want: minecraft_action_break a block of interest, minecraft_action_follow the player, minecraft_action_use to eat, minecraft_action_attack a mob... your choice.
+${messagingSection}
 
-# RESPONSE FORMAT
-Reply ONLY with a valid JSON object. No explanation, no markdown, no extra text.
-
-${responseSchema}
+# TOOLS
+Only use the minecraft_action_* tools you've been given. Never invent arguments. For minecraft_action_break, only ever use coordinates that actually appear under Blocks of Interest above — never guess coordinates.
 `.trim()
 }
-

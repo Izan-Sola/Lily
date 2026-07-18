@@ -199,15 +199,18 @@ export class ToolExecutor {
     }
 
     // ─── Minecraft Actions ──────────────────────────────────────────────────────
-
-    async minecraftActionAttack() {
-        log(`⚔️ [MINECRAFT] attack`)
+    async minecraftActionAttack(args = {}) {
+        const { slot } = args
+        if (!slot || slot < 1 || slot > 9) {
+            return JSON.stringify({ status: "error", message: "slot (1-9) required." })
+        }
+        log(`⚔️ [MINECRAFT] attack slot:${slot}`)
         const stateController = this.getStateController?.()
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.requestExplicit('attack', {})
-        return result.ok 
+        const result = stateController.dispatchAction('attack', { slot })
+        return result.ok
             ? JSON.stringify({ status: "ok", message: "Attack performed." })
             : JSON.stringify({ status: "error", message: result.message ?? "Attack failed." })
     }
@@ -219,7 +222,7 @@ export class ToolExecutor {
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.requestExplicit('use', { slot })
+        const result = stateController.dispatchAction('use', { slot })
         return result.ok 
             ? JSON.stringify({ status: "ok", message: "Use performed." })
             : JSON.stringify({ status: "error", message: result.message ?? "Use failed." })
@@ -235,7 +238,7 @@ export class ToolExecutor {
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.requestExplicit('swap_slot', { slot })
+        const result = stateController.dispatchAction('swap_slot', { slot })
         return result.ok 
             ? JSON.stringify({ status: "ok", message: `Swapped to slot ${slot}.` })
             : JSON.stringify({ status: "error", message: result.message ?? "Swap failed." })
@@ -251,7 +254,7 @@ export class ToolExecutor {
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.requestExplicit('drop', { slot })
+        const result = stateController.dispatchAction('drop', { slot })
         return result.ok 
             ? JSON.stringify({ status: "ok", message: `Dropped from slot ${slot}.` })
             : JSON.stringify({ status: "error", message: result.message ?? "Drop failed." })
@@ -267,7 +270,7 @@ export class ToolExecutor {
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.requestExplicit('follow', { player })
+        const result = stateController.dispatchAction('follow', { player })
         return result.ok 
             ? JSON.stringify({ status: "ok", message: `Following ${player}.` })
             : JSON.stringify({ status: "error", message: result.message ?? "Follow failed." })
@@ -280,7 +283,7 @@ export class ToolExecutor {
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.requestExplicit('retreat', { player })
+        const result = stateController.dispatchAction('retreat', { player })
         return result.ok 
             ? JSON.stringify({ status: "ok", message: "Retreating." })
             : JSON.stringify({ status: "error", message: result.message ?? "Retreat failed." })
@@ -292,7 +295,7 @@ export class ToolExecutor {
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.requestExplicit('stop', {})
+        const result = stateController.dispatchAction('stop', {})
         return result.ok 
             ? JSON.stringify({ status: "ok", message: "Stopped." })
             : JSON.stringify({ status: "error", message: result.message ?? "Stop failed." })
@@ -321,7 +324,7 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
 
-        const result = stateController.requestExplicit('break', { x, y, z })
+        const result = stateController.dispatchAction('break', { x, y, z })
 
         // ⭐ STATIC DELAY - always 1.5 seconds
         await new Promise(resolve => setTimeout(resolve, 1500))
@@ -347,7 +350,7 @@ export class ToolExecutor {
             case "send_meme": return this.searchMeme(args.query ?? "")
             case "send_gif": return this.searchGif(args.query ?? "")
             // Minecraft actions
-            case "minecraft_action_attack": return this.minecraftActionAttack()
+            case "minecraft_action_attack": return this.minecraftActionAttack(args)
             case "minecraft_action_use": return this.minecraftActionUse(args)
             case "minecraft_action_swap_slot": return this.minecraftActionSwapSlot(args)
             case "minecraft_action_drop": return this.minecraftActionDrop(args)
@@ -446,11 +449,13 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_attack",
-            description: "Attack the nearest hostile mob. Use when someone tells you to attack, fight, or kill a mob. No arguments needed.",
+            description: "Attack the nearest hostile mob using a weapon from your hotbar. Requires slot (1-9) — you can see your own hotbar, so only pass a slot that's actually a weapon (sword, axe, trident, bow, etc).",
             parameters: {
                 type: "object",
-                properties: {},
-                required: []
+                properties: {
+                    slot: { type: "number", minimum: 1, maximum: 9, description: "Hotbar slot (1-9) holding the weapon to attack with." }
+                },
+                required: ["slot"]
             }
         }
     },

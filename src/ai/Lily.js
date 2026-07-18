@@ -246,16 +246,15 @@ export class Lily {
         }
     }
 
-    async sendToOllama(messages, foreignTools = []) {
+    async sendToOllama(messages, foreignTools = [], noTools = false) {
         if (getStateController()?.currentStateName === 'DUELING') {
             return { content: "Lily is currently in a duel, she can't reply right now!" }
         }
         try {
-            const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, {
+            const payload = {
                 model: this.opts.model,
                 messages,
                 stream: false,
-                tools: foreignTools.length ? [...TOOLS, ...foreignTools] : TOOLS,
                 temperature: this.opts.temperature,
                 top_p: this.opts.top_p,
                 top_k: this.opts.top_k,
@@ -263,7 +262,15 @@ export class Lily {
                 repeat_penalty: this.opts.repeat_penalty,
                 repeat_last_n: this.opts.repeat_last_n,
                 max_tokens: this.opts.max_tokens,
-            }, { timeout: this.opts.ollamaTimeout })
+            }
+
+            // noTools forces a plain-text completion — no tools field at all —
+            // used when we want a guaranteed natural reply (e.g. tool-loop budget exhausted).
+            if (!noTools) {
+                payload.tools = foreignTools.length ? [...TOOLS, ...foreignTools] : TOOLS
+            }
+
+            const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, payload, { timeout: this.opts.ollamaTimeout })
             return data.choices?.[0]?.message ?? null
         } catch (err) {
             const detail = err.response?.data ? JSON.stringify(err.response.data) : ""
@@ -300,11 +307,8 @@ export class Lily {
         //     return null
         // }
 
-        const blocked = tracker.check(name, args)
-        if (blocked) {
-            pushFn(blocked)
-            return null
-        }
+        // Repeated identical tool calls (e.g. re-breaking the same block, re-attacking)
+        // are allowed and never blocked — the global maxToolLoops cap is the only limit.
 
         toolsUsedThisTurn.add(name)
         const result = await this.tools.execute(name, args)
@@ -346,6 +350,29 @@ export class Lily {
             if (result?.text) this.pushHistoryToBlog(channelId)
             return result
         })
+    }
+
+    // Final fallback used when the tool-loop budget (maxToolLoops) runs out.
+    // Instead of returning a generic "I got lost" error, force one last
+    // completion with tools disabled so the model has to produce a normal
+    // in-character reply — the turn ends exactly like any other turn.
+    async finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl) {
+        const messages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
+        messages.push(...scratch)
+
+        const msg = await this.sendToOllama(messages, [], true)
+        const content = (msg?.content ?? "").trim()
+
+        if (content && content.toLowerCase() !== "none") {
+            this.pushToConvoHistory(channelId, { role: "assistant", content })
+            log(`✅ [LILY REPLY - BUDGET EXHAUSTED] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
+            return { text: content, gifUrl: pendingGifUrl }
+        }
+
+        // Extremely unlikely (model returned nothing even with tools off) —
+        // still avoid an error-sounding message.
+        log(`⚠️ [EMPTY ON FALLBACK] Forcing plain default reply`)
+        return { text: "Anyway (◕‿◕✿)", gifUrl: pendingGifUrl }
     }
 
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
@@ -450,7 +477,10 @@ export class Lily {
             return { text: "I'm not sure about that one!", gifUrl: null }
         }
 
-        return { text: "Sorry, I got a bit lost. Could you repeat that?", gifUrl: null }
+        // maxToolLoops budget exhausted — don't error out, just make her talk
+        // like a normal turn ending. No mention of hitting a limit.
+        log(`⏹️ [LOOP BUDGET EXHAUSTED] Forcing final no-tools reply`)
+        return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
     }
 
     pushHistoryToBlog(channelId) {

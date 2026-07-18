@@ -357,22 +357,36 @@ export class Lily {
     // completion with tools disabled so the model has to produce a normal
     // in-character reply — the turn ends exactly like any other turn.
     async finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl) {
-        const messages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
-        messages.push(...scratch)
+        const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
+        let attemptScratch = [...scratch]
+        const MAX_RETRIES = 2
 
-        const msg = await this.sendToOllama(messages, [], true)
-        const content = (msg?.content ?? "").trim()
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            const messages = [...baseMessages, ...attemptScratch]
 
-        if (content && content.toLowerCase() !== "none") {
-            this.pushToConvoHistory(channelId, { role: "assistant", content })
-            log(`✅ [LILY REPLY - BUDGET EXHAUSTED] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
-            return { text: content, gifUrl: pendingGifUrl }
+            if (attempt > 0) {
+                messages.push({
+                    role: "user",
+                    content: `[System: You're out of actions for this turn. Reply to the message naturally, in your own words — no <tool_call> tags, no tool syntax, no mention of tools.]`
+                })
+            }
+
+            const msg = await this.sendToOllama(messages, [], true)
+            const raw = (msg?.content ?? "").trim()
+            const content = raw.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim()
+
+            if (content && content.toLowerCase() !== "none") {
+                this.pushToConvoHistory(channelId, { role: "assistant", content })
+                log(`✅ [LILY REPLY - BUDGET EXHAUSTED] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
+                return { text: content, gifUrl: pendingGifUrl }
+            }
+
+            log(`⚠️ [BUDGET FALLBACK RETRY ${attempt + 1}] Tool-call-only or empty content, retrying`)
+            if (raw) attemptScratch = [...attemptScratch, { role: "assistant", content: raw }]
         }
 
-        // Extremely unlikely (model returned nothing even with tools off) —
-        // still avoid an error-sounding message.
-        log(`⚠️ [EMPTY ON FALLBACK] Forcing plain default reply`)
-        return { text: "Anyway (◕‿◕✿)", gifUrl: pendingGifUrl }
+        logError(`[BUDGET FALLBACK] Exhausted ${MAX_RETRIES} retries without a natural reply`)
+        return null
     }
 
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {

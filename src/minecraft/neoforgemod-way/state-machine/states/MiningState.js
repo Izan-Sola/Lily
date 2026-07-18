@@ -33,7 +33,7 @@ export class MiningState {
         // gets overridden by movement each tick, so it has to keep fighting for it
         ctx.mcSend('look_at', { x: this.current.x, y: this.current.y + 0.5, z: this.current.z })
 
-        if (dist > 1) {
+        if (dist > 3) {
             ctx.move.moveToward(ctx.lilyPos, this.current)
             return
         }

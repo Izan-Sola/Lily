@@ -265,8 +265,10 @@ function parseReply(reply) {
 }
 
 async function sendReply(message, reply) {
+    if (!reply) return  
     const { text, gifUrl } = parseReply(reply)
     const clean = text.replace(/\/\w+.*$/s, "").trim()
+    if (!clean && !gifUrl) return
     await message.reply({
         content: clean || undefined,
         files: gifUrl ? [{ attachment: gifUrl, name: "lily.gif" }] : []
@@ -277,8 +279,10 @@ async function sendReply(message, reply) {
 }
 
 async function sendNoReply(message, reply) {
+    if (!reply) return
     const { text, gifUrl } = parseReply(reply)
     const clean = text.replace(/\/\w+.*$/s, "").trim()
+    if (!clean && !gifUrl) return
     await message.channel.send({
         content: clean || undefined,
         files: gifUrl ? [{ attachment: gifUrl, name: "lily.gif" }] : []
@@ -675,7 +679,7 @@ export async function createBot() {
         await message.channel.sendTyping()
         try {
             const reply = await ai.chat(channelId, formattedMessage, null, {}, images)
-            await sendReply(message, reply)
+            await sendReply(message, reply)   // now a no-op if reply is null
         } catch (err) {
             console.error("Ping handler error:", err)
             await message.reply("I'm having trouble thinking right now, sorry!")

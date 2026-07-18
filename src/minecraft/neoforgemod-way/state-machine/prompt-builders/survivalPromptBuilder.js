@@ -2,17 +2,19 @@ function cleanName(raw) {
     return raw.replace(/§[0-9a-fk-orxA-FK-ORX]/g, '').replace(/^[>\s]+/, '').trim()
 }
 
-function formatEntity(e) {
-    return `- ${e.type ?? e.name} (id: ${e.id}) — ${Math.floor(Math.hypot(e.x - 0, e.z - 0))} blocks away at (${Math.floor(e.x)}, ${Math.floor(e.y)}, ${Math.floor(e.z)})`
+function formatEntity(e, lilyPos) {
+    const dist = lilyPos ? Math.floor(Math.hypot(e.x - lilyPos.x, e.z - lilyPos.z)) : '?'
+    return `- ${e.type ?? e.name} (id: ${e.id}) — ${dist} blocks away at (${Math.floor(e.x)}, ${Math.floor(e.y)}, ${Math.floor(e.z)})`
+}
+
+function formatBlockOfInterest(b, lilyPos) {
+    const dist = lilyPos ? Math.floor(Math.hypot(b.x - lilyPos.x, b.z - lilyPos.z)) : '?'
+    return ` ${b.category}: ${b.block} at (${b.x}, ${b.y}, ${b.z}) — ${dist} blocks away`
 }
 
 function formatPlayer(name, p, lilyPos) {
     const dist = lilyPos ? Math.floor(Math.hypot(p.x - lilyPos.x, p.z - lilyPos.z)) : '?'
     return `- ${name} — ${dist} blocks away at (${Math.floor(p.x)}, ${Math.floor(p.y)}, ${Math.floor(p.z)}) HP: ${p.hp}/20`
-}
-
-function formatBlockOfInterest(b, i) {
-    return ` ${b.category}: ${b.block} at (${b.x}, ${b.y}, ${b.z})`
 }
 
 function getStateDescription(ctx) {
@@ -55,13 +57,13 @@ export function buildWorldStateBlock(ctx) {
         ? players.map(([name, p]) => formatPlayer(name, p, lilyPos)).join('\n')
         : 'None nearby.'
     const nearbyHostiles = hostiles.length
-        ? hostiles.map(e => formatEntity(e)).join('\n')
+        ? hostiles.map(e => formatEntity(e, lilyPos)).join('\n')
         : 'None nearby.'
     const nearbyPassive = passives.length
-        ? passives.map(e => formatEntity(e)).join('\n')
+        ? passives.map(e => formatEntity(e, lilyPos)).join('\n')
         : 'None nearby.'
     const nearbyBlocks = blocksOfInterest.length
-        ? blocksOfInterest.map(b => formatBlockOfInterest(b)).join('\n')
+        ? blocksOfInterest.map(b => formatBlockOfInterest(b, lilyPos)).join('\n')
         : 'None nearby.'
 
     return `

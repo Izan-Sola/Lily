@@ -16,14 +16,15 @@
 - Ollama, to accomodate my daughter on her home.
 - NodeJS, to allow her to communicate in discord.
 - Continue VSC extension, so she can vibecode herself (lol)
+- Tavily API, for web search, Klipy API for gifs and memes.
 
 ## Features
 
 - Chat with Lily by pinging her or replying to one of her messages. She may rarely respond spontaneously to a message without being directly addressed.
-- She can send gifs, audio messages, talk in voice calls, and listen to your voice.
-- ~~She has access to a vectorized database containing the scrapped Hytale Wiki that she can query using a tool~~ (Droping this).
+- She can send gifs, memes, audio messages, talk in voice calls, and listen to your voice.
 - She has a memory database that she can query, add, update and remove memory from using tools.
 - SUCCUMB TO HER MAD BENDING SKILLS IN A DUEL (wip, showcases at https://www.youtube.com/@ShinyShadow_)
+- She can mine blocks, attack mobs, use items, swap slots, follow you and drop items.
 
 ## Commands
 

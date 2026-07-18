@@ -24,6 +24,7 @@
 - ~~She has access to a vectorized database containing the scrapped Hytale Wiki that she can query using a tool~~ (Droping this).
 - She has a memory database that she can query, add, update and remove memory from using tools.
 - SUCCUMB TO HER MAD BENDING SKILLS IN A DUEL (wip, showcases at https://www.youtube.com/@ShinyShadow_)
+- She can mine blocks, attack mobs, use items, swap slots, follow you and drop items.
 
 ## Commands
 

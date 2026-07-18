@@ -134,6 +134,17 @@ export class StateController {
         return [...cluster, ...rest]
         
     }
+    nearestHostileWithin(maxDist) {
+        if (!this.lilyPos || !this.hostiles.length) return null
+        let nearest = null
+        let nearestDist = maxDist
+        for (const h of this.hostiles) {
+            const d = this._dist(this.lilyPos, h)
+            if (d < nearestDist) { nearest = h; nearestDist = d }
+        }
+        return nearest
+    }
+
     dispatchAction(action, args = {}) {
         switch (action) {
             case 'follow':
@@ -155,13 +166,13 @@ export class StateController {
             }
             case 'attack': {
                 if (!args.slot) return { ok: false, message: 'attack needs a weapon slot.' }
-                const hostile = this.nearestHostile()
-                if (!hostile) return { ok: false, message: 'No hostile nearby to attack.' }
+                if (args.entityId == null) return { ok: false, message: 'attack needs an entityId to target.' }
+                const target = this.findEntityById(args.entityId)
+                if (!target) return { ok: false, message: 'That entity is no longer nearby.' }
                 this.mcSend('swap_slot', { slot: args.slot })
-                this.transitionTo(State.ATTACKING)
+                this.transitionTo(State.ATTACKING, { entityId: args.entityId })
                 return { ok: true }
             }
-
             case 'retreat':
                 if (args.player) this.setFollowTarget(args.player)
                 this.transitionTo(State.RECOVERING, { explicit: true })
@@ -266,7 +277,11 @@ export class StateController {
             this.currentState.onSourceBlock(event);
         }
     }
-
+    findEntityById(id) {
+        return this.hostiles.find(e => e.id === id)
+            ?? this.passives.find(e => e.id === id)
+            ?? null
+    }
     nearestHostile() {
         if (!this.lilyPos || !this.hostiles.length) return null
         let nearest = null

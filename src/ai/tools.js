@@ -200,18 +200,21 @@ export class ToolExecutor {
 
     // ─── Minecraft Actions ──────────────────────────────────────────────────────
     async minecraftActionAttack(args = {}) {
-        const { slot } = args
+        const { slot, entityId } = args
         if (!slot || slot < 1 || slot > 9) {
             return JSON.stringify({ status: "error", message: "slot (1-9) required." })
         }
-        log(`⚔️ [MINECRAFT] attack slot:${slot}`)
+        if (entityId === undefined || entityId === null) {
+            return JSON.stringify({ status: "error", message: "entityId required — pick one from the Hostile/Passive Mobs list." })
+        }
+        log(`⚔️ [MINECRAFT] attack slot:${slot} target:${entityId}`)
         const stateController = this.getStateController?.()
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.dispatchAction('attack', { slot })
+        const result = stateController.dispatchAction('attack', { slot, entityId })
         return result.ok
-            ? JSON.stringify({ status: "ok", message: "Attack performed." })
+            ? JSON.stringify({ status: "ok", message: "Engaging target." })
             : JSON.stringify({ status: "error", message: result.message ?? "Attack failed." })
     }
 
@@ -449,13 +452,14 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_attack",
-            description: "Attack the nearest hostile mob using a weapon from your hotbar. Requires slot (1-9) — you can see your own hotbar, so only pass a slot that's actually a weapon (sword, axe, trident, bow, etc).",
+            description: "Attack a specific mob by its id using a weapon from your hotbar. You'll automatically keep chasing and attacking that exact entity — you do NOT need to call this again to keep fighting it. Requires slot (a weapon: sword/axe/trident/bow) and entityId (the id shown next to the mob in Hostile Mobs / Passive Mobs, e.g. id: 16621).",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 9, description: "Hotbar slot (1-9) holding the weapon to attack with." }
+                    slot: { type: "number", minimum: 1, maximum: 9, description: "Hotbar slot (1-9) holding the weapon." },
+                    entityId: { type: "number", description: "Exact id of the mob to attack, from the entity list you were shown." }
                 },
-                required: ["slot"]
+                required: ["slot", "entityId"]
             }
         }
     },

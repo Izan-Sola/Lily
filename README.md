@@ -8,7 +8,7 @@
 
 #### current todos so i dont forget
 - make break action actually require the correct tools and blocks drop correct item
-- manage her entire inventory, not just hotbar slots
+~~ manage her entire inventory, not just hotbar slots ~~
 - make her sleep when u sleep, mount on a boat/minecart with you.
 - dedicated specifically named dc voice channel for when playing mc survival (chatting there goes threough the mc pipeline)
 - uh, drop use action and rename it to eat? cuz what the helly is she realistically gonna do with other stuff anywas.

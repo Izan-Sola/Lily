@@ -11,10 +11,10 @@ const DEFAULT_OPTIONS = {
     top_p: 0.9,
     top_k: 40,
     min_p: 0.08,
-    repeat_penalty: 1.08,
-    frequency_penalty: 0.05,
+    repeat_penalty: 1.02,
+    frequency_penalty: 0.025,
     repeat_last_n: 256,
-    presence_penalty: 0.1,
+    presence_penalty: 0.05,
     max_tokens: 4096,
     maxConvoMessages: 30,
     maxRawMessages: 30,
@@ -401,7 +401,7 @@ export class Lily {
             if (attempt > 0) {
                 messages.push({
                     role: "user",
-                    content: `[System: You're out of actions for this turn. Reply to the message naturally, in your own words — no <tool_call> tags, no tool syntax, no mention of tools.]`
+                    content: `[System: You're out of tool uses for this turn. Reply to the message naturally, in your own words — no <tool_call> tags, no tool syntax, no mention of tools.]`
                 })
             }
 

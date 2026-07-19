@@ -43,9 +43,13 @@ export function buildWorldStateBlock(ctx) {
     const armor = ctx.lilyArmor ?? 0
 
     let inventoryText = ''
-    for (let slot = 1; slot <= 9; slot++) {
-        const item = ctx.hotbarItems?.[slot]
-        inventoryText += `Slot ${slot}: ${item ? cleanName(item) : 'empty'}\n`
+    for (let slot = 1; slot <= 36; slot++) {
+        const entry = ctx.inventoryItems?.[slot]
+        if (!entry) {
+            continue
+        }
+        const [id, count] = entry.split(' x')
+        inventoryText += `Slot ${slot}: ${cleanName(id)}${count ? ` x${count}` : ''}\n`
     }
 
     const players = Object.entries(ctx.players ?? {})
@@ -76,7 +80,7 @@ ${getStateDescription(ctx)}
 - Armor: ${armor}/20
 - Position: (${Math.floor(lilyPos.x)}, ${Math.floor(lilyPos.y)}, ${Math.floor(lilyPos.z)})
 
-# YOUR HOTBAR (slots 1–9)
+# YOUR INVENTORY (SLOTS 1-36)
 ${inventoryText}
 # NEARBY ENTITIES
 ## Players

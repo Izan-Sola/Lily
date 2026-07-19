@@ -103,17 +103,19 @@ export class StateController {
     getPlayerByName(name) {
         return this.players[name] ?? null
     }
+
     /**
- * Single entry point for explicit, player-requested actions (from
- * ToolExecutor.minecraftAction). Autonomous entry into these same states
- * still happens however your decision logic (IdleState, etc.) already
- * does it — this just gives chat-triggered requests the same doorway in,
- * so both paths end up going through transitionTo() instead of chat
- * requests bypassing the state machine with raw mcSend calls.
- *
- * One-shot commands (use/swap_slot/drop/look_at) don't need a persistent
- * state, so they still pass straight through to mcSend.
- */_findBlockType({ x, y, z }) {
+     * Single entry point for explicit, player-requested actions (from
+     * ToolExecutor.minecraftAction). Autonomous entry into these same states
+     * still happens however your decision logic (IdleState, etc.) already
+     * does it — this just gives chat-triggered requests the same doorway in,
+     * so both paths end up going through transitionTo() instead of chat
+     * requests bypassing the state machine with raw mcSend calls.
+     *
+     * One-shot commands (use/swap_slot/drop/look_at) don't need a persistent
+     * state, so they still pass straight through to mcSend.
+     */
+    _findBlockType({ x, y, z }) {
         const match = this.blocksOfInterest?.find(b => b.x === x && b.y === y && b.z === z)
         return match?.type ?? null
     }
@@ -132,8 +134,8 @@ export class StateController {
         console.log('[MINE] cluster built:', cluster.length + rest.length, 'blocks')
 
         return [...cluster, ...rest]
-        
     }
+
     nearestHostileWithin(maxDist) {
         if (!this.lilyPos || !this.hostiles.length) return null
         let nearest = null
@@ -162,6 +164,17 @@ export class StateController {
                 }
                 const cluster = this._collectMiningCluster(targetBlock)
                 this.transitionTo(State.MINING, { blocks: cluster })
+                return { ok: true }
+            }
+            case 'break_closest_generic': {
+                // No coordinates yet — Java has to search for the block
+                // first. This just forwards the search request; the actual
+                // MINING transition happens later, when Java's "block_found"
+                // response arrives (see bridge's _handleEvent). Same
+                // fire-and-continue shape as 'follow'/'attack': ok:true here
+                // just means "request sent", not "block found and reached".
+                if (!args.block) return { ok: false, message: 'break_closest_generic needs a block name.' }
+                this.mcSend('break_closest_generic', { block: args.block, radius: args.radius })
                 return { ok: true }
             }
             case 'attack': {

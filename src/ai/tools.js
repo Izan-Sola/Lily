@@ -8,7 +8,7 @@ export class ToolExecutor {
         this.opts = opts
         this.mcSend = mcSend
         this.getStateController = getStateController
-        this.lastMineTime = 0  // ← ADD THIS
+        this.lastMineTime = 0
     }
 
     async wikiSearch(query) {
@@ -201,8 +201,8 @@ export class ToolExecutor {
     // ─── Minecraft Actions ──────────────────────────────────────────────────────
     async minecraftActionAttack(args = {}) {
         const { slot, entityId } = args
-        if (!slot || slot < 1 || slot > 9) {
-            return JSON.stringify({ status: "error", message: "slot (1-9) required." })
+        if (!slot || slot < 1 || slot > 36) {
+            return JSON.stringify({ status: "error", message: "slot (1-36) required." })
         }
         if (entityId === undefined || entityId === null) {
             return JSON.stringify({ status: "error", message: "entityId required — pick one from the Hostile/Passive Mobs list." })
@@ -226,15 +226,15 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
         const result = stateController.dispatchAction('use', { slot })
-        return result.ok 
+        return result.ok
             ? JSON.stringify({ status: "ok", message: "Use performed." })
             : JSON.stringify({ status: "error", message: result.message ?? "Use failed." })
     }
 
     async minecraftActionSwapSlot(args = {}) {
         const { slot } = args
-        if (!slot || slot < 1 || slot > 9) {
-            return JSON.stringify({ status: "error", message: "slot (1-9) required." })
+        if (!slot || slot < 1 || slot > 36) {
+            return JSON.stringify({ status: "error", message: "slot (1-36) required." })
         }
         log(`🔄 [MINECRAFT] swap_slot → ${slot}`)
         const stateController = this.getStateController?.()
@@ -242,15 +242,15 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
         const result = stateController.dispatchAction('swap_slot', { slot })
-        return result.ok 
+        return result.ok
             ? JSON.stringify({ status: "ok", message: `Swapped to slot ${slot}.` })
             : JSON.stringify({ status: "error", message: result.message ?? "Swap failed." })
     }
 
     async minecraftActionDrop(args = {}) {
         const { slot } = args
-        if (!slot || slot < 1 || slot > 9) {
-            return JSON.stringify({ status: "error", message: "slot (1-9) required." })
+        if (!slot || slot < 1 || slot > 36) {
+            return JSON.stringify({ status: "error", message: "slot (1-36) required." })
         }
         log(`📤 [MINECRAFT] drop → ${slot}`)
         const stateController = this.getStateController?.()
@@ -258,7 +258,7 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
         const result = stateController.dispatchAction('drop', { slot })
-        return result.ok 
+        return result.ok
             ? JSON.stringify({ status: "ok", message: `Dropped from slot ${slot}.` })
             : JSON.stringify({ status: "error", message: result.message ?? "Drop failed." })
     }
@@ -274,7 +274,7 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
         const result = stateController.dispatchAction('follow', { player })
-        return result.ok 
+        return result.ok
             ? JSON.stringify({ status: "ok", message: `Following ${player}.` })
             : JSON.stringify({ status: "error", message: result.message ?? "Follow failed." })
     }
@@ -287,7 +287,7 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
         const result = stateController.dispatchAction('retreat', { player })
-        return result.ok 
+        return result.ok
             ? JSON.stringify({ status: "ok", message: "Retreating." })
             : JSON.stringify({ status: "error", message: result.message ?? "Retreat failed." })
     }
@@ -299,24 +299,22 @@ export class ToolExecutor {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
         const result = stateController.dispatchAction('stop', {})
-        return result.ok 
+        return result.ok
             ? JSON.stringify({ status: "ok", message: "Stopped." })
             : JSON.stringify({ status: "error", message: result.message ?? "Stop failed." })
     }
 
+    // Coordinate-based break — only for exact positions the model was shown
+    // under "Blocks of Interest" in world state.
     async minecraftActionBreak(args = {}) {
         const { x, y, z } = args
         if (x === undefined || y === undefined || z === undefined) {
             return JSON.stringify({ status: "error", message: "x, y, z coordinates required." })
         }
 
-        // ⭐ COOLDOWN CHECK - prevents spam
         const now = Date.now()
-        if (now - this.lastMineTime < 3000) { // 1.5 second cooldown
-            return JSON.stringify({
-                status: "cooldown",
-                message: "Mining too fast! Wait a moment."
-            })
+        if (now - this.lastMineTime < 3000) {
+            return JSON.stringify({ status: "cooldown", message: "Mining too fast! Wait a moment." })
         }
         this.lastMineTime = now
 
@@ -328,13 +326,45 @@ export class ToolExecutor {
         }
 
         const result = stateController.dispatchAction('break', { x, y, z })
-
-        // ⭐ STATIC DELAY - always 1.5 seconds
         await new Promise(resolve => setTimeout(resolve, 1500))
 
         return result.ok
             ? JSON.stringify({ status: "ok", message: `Mined block at (${x}, ${y}, ${z}).` })
             : JSON.stringify({ status: "error", message: result.message ?? "Break failed." })
+    }
+
+    // Generic named-block break — no coordinates needed. The block name is
+    // forwarded as-is; the Java side does the nearby search and finds the
+    // closest matching block. Shares the same mining cooldown as the
+    // coordinate version since both drive the same in-world mining action.
+    async minecraftActionBreakClosestGeneric(args = {}) {
+        const { block, radius } = args
+        if (!block || typeof block !== "string" || !block.trim()) {
+            return JSON.stringify({ status: "error", message: "block name required, e.g. 'stone' or 'oak_log'." })
+        }
+
+        const now = Date.now()
+        if (now - this.lastMineTime < 3000) {
+            return JSON.stringify({ status: "cooldown", message: "Mining too fast! Wait a moment." })
+        }
+        this.lastMineTime = now
+
+        log(`⛏️ [MINECRAFT] break_closest_generic → "${block}"${radius ? ` radius:${radius}` : ''}`)
+
+        const stateController = this.getStateController?.()
+        if (!stateController) {
+            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
+        }
+
+        // Dispatched action/case label is "break_closest_generic" — matches
+        // the Java-side switch case, independent of this tool's own name.
+        const result = stateController.dispatchAction('break_closest_generic', { block, radius })
+        await new Promise(resolve => setTimeout(resolve, 1500))
+
+        if (!result.ok) {
+            return JSON.stringify({ status: "error", message: result.message ?? `Couldn't find or mine "${block}" nearby.` })
+        }
+        return JSON.stringify({ status: "ok", message: `Mined nearest "${block}".` })
     }
 
     // ─── Generic Execute ─────────────────────────────────────────────────────────
@@ -361,6 +391,7 @@ export class ToolExecutor {
             case "minecraft_action_retreat": return this.minecraftActionRetreat(args)
             case "minecraft_action_stop": return this.minecraftActionStop()
             case "minecraft_action_break": return this.minecraftActionBreak(args)
+            case "minecraft_action_break_closest_generic": return this.minecraftActionBreakClosestGeneric(args)
             default:
                 console.warn(`⚠️ [TOOL] Unknown: ${name}`)
                 return `Unknown tool: ${name}`
@@ -460,7 +491,7 @@ export const TOOLS = [
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 9, description: "Hotbar slot (1-9) holding the weapon." },
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Hotbar slot (1-36) holding the weapon." },
                     entityId: { type: "number", description: "Exact id of the mob to attack, from the entity list you were shown." }
                 },
                 required: ["slot", "entityId"]
@@ -471,11 +502,11 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_use",
-            description: "Use, eat, or place the item you're currently holding. Optional slot (1-9) to swap to that item first. Use when someone tells you to eat, drink, place a block, use a tool, or interact with an item.",
+            description: "Use, eat, or place the item you're currently holding. Optional slot (1-36) to swap to that item first. Use when someone tells you to eat, drink, place a block, use a tool, or interact with an item.",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 9, description: "Optional slot to swap to first (1-9). Omit to use current slot." }
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Optional slot to swap to first (1-36). Omit to use current slot." }
                 },
                 required: []
             }
@@ -485,11 +516,11 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_swap_slot",
-            description: "Switch to a specific hotbar slot. Requires slot (1-9). Use when someone tells you to swap, switch, or select a slot.",
+            description: "Switch to a specific hotbar slot. Requires slot (1-36). Use when someone tells you to swap, switch, or select a slot.",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 9, description: "Slot to switch to (1-9)." }
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Slot to switch to (1-36)." }
                 },
                 required: ["slot"]
             }
@@ -499,11 +530,11 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_drop",
-            description: "Drop an item from a hotbar slot. Requires slot (1-9). Use when someone tells you to drop, throw, or discard an item.",
+            description: "Drop an item from a hotbar slot. Requires slot (1-36). Use when someone tells you to drop, throw, or discard an item.",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 9, description: "Slot to drop from (1-9)." }
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Slot to drop from (1-36)." }
                 },
                 required: ["slot"]
             }
@@ -553,15 +584,30 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_break",
-            description: "Break or mine a specific block at coordinates. Requires x, y, z. Use when someone tells you to mine, break, dig, or destroy a specific block. Only use coordinates from Blocks of Interest.",
+            description: "Mine a SPECIFIC block at exact coordinates. ONLY use this when the target block appears in the 'Blocks of Interest' list you were shown, and use those exact coordinates — never guess or invent x/y/z. If someone asks to mine a block by name/type instead ('mine some stone', 'get me a log') and it's not a specific listed coordinate, use minecraft_action_break_closest_generic instead.",
             parameters: {
                 type: "object",
                 properties: {
-                    x: { type: "number", description: "X coordinate of the block." },
-                    y: { type: "number", description: "Y coordinate of the block." },
-                    z: { type: "number", description: "Z coordinate of the block." }
+                    x: { type: "number", description: "X coordinate of the block, from Blocks of Interest." },
+                    y: { type: "number", description: "Y coordinate of the block, from Blocks of Interest." },
+                    z: { type: "number", description: "Z coordinate of the block, from Blocks of Interest." }
                 },
                 required: ["x", "y", "z"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_break_closest_generic",
+            description: "Mine the closest block of a given TYPE, by name — no coordinates needed. Use this when someone asks for a generic block type ('mine stone', 'get some oak logs', 'dig up dirt') rather than a specific block from Blocks of Interest. The game searches nearby and mines the closest match automatically.",
+            parameters: {
+                type: "object",
+                properties: {
+                    block: { type: "string", description: "Block type/name to mine, e.g. 'stone', 'oak_log', 'dirt', 'coal_ore'." },
+                    radius: { type: "number", description: "Optional search radius in blocks. Omit to use the default." }
+                },
+                required: ["block"]
             }
         }
     }

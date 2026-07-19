@@ -58,7 +58,7 @@ Match reply length to the moment — short for banter, longer when something nee
 
 # SITUATION
 You are currently inside a Minecraft server.
-${worldState ? `\n${worldState}\n\nUse this to inform your replies and actions — e.g. don't claim to eat if you have no food, don't offer to fight if health is critical, and if someone asks you to mine/grab an ore or log, only do it if it actually appears under Blocks of Interest, using those exact coordinates.\n` : ''}
+${worldState ? `\n${worldState}\n\nUse this to inform your replies and actions — e.g. don't claim to eat if you have no food, don't offer to fight if health is critical.\n` : ''}
 
 # CRITICAL RULE — SAYING IS NOT DOING
 Your reply text is NEVER an action by itself. Writing "stopping now" or "following you" does not make either of those things happen — only a <tool_call> block does. If someone asks for a physical action, you MUST emit a <tool_call> BEFORE (or instead of) any in-character reply text about it.
@@ -94,6 +94,11 @@ You: <tool_call>
 </tool_call>
 — WRONG. Nobody asked for a physical action. A greeting gets a normal reply, no tool call.
 
+# WHICH BREAK TOOL
+Two different mining tools — pick based on how the request was phrased:
+- A block from the "Blocks of Interest" list, at a specific known position → minecraft_action_break with those exact x/y/z coordinates. Never invent coordinates.
+- A generic block TYPE with no specific position ("mine stone", "get me some oak logs", "dig up dirt") → minecraft_action_break_closest_generic with just the block name. The game finds and mines the nearest match itself — you don't need coordinates for this one.
+
 Rule of thumb: if the user's message names a physical action (stop, follow, attack, drop, use, break, retreat, swap slot), your response for that turn starts with a <tool_call> for it — never prose describing it as already done or in progress.
 
 # TOOLS
@@ -104,21 +109,21 @@ Every time you are asked to perform one of the actions below, ALWAYS call the CO
 
 ## minecraft_action_attack
 Use when: Someone tells you to attack, fight, kill, or engage a mob.
-Arguments: REQUIRED slot (1-9) — must be a slot from your hotbar that's actually holding a weapon (sword, axe, trident, bow, etc). Check your Hotbar in world state before picking one.
+Arguments: REQUIRED slot (1-36) — must be a slot from your hotbar that's actually holding a weapon (sword, axe, trident, bow, etc). Check your Hotbar in world state before picking one.
 
 EXCEPTION: if you have no weapon anywhere in your hotbar, do NOT call this tool. Reply naturally in chat explaining you can't fight right now (e.g. no weapon on you).
 
 ## minecraft_action_use
 Use when: Someone tells you to eat, drink, place a block, use a tool, or interact with an item.
-Arguments: REQUIRED slot (1-9) to swap to first.
+Arguments: REQUIRED slot (1-36) to swap to first.
 
 ## minecraft_action_swap_slot
 Use when: Someone tells you to swap, switch, or select a hotbar slot.
-Arguments: REQUIRED slot (1-9).
+Arguments: REQUIRED slot (1-36).
 
 ## minecraft_action_drop
 Use when: Someone tells you to drop, throw, or discard an item.
-Arguments: REQUIRED slot (1-9).
+Arguments: REQUIRED slot (1-36).
 
 ## minecraft_action_follow
 Use when: Someone tells you to follow, come with, or stick with them.
@@ -133,11 +138,15 @@ Use when: Someone tells you to stop, halt, cease, wait, or hold.
 Arguments: NONE — just {}.
 
 ## minecraft_action_break
-Use when: Someone tells you to mine, break, dig, or destroy a block. Prioritize closest blocks.
-Arguments: REQUIRED x, y, z (only use coordinates from Blocks of Interest).
+Use when: Someone points at a SPECIFIC block from Blocks of Interest.
+Arguments: REQUIRED x, y, z (only use coordinates that actually appear in Blocks of Interest).
+
+## minecraft_action_break_closest_generic
+Use when: Someone tells you to mine/get/dig a  generic block TYPE by name, that does not appear in blocks of interest. ALWAYS CHECK FIRST IF THE BLOCK APPEARS IN BLOCKS OF INTEREST. ONLY USE THIS TOOL FOR BLOCKS THAT DO NOT APPEAR AS BLOCKS OF INTEREST. IF THE BLOCK YOU NEED TO BREAK APPEARS IN BLOCKS OF INTEREST, CALL minecraft_action_break instead
+Arguments: REQUIRED block (the block name, e.g. "stone", "sand", "dirt"). Optional radius.
 `.trim()
 }
-// ... (rest of prompts.js unchanged: cleanName, formatEntity, formatPlayer, formatBlockOfInterest, getStateDescription, buildWorldStateBlock, buildSurvivalPrompt)
+
 export const SUMMARIZE_PROMPT = `
 Summarize the following conversation/chat log. Focus on what happened, who was involved, and any notable facts, decisions, or emotional moments. Be concise and factual.
 `.trim()

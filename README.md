@@ -7,7 +7,7 @@
 - Eventually I want her to have a vtuber model.
 
 #### current todos so i dont forget
-- make break action actually require the correct tools and blocks drop correct item
+- ~~make break action actually require the correct tools and blocks drop correct item~~ DONE
 - ~~manage her entire inventory, not just hotbar slots~~ DONE
 - make her sleep when u sleep, mount on a boat/minecart with you.
 - dedicated specifically named dc voice channel for when playing mc survival (chatting there goes threough the mc pipeline)

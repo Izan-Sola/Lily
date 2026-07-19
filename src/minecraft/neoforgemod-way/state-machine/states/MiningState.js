@@ -5,11 +5,14 @@ export class MiningState {
         this.queue = [...blocks]
         this.current = null
         this.mining = false
-        this.readyAt = 0
     }
 
     onExit() {
         this.ctx.move.stop()
+        // If a block was still being broken when we left this state (e.g.
+        // interrupted by combat), tell Java to stop swinging at it — otherwise
+        // she'd keep holding attack at a target she's no longer near.
+        if (this.mining) this.ctx.mcSend('cancel_break')
         this.queue = []
         this.current = null
         this.mining = false
@@ -42,11 +45,20 @@ export class MiningState {
         if (!this.mining) {
             this.mining = true
             ctx.mcSend('break', { x: this.current.x, y: this.current.y, z: this.current.z })
-            this.readyAt = Date.now() + (ctx.opts.mineDurationMs ?? 1600)
         }
 
-        if (Date.now() >= this.readyAt) {
-            this.current = null
-        }
+        // No timer here — Java equips the right tool, holds real "attack continue"
+        // against the block, and only reports back (see onBlockBroken) once it's
+        // actually gone, so break speed matches the block's real hardness/tool
+        // instead of a guessed duration.
+    }
+
+    onBlockBroken(event) {
+        if (!this.mining) return
+        this.mining = false
+        // Advance the queue whether it broke or Java gave up on a safety-net
+        // timeout (bad/missing tool, obstruction) — either way there's nothing
+        // more to do with this target, so move on to the next queued block.
+        this.current = null
     }
 }

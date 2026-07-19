@@ -104,17 +104,6 @@ export class StateController {
         return this.players[name] ?? null
     }
 
-    /**
-     * Single entry point for explicit, player-requested actions (from
-     * ToolExecutor.minecraftAction). Autonomous entry into these same states
-     * still happens however your decision logic (IdleState, etc.) already
-     * does it — this just gives chat-triggered requests the same doorway in,
-     * so both paths end up going through transitionTo() instead of chat
-     * requests bypassing the state machine with raw mcSend calls.
-     *
-     * One-shot commands (use/swap_slot/drop/look_at) don't need a persistent
-     * state, so they still pass straight through to mcSend.
-     */
     _findBlockType({ x, y, z }) {
         const match = this.blocksOfInterest?.find(b => b.x === x && b.y === y && b.z === z)
         return match?.type ?? null
@@ -167,12 +156,6 @@ export class StateController {
                 return { ok: true }
             }
             case 'break_closest_generic': {
-                // No coordinates yet — Java has to search for the block
-                // first. This just forwards the search request; the actual
-                // MINING transition happens later, when Java's "block_found"
-                // response arrives (see bridge's _handleEvent). Same
-                // fire-and-continue shape as 'follow'/'attack': ok:true here
-                // just means "request sent", not "block found and reached".
                 if (!args.block) return { ok: false, message: 'break_closest_generic needs a block name.' }
                 this.mcSend('break_closest_generic', { block: args.block, radius: args.radius })
                 return { ok: true }
@@ -202,7 +185,6 @@ export class StateController {
 
             case 'use': {
                 if (args.slot) {
-                    // Pass slot to Java so it swaps first
                     this.mcSend('use', { mode: 'once', slot: args.slot });
                 } else {
                     this.mcSend('use', { mode: 'once' });
@@ -227,7 +209,6 @@ export class StateController {
         }
     }
 
-    // Data updaters
     updatePlayers(players) { this.players = players }
     updateLilyState(pos, hp, hunger) {
         this.lilyPos = pos
@@ -242,7 +223,7 @@ export class StateController {
                 this.duelTarget = null
                 if (this.currentStateName === State.DUELING) this.transitionTo(State.IDLE)
                 console.log('[DUEL] Duel ended')
-                this.mcSend('unsprint', {})   // fixed: was this.ctx.mcSend
+                this.mcSend('unsprint', {})
             }
             return
         }
@@ -268,7 +249,6 @@ export class StateController {
         }
     }
 
-    // Ability-related methods
     bindAbility(slot, abilityName) {
         this.bindings[slot] = abilityName
     }
@@ -282,7 +262,6 @@ export class StateController {
         console.log(`[STATS] Updated ability stats for ${Object.keys(statsMap).length} abilities`)
     }
 
-    // Helper methods for states
     getFollowTarget() { return this.players[this.opts.followTarget] ?? null }
 
     handleSourceBlock(event) {
@@ -290,6 +269,18 @@ export class StateController {
             this.currentState.onSourceBlock(event);
         }
     }
+
+    // Java reports back here once a block it was mining is actually gone (or it
+    // gave up on a safety-net timeout) — see MiningManager.finish() on the Java
+    // side and MiningState.onBlockBroken() here. Needs wiring into whatever
+    // dispatches incoming WS messages, alongside handleSourceBlock above —
+    // something like: case 'block_broken': ctx.handleBlockBroken(msg); break
+    handleBlockBroken(event) {
+        if (this.currentStateName === State.MINING) {
+            this.currentState.onBlockBroken(event)
+        }
+    }
+
     findEntityById(id) {
         return this.hostiles.find(e => e.id === id)
             ?? this.passives.find(e => e.id === id)

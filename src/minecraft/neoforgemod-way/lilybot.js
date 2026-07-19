@@ -403,7 +403,12 @@ async function _handleEvent(event) {
         case "source_block": {
             stateController?.handleSourceBlock(event);
             break;
+        }   
+        case "block_broken": {
+            stateController?.handleBlockBroken(event);
+            break;
         }
+           
     }
 }
 

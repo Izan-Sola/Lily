@@ -12,30 +12,38 @@ const DEFAULT_OPTIONS = {
     top_k: 40,
     min_p: 0.08,
     repeat_penalty: 1.08,
-    frequency_penalty: 0.15,
+    frequency_penalty: 0.05,
     repeat_last_n: 256,
-    presence_penalty: 0.35,
+    presence_penalty: 0.1,
     max_tokens: 4096,
     maxConvoMessages: 30,
     maxRawMessages: 30,
     maxToolLoops: 15,
     maxToolRepeats: 3,
+    maxUsesPerTool: 2, // generic per-tool-name cap per turn (minecraft_action tools are exempt)
     memoryQueryMinScore: 0.3,
     memoryRemoveMinScore: 0.70,
     memoryRemoveK: 2,
-    episodicQueryMinScore: 0.60,
-    episodicRemoveMinScore: 0.70,
+    episodicQueryMinScore: 0.40,
+    episodicRemoveMinScore: 0.80,
     episodicRemoveK: 3,
     // Smaller, more frequent batches — each embedded summary stays topic-focused
     // instead of blurring many unrelated exchanges into one blob.
-    summarizeEvery: 10,
-    summarizeLastN: 10,
-    observeEvery: 10,
+    summarizeEvery: 20,
+    summarizeLastN: 20,
+    observeEvery: 20,
     ollamaUrl: "http://localhost:11435",
     memoryDbUrl: "http://localhost:8002",   // single unified DB, replaces knowledgeDbUrl + episodicDbUrl
     blogUrl: "http://localhost:1234",
     ollamaTimeout: 120000,
     dbTimeout: 30000,
+}
+
+// Channel id used for the Minecraft bridge — see getToolsForChannel().
+const MINECRAFT_CHANNEL_ID = "minecraft"
+
+function isMinecraftActionTool(name) {
+    return name === "minecraft_action" || name.startsWith("minecraft_action")
 }
 
 export class Lily {
@@ -52,21 +60,23 @@ export class Lily {
         this.convoHistories = new Map()
         this.rawBuffers = new Map()
         this.channelLocks = new Map()
-        this.userMessageCount = 0
-        // constructor
-        this.channelMessageCounts = new Map()   // channelId -> count, replaces this.userMessageCount
-        this.observeBuffers = new Map()         // channelId -> string[], replaces this.observeBuffer
-        this.observeParticipants = new Map()    // channelId -> Set<string>, if you added the participants fix
-        this.observeBuffer = []
+        this.channelMessageCounts = new Map()   // channelId -> count
+        this.observeBuffers = new Map()         // channelId -> string[]
+        this.observeParticipants = new Map()    // channelId -> Set<string>
         this.mcSend = mcSend
         this.tools = new ToolExecutor(this.opts, mcSend, getStateController)
         this._resumedIds = new Map()
         this._replayCounts = new Map()
+        // Non-minecraft tool list is static, so compute it once instead of
+        // filtering on every single loop iteration.
+        this._nonMinecraftTools = TOOLS.filter(t => !isMinecraftActionTool(t.function?.name ?? ""))
     }
+
     getObserveBuffer(channelId) {
         if (!this.observeBuffers.has(channelId)) this.observeBuffers.set(channelId, [])
         return this.observeBuffers.get(channelId)
     }
+
     /**
      * Wire (or replace) the Minecraft bridge sender after construction —
      * useful if mcSend isn't available yet when Lily is first built.
@@ -79,6 +89,7 @@ export class Lily {
     buildSystemPrompt(extraInstructions = null) {
         return extraInstructions ? `${SYSTEM_PROMPT}\n\n${extraInstructions}` : SYSTEM_PROMPT
     }
+
     getHistory(channelId) {
         if (!this.convoHistories.has(channelId)) {
             this.convoHistories.set(channelId, new ConversationHistory(this.opts.maxConvoMessages))
@@ -91,6 +102,14 @@ export class Lily {
             this.rawBuffers.set(channelId, new RawBuffer(this.opts.maxRawMessages))
         }
         return this.rawBuffers.get(channelId)
+    }
+
+    // Only the Minecraft bridge channel gets minecraft_action tools — every
+    // other channel (Discord, etc.) never even sees them in the tool list,
+    // so the model structurally cannot call them there regardless of how
+    // it interprets the system prompt's "you can't perform in-game actions".
+    getToolsForChannel(channelId) {
+        return channelId === MINECRAFT_CHANNEL_ID ? TOOLS : this._nonMinecraftTools
     }
 
     async withChannelLock(channelId, fn) {
@@ -174,7 +193,7 @@ export class Lily {
         return parts
     }
 
-    async summarizeAndStore(lines, { logPrefix, maxTokens = 300, memoryTitle, memorySource = "conversation_batch", participants = [], emotions = [], importance = 0.5 }) {
+    async summarizeAndStore(lines, { logPrefix, maxTokens = 300, memorySource = "conversation_batch", participants = [], emotions = [], importance = 0.5 }) {
         if (lines.length < 2) return
         log(`📝 [${logPrefix}] Summarizing ${lines.length} entries...`)
         try {
@@ -221,6 +240,7 @@ export class Lily {
             importance: 0.5,
         })
     }
+
     observe(channelId, rawMessage, authorName = null) {
         const clean = sanitizeInput(rawMessage)
         if (!clean) return
@@ -246,7 +266,7 @@ export class Lily {
         }
     }
 
-    async sendToOllama(messages, foreignTools = [], noTools = false) {
+    async sendToOllama(messages, foreignTools = [], noTools = false, baseTools = TOOLS) {
         if (getStateController()?.currentStateName === 'DUELING') {
             return { content: "Lily is currently in a duel, she can't reply right now!" }
         }
@@ -267,7 +287,7 @@ export class Lily {
             // noTools forces a plain-text completion — no tools field at all —
             // used when we want a guaranteed natural reply (e.g. tool-loop budget exhausted).
             if (!noTools) {
-                payload.tools = foreignTools.length ? [...TOOLS, ...foreignTools] : TOOLS
+                payload.tools = foreignTools.length ? [...baseTools, ...foreignTools] : baseTools
             }
 
             const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, payload, { timeout: this.opts.ollamaTimeout })
@@ -278,6 +298,7 @@ export class Lily {
             return null
         }
     }
+
     parseEmbeddedToolCalls(content) {
         const matches = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
         return matches.flatMap(match => {
@@ -290,27 +311,40 @@ export class Lily {
         })
     }
 
+    // Two independent checks gate every non-minecraft_action tool call:
+    //   1. toolsUsedThisTurn (Map<toolName, count>) — flat cap of
+    //      opts.maxUsesPerTool calls to a given tool name per turn,
+    //      regardless of arguments. Replaces the old ad-hoc special-casing
+    //      of send_gif / send_meme / addto_episodic_memory with one rule,
+    //      and closes the hole where a model dodged a per-tool cap by
+    //      alternating between addto_memory_database / update_memory_database
+    //      / remove_memory_database indefinitely.
+    //   2. tracker (ToolCallTracker) — blocks calling the exact same
+    //      tool+args pair more than opts.maxToolRepeats times, catching a
+    //      model stuck re-issuing an identical call even if it's still
+    //      within the flat count budget.
+    // minecraft_action tools are exempt from both, same as the original
+    // commented-out rationale: repeated identical in-world actions (mining
+    // the same block, re-attacking) are legitimate and only bounded by
+    // maxToolLoops overall.
     async runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, pushFn) {
-        if ((name === "send_gif" || name === "send_meme") && toolsUsedThisTurn.has(name)) {
-            log(`🚫 [BLOCKED] ${name} already used this turn`)
-            pushFn(`You already sent a ${name === "send_gif" ? "GIF" : "meme"} this turn. Reply in text only.`)
-            return null
-        }
-        if (name === "addto_episodic_memory" && toolsUsedThisTurn.has(name)) {
-            log(`🚫 [BLOCKED] addto_episodic_memory already used this turn`)
-            pushFn("Already stored an episodic memory this turn. Do not store another.")
-            return null
-        }
-        // if (name === "minecraft_action" && toolsUsedThisTurn.has(name)) {
-        //     log(`🚫 [BLOCKED] minecraft_action already used this turn`)
-        //     pushFn("Already performed an action this turn. Only one action per turn.")
-        //     return null
-        // }
+        if (!isMinecraftActionTool(name)) {
+            const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
+            if (usesSoFar >= this.opts.maxUsesPerTool) {
+                log(`🚫 [BLOCKED] ${name} already used ${usesSoFar}x this turn (cap: ${this.opts.maxUsesPerTool})`)
+                pushFn(`You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
+                return null
+            }
 
-        // Repeated identical tool calls (e.g. re-breaking the same block, re-attacking)
-        // are allowed and never blocked — the global maxToolLoops cap is the only limit.
+            const repeatBlock = tracker.check(name, args)
+            if (repeatBlock) {
+                pushFn(repeatBlock)
+                return null
+            }
 
-        toolsUsedThisTurn.add(name)
+            toolsUsedThisTurn.set(name, usesSoFar + 1)
+        }
+
         const result = await this.tools.execute(name, args)
 
         let gifUrl = null
@@ -359,7 +393,7 @@ export class Lily {
     async finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl) {
         const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
         let attemptScratch = [...scratch]
-        const MAX_RETRIES = 2
+        const MAX_RETRIES = 6
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             const messages = [...baseMessages, ...attemptScratch]
@@ -391,8 +425,9 @@ export class Lily {
 
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
+        const baseTools = this.getToolsForChannel(channelId)
         let pendingGifUrl = null
-        const toolsUsedThisTurn = new Set()
+        const toolsUsedThisTurn = new Map()
         let imagesInjected = false
         const foreignTools = opts.tools ?? []
         const foreignToolNames = new Set(foreignTools.map(t => t.function?.name).filter(Boolean))
@@ -414,7 +449,7 @@ export class Lily {
                 }
             }
 
-            const msg = await this.sendToOllama(messages, foreignTools)
+            const msg = await this.sendToOllama(messages, foreignTools, false, baseTools)
             if (!msg) return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
 
             const content = (msg.content ?? "").trim()
@@ -548,6 +583,7 @@ export class Lily {
 
         return result
     }
+
     chat(channelId, userInput, systemPromptOverride = null, opts = {}, images = []) {
         return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts, images)
     }

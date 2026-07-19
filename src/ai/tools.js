@@ -375,19 +375,23 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "query_memory_database",
-            description: `Search everything you know and remember — stored facts about people/the server/yourself, AND past events/experiences. One search covers both; you don't need to pick which "kind" of memory to check.
+            description: `Search everything you know and remember — stored facts about people/the server/yourself (including your OWN opinions, favorites, preferences, and past statements), AND past events/experiences. One search covers both; you don't need to pick which "kind" of memory to check.
+
+                        CHECK THIS ANY TIME YOU'RE ABOUT TO STATE SOMETHING AS FACT AND YOU AREN'T 100% SURE YOU'VE SAID IT BEFORE — this very much includes questions about other users and YOURSELF: "what's your favorite ___", "do you like ___", "what do you think about ___", "what's your ___". You have opinions and they need to stay consistent, so check before answering, not after. If nothing comes back, that's fine — pick something in-character and store it with addto_memory_database so you're consistent next time.
 
                         Three ways to use this, pick ONE per call:
-                        1. Plain fact/topic lookup — pass query with 2+ keywords, leave days_ago and days_back unset.
+                        1. Plain fact/topic lookup — pass query with 2+ keywords, leave days_ago and days_back unset. Use this for self-opinion/preference questions too (e.g. query: "favorite food").
                         2. A SPECIFIC past event at a rough point in time ("10 days ago", "last Tuesday") — pass query plus days_ago (searches AROUND that point, days_ago ± window_days).
-                        3. An open-ended recent stretch with NO specific topic ("what did we talk about this week", "what's happened the past 10 days", "what did I miss") — pass days_back (how many days back from now) and you can leave query empty. This is a plain chronological recap, not a topic search — don't invent a query for it.`,
+                        3. An open-ended recent stretch with NO specific topic ("what did we talk about this week", "what's happened the past 10 days", "what did I miss") — pass days_back (how many days back from now) and you can leave query empty. This is a plain chronological recap, not a topic search — don't invent a query for it.
+
+                        A result only counts if it's actually about what was asked — ignore anything that just shares a keyword but isn't really relevant, and answer as if the search came back empty.`,
             parameters: {
                 type: "object",
                 properties: {
                     query: { type: "string", description: "Keywords describing what to look up. Only needed for modes 1 and 2 — leave empty when using days_back for an open-ended recent recap." },
-                    days_ago: { type: "number", description: "Only for mode 2 — a specific past event with a rough time reference. Omit for fact lookups or open-ended recaps." },
+                    days_ago: { type: "number", description: "set days_ago to search for a specific past event with a rough time reference. Omit for fact lookups or open-ended recaps." },
                     window_days: { type: "number", description: "Only used with days_ago. Tolerance around days_ago, e.g. 2 means search days_ago-2 to days_ago+2. Default 2. Smaller (0-1) for precise references like 'yesterday', larger (3-5) for vague ones like 'a couple weeks ago'." },
-                    days_back: { type: "number", description: "Only for mode 3 — open-ended recap covering from now back to this many days, no topic needed. E.g. 1 for 'today/yesterday', 7 for 'this week', 10 for 'the past 10 days', 30 for 'this month'." }
+                    days_back: { type: "number", description: "use for open-ended recap covering from now back to this many days, no topic needed. E.g. 1 for 'today/yesterday', 7 for 'this week', 10 for 'the past 10 days', 30 for 'this month'." }
                 },
                 required: []
             }
@@ -397,7 +401,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a new factual entry. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
+            description: "Store a new factual entry — including a new opinion/preference/favorite you just gave about yourself for the first time, so you stay consistent later. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
             parameters: { type: "object", properties: { text: { type: "string" }, source: { type: "string" } }, required: ["text"] }
         }
     },

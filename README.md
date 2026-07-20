@@ -15,7 +15,7 @@
 - ~~uh, drop use action and rename it to eat? cuz what the helly is she realistically gonna do with other stuff anywas.~~ DONE
 - ~~Make drop tool require to specify the amount to throw.~~ DONE
 - break closest generic tool either require amount of blocks to break (since she cant see generic blocks in her system prompt she migt not call it multiple times herself) or try to imrpove the instructions in her prompt
-- make her autowear armor if its better than what she currently has
+- ~~make her autowear armor if its better than what she currently has~~ DONE
 - give her info of current biome, time of the day, weather...
 
 ## Stuff used

@@ -1,7 +1,7 @@
 # My Daughter Lily (WIP) 
 ### initially supposed to be a hytale bot, but oh well...
 
-- My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
+- The brain for my daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
 - Related: https://github.com/Izan-Sola/Lily-Minecraft , https://github.com/Izan-Sola/LilyBlog , https://github.com/Izan-Sola/LilyGnomeWidget
 - Currently working on her being able to play survival minecraft decently.
 - Eventually I want her to have a vtuber model.

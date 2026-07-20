@@ -8,7 +8,7 @@ const ai = new Lily(config.modelName)
 
 export const data = new SlashCommandBuilder()
     .setName("audiolily")
-    .setDescription("Ask Lily something and she'll respond with her voice!")
+    .setDescription("Ask Lily something and she'll respond with her voice! (might take a bit)")
     .addStringOption(option =>
         option
             .setName("message")

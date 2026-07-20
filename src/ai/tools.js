@@ -219,17 +219,17 @@ export class ToolExecutor {
             : JSON.stringify({ status: "error", message: result.message ?? "Attack failed." })
     }
 
-    async minecraftActionUse(args = {}) {
+    async minecraftActionEat(args = {}) {
         const { slot } = args
-        log(`🖐️ [MINECRAFT] use${slot ? ` slot:${slot}` : ''}`)
+        log(`🍎 [MINECRAFT] eat${slot ? ` slot:${slot}` : ''}`)
         const stateController = this.getStateController?.()
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.dispatchAction('use', { slot })
+        const result = stateController.dispatchAction('use', { slot })  // Java side still expects 'use' — don't rename the dispatched action label
         return result.ok
-            ? JSON.stringify({ status: "ok", message: "Use performed." })
-            : JSON.stringify({ status: "error", message: result.message ?? "Use failed." })
+            ? JSON.stringify({ status: "ok", message: "Ate." })
+            : JSON.stringify({ status: "error", message: result.message ?? "Eat failed." })
     }
 
     async minecraftActionSwapSlot(args = {}) {
@@ -247,23 +247,44 @@ export class ToolExecutor {
             ? JSON.stringify({ status: "ok", message: `Swapped to slot ${slot}.` })
             : JSON.stringify({ status: "error", message: result.message ?? "Swap failed." })
     }
-
+    // Drops `amount` items from `slot`. The Java side only exposes a single-item
+    // "drop once" command, so amount > 1 is achieved by repeating that command
+    // with a short delay between each drop rather than a native count-based
+    // command. If the mod ever adds a count-based drop command
+    // (e.g. "drop <n>"), swap this loop for a single dispatchAction call.
     async minecraftActionDrop(args = {}) {
-        const { slot } = args
+        const { slot, amount } = args
         if (!slot || slot < 1 || slot > 36) {
             return JSON.stringify({ status: "error", message: "slot (1-36) required." })
         }
-        log(`📤 [MINECRAFT] drop → ${slot}`)
+        const count = Number.isInteger(amount) && amount > 0 ? amount : 1
+        const MAX_DROPS_PER_CALL = 64   // sanity cap so a bad/huge amount can't spam commands forever
+
+        if (count > MAX_DROPS_PER_CALL) {
+            return JSON.stringify({ status: "error", message: `Can't drop more than ${MAX_DROPS_PER_CALL} at once.` })
+        }
+
+        log(`📤 [MINECRAFT] drop → slot:${slot} amount:${count}`)
         const stateController = this.getStateController?.()
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
-        const result = stateController.dispatchAction('drop', { slot })
-        return result.ok
-            ? JSON.stringify({ status: "ok", message: `Dropped from slot ${slot}.` })
-            : JSON.stringify({ status: "error", message: result.message ?? "Drop failed." })
-    }
 
+        for (let i = 0; i < count; i++) {
+            const result = stateController.dispatchAction('drop', { slot })
+            if (!result.ok) {
+                return JSON.stringify({
+                    status: "error",
+                    message: result.message ?? `Drop failed after ${i} of ${count} item(s).`
+                })
+            }
+            if (i < count - 1) {
+                await new Promise(resolve => setTimeout(resolve, 250))  // brief gap between repeated drops
+            }
+        }
+
+        return JSON.stringify({ status: "ok", message: `Dropped ${count} item(s) from slot ${slot}.` })
+    }
     async minecraftActionFollow(args = {}) {
         const { player } = args
         if (!player) {
@@ -385,7 +406,7 @@ export class ToolExecutor {
             case "send_gif": return this.searchGif(args.query ?? "")
             // Minecraft actions
             case "minecraft_action_attack": return this.minecraftActionAttack(args)
-            case "minecraft_action_use": return this.minecraftActionUse(args)
+            case "minecraft_action_use": return this.minecraftActionEat(args)
             case "minecraft_action_swap_slot": return this.minecraftActionSwapSlot(args)
             case "minecraft_action_drop": return this.minecraftActionDrop(args)
             case "minecraft_action_follow": return this.minecraftActionFollow(args)
@@ -502,12 +523,12 @@ export const TOOLS = [
     {
         type: "function",
         function: {
-            name: "minecraft_action_use",
-            description: "Use, eat, or place the item you're currently holding. Optional slot (1-36) to swap to that item first. Use when someone tells you to eat, drink, place a block, use a tool, or interact with an item.",
+            name: "minecraft_action_eat",
+            description: "Eat the food item you're currently holding, or swap to a specific hotbar slot first and eat that. Use when someone tells you to eat, or when your hunger is low and you have food available.",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 36, description: "Optional slot to swap to first (1-36). Omit to use current slot." }
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Optional hotbar slot holding food to swap to first (1-36). Omit to eat whatever's currently held." }
                 },
                 required: []
             }
@@ -531,13 +552,14 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_drop",
-            description: "Drop an item from a hotbar slot. Requires slot (1-36). Use when someone tells you to drop, throw, or discard an item.",
+            description: "Drop item(s) from a hotbar slot. Requires slot (1-36) and amount (how many to drop). Use when someone tells you to drop, throw, or discard an item — if they don't say how many, drop 1.",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 36, description: "Slot to drop from (1-36)." }
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Hotbar slot (1-36) to drop from." },
+                    amount: { type: "number", minimum: 1, description: "How many items to drop. Default to 1 if the person doesn't specify a number." }
                 },
-                required: ["slot"]
+                required: ["slot", "amount"]
             }
         }
     },

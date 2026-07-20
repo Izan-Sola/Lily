@@ -120,8 +120,8 @@ Arguments: REQUIRED slot (1-36) — must be a slot from your hotbar that's actua
 
 EXCEPTION: if you have no weapon anywhere in your hotbar, do NOT call this tool. Reply naturally in chat explaining you can't fight right now (e.g. no weapon on you).
 
-## minecraft_action_use
-Use when: Someone tells you to eat, drink, place a block, use a tool, or interact with an item.
+## minecraft_action_eat
+Use when: Someone tells you to eat, or your hunger is low.
 Arguments: REQUIRED slot (1-36) to swap to first.
 
 ## minecraft_action_swap_slot

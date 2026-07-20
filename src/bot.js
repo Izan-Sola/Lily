@@ -226,6 +226,18 @@ function sanitizeInput(text) {
         .trim()
 }
 
+// Strips a leading slash-command (e.g. "/attack zombie") that the model
+// might accidentally emit — but ONLY when the "/" is the very first
+// non-whitespace character of the message. This deliberately does NOT
+// touch a "/" that shows up mid-sentence or mid-word (e.g.
+// "stoicism/buddhism", "and/or", a URL) — a prior version used
+// /\/\w+.*$/s which matched a "/" ANYWHERE in the text and deleted
+// everything from that point to the end, silently truncating replies
+// that happened to contain a slash partway through.
+function stripLeadingSlashCommand(text) {
+    return text.replace(/^\s*\/\S+\s*/, "").trim()
+}
+
 export async function speakedge(text) {
     const clean = sanitizeInput(text)
     const escaped = clean.replace(/'/g, "\\'").replace(/"/g, '\\"')
@@ -265,9 +277,9 @@ function parseReply(reply) {
 }
 
 async function sendReply(message, reply) {
-    if (!reply) return  
+    if (!reply) return
     const { text, gifUrl } = parseReply(reply)
-    const clean = text.replace(/\/\w+.*$/s, "").trim()
+    const clean = stripLeadingSlashCommand(text)
     if (!clean && !gifUrl) return
     await message.reply({
         content: clean || undefined,
@@ -281,7 +293,7 @@ async function sendReply(message, reply) {
 async function sendNoReply(message, reply) {
     if (!reply) return
     const { text, gifUrl } = parseReply(reply)
-    const clean = text.replace(/\/\w+.*$/s, "").trim()
+    const clean = stripLeadingSlashCommand(text)
     if (!clean && !gifUrl) return
     await message.channel.send({
         content: clean || undefined,
@@ -436,7 +448,7 @@ class VoiceSession {
 
             const reply = await ai.chat(this.channelId, formattedMessage)
             const { text } = parseReply(reply)
-            const clean = text.replace(/\/\w+.*$/s, "").trim()
+            const clean = stripLeadingSlashCommand(text)
 
             if (clean && clean !== "none" && clean !== "None" && clean.length > 0) {
                 console.log(`🎙️ [VOICE] Lily responding: "${clean}"`)
@@ -605,7 +617,7 @@ export async function createBot() {
                     console.log(`📝 [VOICE MSG] ${authorName} said: "${transcript}"`)
                     const reply = await ai.chat(channelId, `[${authorName}] says to you in a voice message: ${transcript}`)
                     const { text } = parseReply(reply)
-                    const cleanReply = text.replace(/\/\w+.*$/s, "").trim()
+                    const cleanReply = stripLeadingSlashCommand(text)
 
                     const oggPath = await speak(cleanReply)
                     await message.reply({

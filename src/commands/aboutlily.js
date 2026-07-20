@@ -21,8 +21,6 @@ export async function execute(interaction) {
                 "  If you want to talk to me in voice chat, just join a voice channel and use /voice join! In voice chat, to avoid getting confused, I will only assume",
                 "  you are referring to me if you say my name, 'Lily', at some point in your sentence. If you want me to leave, use the /voice leave command!",
                 "- I can use gifs and also send audios, if you want to hear my cute voice, just use /audiolily or reply to me with a voice message and I'll respond with an audio message asap!",
-                "- I'm very smart hehe~ so I can remember facts about you and the server!",
-                "- I can also play Minecraft (wip)"
             ].join("\n"), inline: false },
             {  
             name: "Info",     

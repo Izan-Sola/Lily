@@ -15,6 +15,7 @@
 - Make drop tool optionally require to specify the amount to throw.
 - break closest generic tool either require amount of blocks to break (since she cant see generic blocks in her system prompt she migt not call it multiple times herself) or try to imrpove the instructions in her prompt
 - make her autowear armor if its better than what she currently has
+- give her info of current biome, time of the day, weather...
 
 ## Stuff used
 

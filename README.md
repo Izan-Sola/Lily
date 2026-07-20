@@ -11,8 +11,8 @@
 - ~~manage her entire inventory, not just hotbar slots~~ DONE
 - make her sleep when u sleep, mount on a boat/minecart with you.
 - dedicated specifically named dc voice channel for when playing mc survival (chatting there goes threough the mc pipeline)
-- uh, drop use action and rename it to eat? cuz what the helly is she realistically gonna do with other stuff anywas.
-- Make drop tool optionally require to specify the amount to throw.
+- ~~uh, drop use action and rename it to eat? cuz what the helly is she realistically gonna do with other stuff anywas.~~ DONE
+- ~~Make drop tool require to specify the amount to throw.~~ DONE
 - break closest generic tool either require amount of blocks to break (since she cant see generic blocks in her system prompt she migt not call it multiple times herself) or try to imrpove the instructions in her prompt
 - make her autowear armor if its better than what she currently has
 - give her info of current biome, time of the day, weather...

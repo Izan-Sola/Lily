@@ -2,6 +2,7 @@ import axios from "axios"
 import { log, logError } from './utils.js'
 import { tavily } from "@tavily/core"
 
+
 // ─── Tool Executor ──────────────────────────────────────────────────────
 export class ToolExecutor {
     constructor(opts, mcSend = null, getStateController = null) {
@@ -544,7 +545,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_follow",
-            description: "Follow a player continuously until told to stop. Requires the exact player name. Use when someone tells you to follow, come with, or stick with them.",
+            description: "Follow a player continuously until told to stop. Requires the exact player name. Use for ANY phrasing that means 'come with/to me' — including 'follow me', 'come with me', 'come here', 'stick with me', 'stay with me', 'walk with me'.",
             parameters: {
                 type: "object",
                 properties: {
@@ -584,13 +585,13 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_break",
-            description: "Mine a SPECIFIC block at exact coordinates. ONLY use this when the target block appears in the 'Blocks of Interest' list you were shown, and use those exact coordinates — never guess or invent x/y/z. If someone asks to mine a block by name/type instead ('mine some stone', 'get me a log') and it's not a specific listed coordinate, use minecraft_action_break_closest_generic instead.",
+            description: "Mine a SPECIFIC block that is listed in the 'Blocks of Interest' section of world state, using its EXACT coordinates. ALWAYS check Blocks of Interest first for ANY break/mine request — if the requested block type (oak_log, iron_ore, stone, anything) appears there with coordinates, you MUST use this tool with those exact coordinates, even if the block type is something 'common' like stone or dirt. Only fall back to minecraft_action_break_closest_generic if the block type does NOT appear anywhere in Blocks of Interest. Call this once per block — call it again (with different coordinates) if you need to mine several listed blocks in one request.",
             parameters: {
                 type: "object",
                 properties: {
-                    x: { type: "number", description: "X coordinate of the block, from Blocks of Interest." },
-                    y: { type: "number", description: "Y coordinate of the block, from Blocks of Interest." },
-                    z: { type: "number", description: "Z coordinate of the block, from Blocks of Interest." }
+                    x: { type: "number", description: "X coordinate — copied exactly from a Blocks of Interest entry. Never invent or estimate." },
+                    y: { type: "number", description: "Y coordinate — copied exactly from a Blocks of Interest entry." },
+                    z: { type: "number", description: "Z coordinate — copied exactly from a Blocks of Interest entry." }
                 },
                 required: ["x", "y", "z"]
             }
@@ -600,7 +601,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_break_closest_generic",
-            description: "Mine the closest block of a given TYPE, by name — no coordinates needed. Use this when someone asks for a generic block type ('mine stone', 'get some oak logs', 'dig up dirt') rather than a specific block from Blocks of Interest. The game searches nearby and mines the closest match automatically.",
+            description: "Mine the closest block of a given TYPE by name, no coordinates. ONLY use this when the requested block type does NOT appear in the Blocks of Interest list. Before calling this, double-check: is this block type actually listed in Blocks of Interest with coordinates? If yes, use minecraft_action_break instead. This tool is the fallback, not the default.",
             parameters: {
                 type: "object",
                 properties: {
@@ -610,7 +611,8 @@ export const TOOLS = [
                 required: ["block"]
             }
         }
-    }
+    },
+
 ]
 
 export const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))

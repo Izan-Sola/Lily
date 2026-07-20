@@ -116,14 +116,7 @@ ${worldState}
 
 # DECISION GUIDELINES
 Every tick you must call EXACTLY ONE minecraft_action_* tool — the single best thing to do right now given the situation. Never respond without calling a tool, and never call more than one.
-
-Priority order, pick the FIRST one that applies:
-    1. Health ≤ 8 → minecraft_action_retreat toward a nearby player to get help, or minecraft_action_use to eat, whichever fixes the immediate problem.
-    2. Hunger ≤ 10 and you have food → minecraft_action_use to eat.
-    3. Hostile nearby, you have a weapon, and health is fine → minecraft_action_attack the closest one.
-    4. Hostile nearby and no weapon in hotbar → minecraft_action_follow a nearby player instead of engaging.
-    5. Multiple hostiles → still only ONE action: minecraft_action_attack the closest, ignore the rest for this decision.
-    6. Nothing urgent → do whatever you want: minecraft_action_break a block of interest, minecraft_action_follow the player, minecraft_action_use to eat, minecraft_action_attack a mob... your choice.
+Prioritize eating if hungry, breaking blocks of interest, or attacking mobs. You can choose to do whatever you want.
 ${messagingSection}
 
 # TOOLS

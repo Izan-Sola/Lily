@@ -5,18 +5,19 @@ import { ConversationHistory, RawBuffer } from './history.js'
 import { SYSTEM_PROMPT, SUMMARIZE_PROMPT } from './prompts.js'
 import { ToolExecutor, TOOLS, TOOL_NAMES } from './tools.js'
 
+// Channel id used for the Minecraft bridge — see getToolsForChannel().
+const MINECRAFT_CHANNEL_ID = "minecraft"
+
 const DEFAULT_OPTIONS = {
     model: "Lily",
     temperature: 0.7,
     top_p: 0.9,
     top_k: 40,
     min_p: 0.08,
-    repeat_penalty: 1.02,
-    frequency_penalty: 0.025,
-    repeat_last_n: 256,
-    presence_penalty: 0.05,
     max_tokens: 4096,
     maxConvoMessages: 30,
+    maxMinecraftConvoMessages: 14,   // smaller window for the minecraft channel: freshness of
+    // rule-following matters more there than long banter recall
     maxRawMessages: 30,
     maxToolLoops: 15,
     maxToolRepeats: 3,
@@ -39,11 +40,29 @@ const DEFAULT_OPTIONS = {
     dbTimeout: 30000,
 }
 
-// Channel id used for the Minecraft bridge — see getToolsForChannel().
-const MINECRAFT_CHANNEL_ID = "minecraft"
-
 function isMinecraftActionTool(name) {
     return name === "minecraft_action" || name.startsWith("minecraft_action")
+}
+
+// Tools whose effect is invisible in the final natural-language reply — the
+// persisted convo-history entry gets a compact [did: ...] marker for these,
+// so on later turns she can "see" that the action happened instead of it
+// looking identical to a turn where she just talked. Retrieval tools
+// (query_memory_database, web_search) are deliberately excluded — their
+// result already gets folded into her actual reply, so marking them too
+// would just be redundant noise in history.
+const SILENT_EFFECT_TOOLS = new Set([
+    "addto_memory_database",
+    "update_memory_database",
+    "remove_memory_database",
+    "send_gif",
+    "send_meme",
+])
+
+const GIF_TOOLS = new Set(["send_gif", "send_meme"])
+
+function isSilentEffectTool(name) {
+    return SILENT_EFFECT_TOOLS.has(name) || isMinecraftActionTool(name)
 }
 
 export class Lily {
@@ -92,7 +111,10 @@ export class Lily {
 
     getHistory(channelId) {
         if (!this.convoHistories.has(channelId)) {
-            this.convoHistories.set(channelId, new ConversationHistory(this.opts.maxConvoMessages))
+            const cap = channelId === MINECRAFT_CHANNEL_ID
+                ? this.opts.maxMinecraftConvoMessages
+                : this.opts.maxConvoMessages
+            this.convoHistories.set(channelId, new ConversationHistory(cap))
         }
         return this.convoHistories.get(channelId)
     }
@@ -163,7 +185,10 @@ export class Lily {
         if (!skipRawContext) {
             const rawContext = this.getRawContext(channelId)
             if (rawContext.length) {
-                const block = `[Recent chat]\n${rawContext.join("\n")}\n[End recent chat]\n\n`
+                const reminder = channelId === MINECRAFT_CHANNEL_ID
+                    ? "\n[If the newest message asks you to do something physical, call the matching tool now — don't just reply in words.]\n"
+                    : ""
+                const block = `[Recent chat]\n${rawContext.join("\n")}\n[End recent chat]\n${reminder}`
 
                 let injected = false
                 for (let i = history.length - 1; i >= 0; i--) {
@@ -348,7 +373,7 @@ export class Lily {
         const result = await this.tools.execute(name, args)
 
         let gifUrl = null
-        if (name === "send_gif" || name === "send_meme") {
+        if (GIF_TOOLS.has(name)) {
             try {
                 const parsed = JSON.parse(result)
                 if (parsed.status === "ok") gifUrl = parsed.url
@@ -423,6 +448,22 @@ export class Lily {
         return null
     }
 
+    // Shared by both the native tool_calls path and the embedded <tool_call>
+    // path below — runs each call, records it for the silent-effect history
+    // marker if applicable, and pushes the result via the caller's pushFn
+    // (which differs between the two formats: role:"tool" vs role:"user").
+    async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, actionsThisTurn, pushFn) {
+        let pendingGifUrl = null
+        for (const { name, args } of calls) {
+            if (isSilentEffectTool(name)) {
+                actionsThisTurn.push(`${name}(${JSON.stringify(args)})`)
+            }
+            const gif = await this.runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, (text) => pushFn(name, text))
+            if (gif) pendingGifUrl = gif
+        }
+        return pendingGifUrl
+    }
+
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
         const baseTools = this.getToolsForChannel(channelId)
@@ -432,6 +473,15 @@ export class Lily {
         const foreignTools = opts.tools ?? []
         const foreignToolNames = new Set(foreignTools.map(t => t.function?.name).filter(Boolean))
         const scratch = []
+
+        // Tracks silent-effect tool calls made THIS turn so we can annotate the
+        // persisted convo-history entry (not what's actually said) — otherwise a
+        // successful action/write and a pure-chat turn look identical in her own
+        // history, and over a long session she starts pattern-matching toward
+        // "we're just chatting" even on turns where she acted. Works for any
+        // channel — minecraft_action tools simply never appear outside the
+        // minecraft channel since they're filtered out of the tool list there.
+        const actionsThisTurn = []
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
             log(`🔄 [LOOP ${i + 1}]`)
@@ -470,15 +520,24 @@ export class Lily {
                 log(`🔧 [NATIVE] ${msg.tool_calls.map(tc => tc.function.name).join(", ")}`)
                 scratch.push({ role: "assistant", content: msg.content ?? "", tool_calls: msg.tool_calls })
 
-                for (const tc of msg.tool_calls) {
+                const calls = msg.tool_calls.map(tc => {
                     let args = {}
                     try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
-                    const gif = await this.runOneToolCall(
-                        channelId, tc.function.name, args, tracker, toolsUsedThisTurn,
-                        (text) => scratch.push({ role: "tool", tool_call_id: tc.id, content: text })
-                    )
-                    if (gif) pendingGifUrl = gif
-                }
+                    return { id: tc.id, name: tc.function.name, args }
+                })
+
+                const idByName = new Map(calls.map(c => [c.name + JSON.stringify(c.args), c.id]))
+                const gif = await this.runToolCalls(
+                    channelId, calls, tracker, toolsUsedThisTurn, actionsThisTurn,
+                    (name, text) => {
+                        // find matching call's id (calls are unique enough per-turn for this lookup;
+                        // falls back to iterating if args collide across ids)
+                        const call = calls.find(c => c.name === name && !c._used)
+                        if (call) call._used = true
+                        scratch.push({ role: "tool", tool_call_id: call?.id, content: text })
+                    }
+                )
+                if (gif) pendingGifUrl = gif
                 continue
             }
 
@@ -487,13 +546,11 @@ export class Lily {
                 if (calls.length) {
                     scratch.push({ role: "assistant", content })
 
-                    for (const tc of calls) {
-                        const gif = await this.runOneToolCall(
-                            channelId, tc.name, tc.args, tracker, toolsUsedThisTurn,
-                            (text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
-                        )
-                        if (gif) pendingGifUrl = gif
-                    }
+                    const gif = await this.runToolCalls(
+                        channelId, calls, tracker, toolsUsedThisTurn, actionsThisTurn,
+                        (_name, text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
+                    )
+                    if (gif) pendingGifUrl = gif
                     continue
                 }
 
@@ -517,7 +574,14 @@ export class Lily {
             }
 
             if (content && content.toLowerCase() !== "none") {
-                this.pushToConvoHistory(channelId, { role: "assistant", content })
+                // Persisted history gets a marker for silent-effect tools so future
+                // turns can "see" that she acted/wrote/sent something — the reply
+                // actually sent to chat/game (the returned `text`) is untouched.
+                const historyContent = actionsThisTurn.length
+                    ? `${content} [did: ${actionsThisTurn.join(", ")}]`
+                    : content
+
+                this.pushToConvoHistory(channelId, { role: "assistant", content: historyContent })
                 log(`✅ [LILY REPLY] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
                 return { text: content, gifUrl: pendingGifUrl }
             }

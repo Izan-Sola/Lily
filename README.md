@@ -7,7 +7,7 @@
 - Eventually I want her to have a vtuber model.
 
 #### current todos so i dont forget
-- make break action actually require the correct tools and blocks drop correct item
+- ~~make break action actually require the correct tools and blocks drop correct item~~ DONE
 - ~~manage her entire inventory, not just hotbar slots~~ DONE
 - make her sleep when u sleep, mount on a boat/minecart with you.
 - dedicated specifically named dc voice channel for when playing mc survival (chatting there goes threough the mc pipeline)
@@ -15,6 +15,7 @@
 - Make drop tool optionally require to specify the amount to throw.
 - break closest generic tool either require amount of blocks to break (since she cant see generic blocks in her system prompt she migt not call it multiple times herself) or try to imrpove the instructions in her prompt
 - make her autowear armor if its better than what she currently has
+- give her info of current biome, time of the day, weather...
 
 ## Stuff used
 

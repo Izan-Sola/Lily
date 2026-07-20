@@ -17,6 +17,7 @@
 - break closest generic tool either require amount of blocks to break (since she cant see generic blocks in her system prompt she migt not call it multiple times herself) or try to imrpove the instructions in her prompt
 - ~~make her autowear armor if its better than what she currently has~~ DONE
 - give her info of current biome, time of the day, weather...
+- on the automatic prompt loop for autonomous action, give her recommendations depending on the environament. mining if in a cave per example. prolly also show her last user message since if it contains an order like "attack anything you see" or "mine all iron you can find" then it would make her act on that without having to be telling her what to do constantly or at specific moments.
 
 ## Stuff used
 

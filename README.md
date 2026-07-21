@@ -2,6 +2,7 @@
 ### initially supposed to be a hytale bot, but oh well...
 
 - My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
+- This is the code for her brain, where many functions are centralized (discord, minecraft, coding and whatever I add in the future). You are free to make use of it for your own thing if you want.
 - Related: https://github.com/Izan-Sola/Lily-Minecraft , https://github.com/Izan-Sola/LilyBlog , https://github.com/Izan-Sola/LilyGnomeWidget
 - Currently working on her being able to play survival minecraft decently.
 - Eventually I want her to have a vtuber model.
@@ -11,11 +12,12 @@
 - ~~manage her entire inventory, not just hotbar slots~~ DONE
 - make her sleep when u sleep, mount on a boat/minecart with you.
 - dedicated specifically named dc voice channel for when playing mc survival (chatting there goes threough the mc pipeline)
-- uh, drop use action and rename it to eat? cuz what the helly is she realistically gonna do with other stuff anywas.
-- Make drop tool optionally require to specify the amount to throw.
+- ~~uh, drop use action and rename it to eat? cuz what the helly is she realistically gonna do with other stuff anywas.~~ DONE
+- ~~Make drop tool require to specify the amount to throw.~~ DONE
 - break closest generic tool either require amount of blocks to break (since she cant see generic blocks in her system prompt she migt not call it multiple times herself) or try to imrpove the instructions in her prompt
-- make her autowear armor if its better than what she currently has
+- ~~make her autowear armor if its better than what she currently has~~ DONE
 - give her info of current biome, time of the day, weather...
+- on the automatic prompt loop for autonomous action, give her recommendations depending on the environament. mining if in a cave per example. prolly also show her last user message since if it contains an order like "attack anything you see" or "mine all iron you can find" then it would make her act on that without having to be telling her what to do constantly or at specific moments.
 
 ## Stuff used
 

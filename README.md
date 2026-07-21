@@ -2,7 +2,7 @@
 ### initially supposed to be a hytale bot, but oh well...
 
 - My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
-- This is the code for her brain, where many functions are centralized (discord, minecraft, coding and whatever I add in the future). You are free to make use of it for your own thing if you want.
+- This is the code for her brain, where many functions are centralized while trying to keep it clean (discord, minecraft, coding and whatever I add in the future). You are free to make use of it for your own thing if you want.
 - Related: https://github.com/Izan-Sola/Lily-Minecraft , https://github.com/Izan-Sola/LilyBlog , https://github.com/Izan-Sola/LilyGnomeWidget
 - Currently working on her being able to play survival minecraft decently.
 - Eventually I want her to have a vtuber model.

@@ -153,6 +153,8 @@ async function _handleEvent(event) {
             if (!event.message.toLowerCase().includes("lily") && !event.message.toLowerCase().startsWith("!")) break
             console.log(`[MC CHAT] ${player}: ${message}`)
 
+            getStateController()?.setLastUserMessage(player, message)  
+
             try {
                 const aiReply = await aiInstance.chat(
                     "minecraft",
@@ -281,13 +283,12 @@ async function _handleEvent(event) {
             break
         }
         case "environment_scan": {
-            //   console.log('[DEBUG] env_scan received:', JSON.stringify(event)) // TEMP
             if (stateController) {
                 stateController.hostiles = event.hostiles ?? []
                 stateController.passives = event.passives ?? []
                 stateController.blocksOfInterest = event.blocks_of_interest ?? []
                 stateController.inventoryItems = event.inventory ?? {}
-                // console.log('[DEBUG] after assign:', stateController.inventoryItems, stateController.hostiles) // TEMP
+                stateController.environmentInfo = event.environment_info ?? {}   // NEW
             }
             break
         }

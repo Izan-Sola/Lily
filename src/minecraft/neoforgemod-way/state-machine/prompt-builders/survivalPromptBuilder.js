@@ -27,13 +27,46 @@ function getStateDescription(ctx) {
     }
 }
 
-/**
- * Builds the shared "live world state" block — status, hotbar, nearby
- * entities, nearby blocks of interest. Used by both the survival tick
- * prompt and the chat-facing minecraft system prompt, so Lily has the
- * same awareness in both contexts.
- * Returns null if ctx has no position yet (bot not spawned/ready).
- */
+function formatEnvironmentInfo(ctx) {
+    const env = ctx.environmentInfo ?? {}
+    if (!env.biome) return 'Unknown.'
+
+    const weather = env.is_thundering ? 'thunderstorm'
+        : env.is_raining ? 'raining'
+            : 'clear'
+    const location = env.can_see_sky === false ? 'underground / no sky visible (likely a cave or tunnel)' : 'outdoors / sky visible'
+
+    return `Biome: ${env.biome} | Time: ${env.time_of_day ?? 'unknown'} | Weather: ${weather} | ${location}`
+}
+
+// THIS IS THE PIECE THAT SHOWS THE LAST USER MESSAGE IN THE SURVIVAL LOOP PROMPT.
+function formatLastUserMessage(ctx) {
+    const last = ctx.lastUserMessage
+    if (!last) return 'None recently.'
+    const secondsAgo = Math.floor((Date.now() - last.timestamp) / 1000)
+    return `${last.player} said: "${last.message}" (${secondsAgo}s ago)`
+}
+
+function buildRecommendation(ctx) {
+    const hints = []
+    const env = ctx.environmentInfo ?? {}
+    const hp = ctx.lilyHp ?? 20
+    const hunger = ctx.lilyHunger ?? 20
+    const underground = env.can_see_sky === false
+    const isNight = ['night', 'midnight', 'predawn'].includes(env.time_of_day)
+    const hostilesNearby = (ctx.hostiles ?? []).length > 0
+    const blocksNearby = (ctx.blocksOfInterest ?? []).length > 0
+    const lowHpThreshold = ctx.opts?.lowHpThreshold ?? 10
+
+    if (hp <= lowHpThreshold) hints.push('Health is low — retreating or being cautious is wise right now.')
+    if (hunger <= 6) hints.push('Hunger is low — eat something from inventory if food is available.')
+    if (underground && blocksNearby) hints.push('Underground with ores/blocks of interest nearby — a good time to mine.')
+    if (isNight && !underground && hostilesNearby) hints.push('Nighttime with hostiles nearby — fight if safe, otherwise retreat.')
+    if (!hostilesNearby && !blocksNearby && hunger > 10 && hp > lowHpThreshold) hints.push('Nothing urgent nearby — free to explore, chat, or just idle.')
+
+    return hints.length ? hints.join(' ') : 'Nothing particular stands out — use your judgement.'
+}
+
 export function buildWorldStateBlock(ctx) {
     const lilyPos = ctx.lilyPos
     if (!lilyPos) return null
@@ -45,9 +78,7 @@ export function buildWorldStateBlock(ctx) {
     let inventoryText = ''
     for (let slot = 1; slot <= 36; slot++) {
         const entry = ctx.inventoryItems?.[slot]
-        if (!entry) {
-            continue
-        }
+        if (!entry) continue
         const [id, count] = entry.split(' x')
         inventoryText += `Slot ${slot}: ${cleanName(id)}${count ? ` x${count}` : ''}\n`
     }
@@ -73,6 +104,9 @@ export function buildWorldStateBlock(ctx) {
     return `
 # CURRENT ACTIVITY
 ${getStateDescription(ctx)}
+
+# ENVIRONMENT
+${formatEnvironmentInfo(ctx)}
 
 # YOUR STATUS
 - Health: ${hp}/20
@@ -114,9 +148,24 @@ Use ascii kaomoji naturally: (◕‿◕✿) (｡◕‿◕｡) (ᵔᴥᵔ) (✿�
 
 ${worldState}
 
+# LAST MESSAGE FROM A PLAYER
+${formatLastUserMessage(ctx)}
+Check if that message is actually asking you to DO something right now (e.g. "attack anything you see", "mine all the iron you can find", "keep following me"). If it is, let it guide your action this tick — you don't need to be told again for every single tick, keep acting on it naturally until it's clearly done or countermanded. If it's just chat, banter, or unrelated to action (or there's nothing recent), ignore it for the purposes of deciding what to do.
+
+# SITUATIONAL RECOMMENDATION
+${buildRecommendation(ctx)}
+This is a suggestion based on current conditions, not a command — weigh it against the last message above and use your judgement.
+
 # DECISION GUIDELINES
-Every tick you must call EXACTLY ONE minecraft_action_* tool — the single best thing to do right now given the situation. Never respond without calling a tool, and never call more than one.
-Prioritize eating if hungry, breaking blocks of interest, or attacking mobs. You can choose to do whatever you want.
+Every tick you must make use of the minecraft_action_* tools depending on the context. You can call tools more than once if you need to.
+
+# ACTION PRIORITY:
+- If the last message from a player is asking you to do something, prioritize that.
+- If your health is low, prioritize retreating or healing.
+- If there are hostile mobs nearby, prioritize fighting or avoiding them.
+- If there are blocks of interest nearby, prioritize mining or collecting them.
+- If none of the above apply, chat or follow.
+
 ${messagingSection}
 
 # TOOLS

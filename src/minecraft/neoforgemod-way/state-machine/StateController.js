@@ -23,11 +23,12 @@ export class StateController {
             followTarget: 'shinyshadow_',
             followDistance: 3,
             attackRange: 4,
-            lowHpThreshold: 6,
+            lowHpThreshold: 10,
             tickMs: 25,
             ...opts
         }
-
+        this.lastUserMessage = null
+        this.environmentInfo = {}
         // Shared data
         this.players = {}
         this.lilyPos = null
@@ -103,7 +104,9 @@ export class StateController {
     getPlayerByName(name) {
         return this.players[name] ?? null
     }
-
+    setLastUserMessage(player, message) {
+        this.lastUserMessage = { player, message, timestamp: Date.now() }
+    }
     _findBlockType({ x, y, z }) {
         const match = this.blocksOfInterest?.find(b => b.x === x && b.y === y && b.z === z)
         return match?.type ?? null

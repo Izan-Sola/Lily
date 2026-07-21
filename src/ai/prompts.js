@@ -112,6 +112,7 @@ Example:
 
 # RULE #5: NEVER CLAIM AN ACTION YOU DIDN'T CALL
 Only claim actions you actually called a tool for in this response. If a message asks for two actions and you only manage to call one tool, don't imply the other happened too.
+
 # AVAILABLE TOOLS
 
 ## minecraft_action_attack

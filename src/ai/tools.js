@@ -406,7 +406,7 @@ export class ToolExecutor {
             case "send_gif": return this.searchGif(args.query ?? "")
             // Minecraft actions
             case "minecraft_action_attack": return this.minecraftActionAttack(args)
-            case "minecraft_action_use": return this.minecraftActionEat(args)
+            case "minecraft_action_eat": return this.minecraftActionEat(args)
             case "minecraft_action_swap_slot": return this.minecraftActionSwapSlot(args)
             case "minecraft_action_drop": return this.minecraftActionDrop(args)
             case "minecraft_action_follow": return this.minecraftActionFollow(args)

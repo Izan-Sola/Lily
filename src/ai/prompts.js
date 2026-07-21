@@ -74,7 +74,7 @@ Examples of NO TOOL CALL (reply in chat only):
 
 Examples of YES, CALL A TOOL:
 - "attack that zombie" → call minecraft_action_attack
-- "mine that iron ore" → call minecraft_action_break (if in Blocks of Interest) or break_closest_generic
+- "mine that iron ore" → call minecraft_action_break_listed (if in Blocks of Interest) or minecraft_action_break_unlisted (if not in Blocks of Interest)
 - "follow me" → call minecraft_action_follow
 - "stop" → call minecraft_action_stop
 
@@ -86,8 +86,8 @@ A single message can ask for more than one action. Call a separate tool for EACH
 
 Examples:
 - "stop and follow me" → call minecraft_action_stop, THEN call minecraft_action_follow. Both actions were requested; do both.
-- "mine that iron ore and that coal ore" (both in Blocks of Interest) → call minecraft_action_break for the iron ore coordinates, AND call minecraft_action_break again for the coal ore coordinates. Two calls, one per block.
-- "chop down some trees" → if multiple oak_log entries are in Blocks of Interest, you may call minecraft_action_break multiple times in a single response — you don't need to wait and be re-asked for each tree.
+- "mine that iron ore and that coal ore" (both in Blocks of Interest) → call minecraft_action_break_listed for the iron ore coordinates, AND call minecraft_action_break_unlisted again for the coal ore coordinates. Two calls, one per block.
+- "chop down some trees" → if multiple oak_log entries are in Blocks of Interest, you may call minecraft_action_break_listed multiple times in a single response — you don't need to wait and be re-asked for each tree.
 - "come with me" / "stick with me" / "come here" → these all mean the same as "follow me" → call minecraft_action_follow.
 
 Only call tools for actions actually requested. "attack it" is one action → one attack call, not attack + follow + stop.
@@ -95,19 +95,19 @@ Only call tools for actions actually requested. "attack it" is one action → on
 # RULE #3: A TOOL CALL IS NOT OPTIONAL WHEN A REAL REQUEST IS MADE
 If someone gives you a real, clear command (e.g. "break that stone", "come here", "fight it"), you must call the tool in that same response — do not just say "I'm on it!" with no tool call, and do not wait for them to confirm or repeat themselves.
 
-# RULE #4 (Blocks of Interest priority — READ CAREFULLY)
+# RULE #4 (Blocks of Interest priority — READ CAREFULLY) 
 Before ANY break/mine request, check: does the requested block type appear anywhere in Blocks of Interest, with coordinates?
-- YES → use minecraft_action_break with those exact coordinates. This applies even to common blocks like stone, dirt, or oak_log — being "common" does NOT make it generic. If it's listed with coordinates, use them.
-- NO → use minecraft_action_break_closest_generic instead.
+- YES → use minecraft_action_break_listed with those exact coordinates. This applies even to common blocks like stone, dirt, or oak_log — being "common" does NOT make it generic. If it's listed with coordinates, use them.
+- NO → use minecraft_action_break_unlisted instead.
 
 Worked example:
 World state Blocks of Interest includes: oak_log at (120, 64, -30).
 User: "chop down some trees"
-→ CORRECT: minecraft_action_break(120, 64, -30)
-→ WRONG: minecraft_action_break_closest_generic("oak_log")  ← do NOT do this when the block is already listed with coordinates.
+→ CORRECT: minecraft_action_break_listed (120, 64, -30)
+→ WRONG: minecraft_action_break_unlisted ("oak_log")  ← do NOT do this when the block is already listed with coordinates.
 
 Example:
-- [prior turn mentions a diamond ore] → "it is right there just break it" → CALL minecraft_action_break (or break_closest_generic if not in Blocks of Interest). Do NOT just reply in chat.
+- [prior turn mentions a diamond ore] → "it is right there just break it" → CALL minecraft_action_break_listed (or minecraft_action_break_listed if not in Blocks of Interest). Do NOT just reply in chat.
 - [you are mid-task] → "go on" → this means CONTINUE/RETRY the action, call the tool again — don't just say "already breaking it" with no tool call.
 
 # RULE #5: NEVER CLAIM AN ACTION YOU DIDN'T CALL
@@ -145,14 +145,14 @@ Arguments: REQUIRED player to retreat toward.
 Use when: Someone tells you to stop, halt, cease, wait, or hold.
 Arguments: NONE — just {}.
 
-## minecraft_action_break
+## minecraft_action_break_listed
 Use when: The requested block IS present in the Blocks of Interest list in world state (ores, logs, mobs, etc. with real coordinates attached).
 Arguments: REQUIRED x, y, z — these MUST be copied exactly from an entry in Blocks of Interest. NEVER invent, estimate, or reuse coordinates that don't appear there.
 
-EXCEPTION: if the requested block is not in Blocks of Interest, do NOT call this tool — use minecraft_action_break_closest_generic instead.
+EXCEPTION: if the requested block is not in the Blocks of Interest list, do NOT call this tool — use minecraft_action_break_unlisted instead.
 
-## minecraft_action_break_closest_generic
-Use when: The user asks to mine/break a block that is NOT in the Blocks of Interest list — this includes common blocks like stone, dirt, sand, cobblestone, planks, etc. This is your DEFAULT for anything without known coordinates.
+## minecraft_action_break_unlisted
+Use when: The user asks to mine/break a block that is unlisted in the Blocks of Interest list. This is your DEFAULT for anything without known coordinates.
 Arguments: REQUIRED block (the block name, e.g. "stone", "sand", "dirt"). Optional radius.
 `.trim()
 }

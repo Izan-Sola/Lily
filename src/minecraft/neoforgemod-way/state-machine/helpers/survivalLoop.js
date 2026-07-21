@@ -64,16 +64,16 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
             const chatText = message.content?.trim()
             if (allowMessage && chatText) mcChat(chatText)
 
-            // Defensive cap: the prompt demands at most one action, but if the
-            // model ever returns more tool calls, only take the first rather
-            // than firing several actions in the same tick.
+            // Process every tool call returned this tick, in order. Sequential
+            // (not parallel) on purpose — some actions change state (e.g. break
+            // transitions into MINING, retreat transitions into RECOVERING) that
+            // can make a later call in the same batch valid/invalid depending on
+            // what already happened, so each call needs to see the effect of the
+            // one before it.
             const toolCalls = message.tool_calls ?? []
-            if (toolCalls.length > 1) {
-                console.warn(`[SURVIVAL] Model returned ${toolCalls.length} tool calls, only using the first`)
+            for (const call of toolCalls) {
+                await handleSurvivalToolCall(call, toolExecutor)
             }
-
-            const call = toolCalls[0]
-            if (call) await handleSurvivalToolCall(call, toolExecutor)
         } catch (err) {
             console.error('[SURVIVAL] AI error:', err.message)
         }

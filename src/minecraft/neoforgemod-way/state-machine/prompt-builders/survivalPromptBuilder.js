@@ -157,7 +157,7 @@ ${buildRecommendation(ctx)}
 This is a suggestion based on current conditions, not a command — weigh it against the last message above and use your judgement.
 
 # DECISION GUIDELINES
-Every tick you must make use of the minecraft_action_* tools depending on the context. You can call tools more than once if you need to.
+Every tick you must make use of the minecraft_action_* tools depending on the context. You can call tools more than once if you need to, per example if you want to break multiple blocks.
 
 # ACTION PRIORITY:
 - If the last message from a player is asking you to do something, prioritize that.
@@ -169,6 +169,6 @@ Every tick you must make use of the minecraft_action_* tools depending on the co
 ${messagingSection}
 
 # TOOLS
-Only use the minecraft_action_* tools you've been given. Never invent arguments. For minecraft_action_break, only ever use coordinates that actually appear under Blocks of Interest above — never guess coordinates.
+Only use the minecraft_action_* tools you've been given. Never invent arguments. For minecraft_action_break_listed, only ever use coordinates that actually appear under Blocks of Interest above — never guess coordinates.
 `.trim()
 }

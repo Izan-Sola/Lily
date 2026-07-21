@@ -412,8 +412,8 @@ export class ToolExecutor {
             case "minecraft_action_follow": return this.minecraftActionFollow(args)
             case "minecraft_action_retreat": return this.minecraftActionRetreat(args)
             case "minecraft_action_stop": return this.minecraftActionStop()
-            case "minecraft_action_break": return this.minecraftActionBreak(args)
-            case "minecraft_action_break_closest_generic": return this.minecraftActionBreakClosestGeneric(args)
+            case "minecraft_action_break_listed": return this.minecraftActionBreak(args)
+            case "minecraft_action_break_unlisted": return this.minecraftActionBreakClosestGeneric(args)
             default:
                 console.warn(`⚠️ [TOOL] Unknown: ${name}`)
                 return `Unknown tool: ${name}`
@@ -606,8 +606,8 @@ export const TOOLS = [
     {
         type: "function",
         function: {
-            name: "minecraft_action_break",
-            description: "Mine a SPECIFIC block that is listed in the 'Blocks of Interest' section of world state, using its EXACT coordinates. ALWAYS check Blocks of Interest first for ANY break/mine request — if the requested block type (oak_log, iron_ore, stone, anything) appears there with coordinates, you MUST use this tool with those exact coordinates, even if the block type is something 'common' like stone or dirt. Only fall back to minecraft_action_break_closest_generic if the block type does NOT appear anywhere in Blocks of Interest. Call this once per block — call it again (with different coordinates) if you need to mine several listed blocks in one request.",
+            name: "minecraft_action_break_listed",
+            description: "Mine a SPECIFIC block that is listed in the 'Blocks of Interest' section of world state, using its EXACT coordinates. ALWAYS check Blocks of Interest first for ANY break/mine request — if the requested block type (oak_log, iron_ore, stone, anything) appears there with coordinates, you MUST use this tool with those exact coordinates, even if the block type is something 'common' like stone or dirt. Only fall back to minecraft_action_break_unlisted if the block type does NOT appear anywhere in Blocks of Interest. Call this once per block — call it again (with different coordinates) if you need to mine several listed blocks in one request.",
             parameters: {
                 type: "object",
                 properties: {
@@ -622,8 +622,8 @@ export const TOOLS = [
     {
         type: "function",
         function: {
-            name: "minecraft_action_break_closest_generic",
-            description: "Mine the closest block of a given TYPE by name, no coordinates. ONLY use this when the requested block type does NOT appear in the Blocks of Interest list. Before calling this, double-check: is this block type actually listed in Blocks of Interest with coordinates? If yes, use minecraft_action_break instead. This tool is the fallback, not the default.",
+            name: "minecraft_action_break_unlisted",
+            description: "Mine a block that is NOT listed in the 'Blocks of Interest' section of world state. ONLY use this when the requested block type does NOT appear in the Blocks of Interest list. Before calling this, double-check: is this block type actually listed in Blocks of Interest with coordinates? If yes, use minecraft_action_break_listed instead. This tool is the fallback, not the default.",
             parameters: {
                 type: "object",
                 properties: {

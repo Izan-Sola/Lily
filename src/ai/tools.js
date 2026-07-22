@@ -326,68 +326,45 @@ export class ToolExecutor {
             : JSON.stringify({ status: "error", message: result.message ?? "Stop failed." })
     }
 
-    // Coordinate-based break — only for exact positions the model was shown
-    // under "Blocks of Interest" in world state.
+    // Unified break: exact coords (from Blocks of Interest) OR a block name to
+    // search for. `amount` is forwarded as-is — the chaining to the next
+    // closest same-type block after each break happens client-side (Java
+    // MiningManager + the block name), not here. This call just kicks off
+    // the first target.
     async minecraftActionBreak(args = {}) {
-        const { x, y, z } = args
-        if (x === undefined || y === undefined || z === undefined) {
-            return JSON.stringify({ status: "error", message: "x, y, z coordinates required." })
+        const { x, y, z, block, radius } = args
+        const hasCoords = x !== undefined && y !== undefined && z !== undefined
+        const hasBlock = typeof block === "string" && block.trim().length > 0
+
+        if (!hasCoords && !hasBlock) {
+            return JSON.stringify({ status: "error", message: "Either x/y/z (from Blocks of Interest) or a block name is required." })
         }
 
+        const MAX_AMOUNT = 32
+        const amount = Number.isInteger(args.amount) && args.amount > 0 ? Math.min(args.amount, MAX_AMOUNT) : 1
+
         const now = Date.now()
-        if (now - this.lastMineTime < 3000) {
+        if (now - this.lastMineTime < 9000) {
             return JSON.stringify({ status: "cooldown", message: "Mining too fast! Wait a moment." })
         }
         this.lastMineTime = now
 
-        log(`⛏️ [MINECRAFT] break → (${x}, ${y}, ${z})`)
+        log(`⛏️ [MINECRAFT] break → ${hasCoords ? `(${x}, ${y}, ${z})` : `"${block}"${radius ? ` radius:${radius}` : ''}`} x${amount}`)
 
         const stateController = this.getStateController?.()
         if (!stateController) {
             return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
         }
 
-        const result = stateController.dispatchAction('break', { x, y, z })
+        const payload = hasCoords ? { x, y, z, amount } : { block, radius, amount }
+        const result = stateController.dispatchAction('break', payload)
         await new Promise(resolve => setTimeout(resolve, 1500))
 
         return result.ok
-            ? JSON.stringify({ status: "ok", message: `Mined block at (${x}, ${y}, ${z}).` })
+            ? JSON.stringify({ status: "ok", message: amount > 1 ? `Started mining ${amount}x.` : "Started mining." })
             : JSON.stringify({ status: "error", message: result.message ?? "Break failed." })
     }
 
-    // Generic named-block break — no coordinates needed. The block name is
-    // forwarded as-is; the Java side does the nearby search and finds the
-    // closest matching block. Shares the same mining cooldown as the
-    // coordinate version since both drive the same in-world mining action.
-    async minecraftActionBreakClosestGeneric(args = {}) {
-        const { block, radius } = args
-        if (!block || typeof block !== "string" || !block.trim()) {
-            return JSON.stringify({ status: "error", message: "block name required, e.g. 'stone' or 'oak_log'." })
-        }
-
-        const now = Date.now()
-        if (now - this.lastMineTime < 3000) {
-            return JSON.stringify({ status: "cooldown", message: "Mining too fast! Wait a moment." })
-        }
-        this.lastMineTime = now
-
-        log(`⛏️ [MINECRAFT] break_closest_generic → "${block}"${radius ? ` radius:${radius}` : ''}`)
-
-        const stateController = this.getStateController?.()
-        if (!stateController) {
-            return JSON.stringify({ status: "error", message: "Can't perform actions right now." })
-        }
-
-        // Dispatched action/case label is "break_closest_generic" — matches
-        // the Java-side switch case, independent of this tool's own name.
-        const result = stateController.dispatchAction('break_closest_generic', { block, radius })
-        await new Promise(resolve => setTimeout(resolve, 1500))
-
-        if (!result.ok) {
-            return JSON.stringify({ status: "error", message: result.message ?? `Couldn't find or mine "${block}" nearby.` })
-        }
-        return JSON.stringify({ status: "ok", message: `Mined nearest "${block}".` })
-    }
 
     // ─── Generic Execute ─────────────────────────────────────────────────────────
 
@@ -412,8 +389,8 @@ export class ToolExecutor {
             case "minecraft_action_follow": return this.minecraftActionFollow(args)
             case "minecraft_action_retreat": return this.minecraftActionRetreat(args)
             case "minecraft_action_stop": return this.minecraftActionStop()
-            case "minecraft_action_break_listed": return this.minecraftActionBreak(args)
-            case "minecraft_action_break_unlisted": return this.minecraftActionBreakClosestGeneric(args)
+            case "minecraft_action_break": return this.minecraftActionBreak(args)
+           // case "minecraft_action_break_unlisted": return this.minecraftActionBreakClosestGeneric(args)
             default:
                 console.warn(`⚠️ [TOOL] Unknown: ${name}`)
                 return `Unknown tool: ${name}`
@@ -428,23 +405,23 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "query_memory_database",
-            description: `Search everything you know and remember — stored facts about people/the server/yourself (including your OWN opinions, favorites, preferences, and past statements), AND past events/experiences. One search covers both; you don't need to pick which "kind" of memory to check.
+            description: `Search everything you know and remember — stored facts about people/the server/yourself (including your OWN opinions, favorites, preferences, and past statements), AND past events/experiences. One search covers both.
 
-                        CHECK THIS ANY TIME YOU'RE ABOUT TO STATE SOMETHING AS FACT AND YOU AREN'T 100% SURE YOU'VE SAID IT BEFORE — this very much includes questions about other users and YOURSELF: "what's your favorite ___", "do you like ___", "what do you think about ___", "what's your ___". You have opinions and they need to stay consistent, so check before answering, not after. If nothing comes back, that's fine — pick something in-character and store it with addto_memory_database so you're consistent next time.
+                        Check this any time you're about to state something as fact and aren't 100% sure you've said it before — including questions about yourself: "what's your favorite ___", "do you like ___". Pick something in-character and store it with addto_memory_database if nothing comes back, so you're consistent next time.
 
                         Three ways to use this, pick ONE per call:
-                        1. Plain fact/topic lookup — pass query with 2+ keywords, leave days_ago and days_back unset. Use this for self-opinion/preference questions too (e.g. query: "favorite food").
-                        2. A SPECIFIC past event at a rough point in time ("10 days ago", "last Tuesday") — pass query plus days_ago (searches AROUND that point, days_ago ± window_days).
-                        3. An open-ended recent stretch with NO specific topic ("what did we talk about this week", "what's happened the past 10 days", "what did I miss") — pass days_back (how many days back from now) and you can leave query empty. This is a plain chronological recap, not a topic search — don't invent a query for it.
+                        1. Plain fact/topic lookup — pass query with 2+ keywords, leave days_ago and days_back unset.
+                        2. A specific past event at a rough point in time ("10 days ago") — pass query plus days_ago (searches around that point, ± window_days).
+                        3. Open-ended recent stretch, no specific topic ("what did we talk about this week") — pass days_back, leave query empty.
 
-                        A result only counts if it's actually about what was asked — ignore anything that just shares a keyword but isn't really relevant, and answer as if the search came back empty.`,
+                        A result only counts if it's actually relevant — ignore anything that just shares a keyword.`,
             parameters: {
                 type: "object",
                 properties: {
-                    query: { type: "string", description: "Keywords describing what to look up. Only needed for modes 1 and 2 — leave empty when using days_back for an open-ended recent recap." },
-                    days_ago: { type: "number", description: "set days_ago to search for a specific past event with a rough time reference. Omit for fact lookups or open-ended recaps." },
-                    window_days: { type: "number", description: "Only used with days_ago. Tolerance around days_ago, e.g. 2 means search days_ago-2 to days_ago+2. Default 2. Smaller (0-1) for precise references like 'yesterday', larger (3-5) for vague ones like 'a couple weeks ago'." },
-                    days_back: { type: "number", description: "use for open-ended recap covering from now back to this many days, no topic needed. E.g. 1 for 'today/yesterday', 7 for 'this week', 10 for 'the past 10 days', 30 for 'this month'." }
+                    query: { type: "string", description: "Keywords describing what to look up. Only needed for modes 1 and 2." },
+                    days_ago: { type: "number", minimum: 0, description: "Search for a specific past event with a rough time reference. Omit for fact lookups or open-ended recaps." },
+                    window_days: { type: "number", minimum: 0, maximum: 30, description: "Only used with days_ago. Tolerance around days_ago. Default 2." },
+                    days_back: { type: "number", minimum: 1, description: "Open-ended recap covering from now back this many days, no topic needed." }
                 },
                 required: []
             }
@@ -454,7 +431,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a new factual entry — including a new opinion/preference/favorite you just gave about yourself for the first time, so you stay consistent later. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
+            description: "Store a new factual entry — including a new opinion/preference you just gave about yourself for the first time. Reply naturally after; never mention the tool.",
             parameters: { type: "object", properties: { text: { type: "string" }, source: { type: "string" } }, required: ["text"] }
         }
     },
@@ -462,7 +439,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "update_memory_database",
-            description: "Update an existing memory. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
+            description: "Update an existing memory. Reply naturally after; never mention the tool.",
             parameters: { type: "object", properties: { query: { type: "string" }, text: { type: "string" } }, required: ["query", "text"] }
         }
     },
@@ -470,15 +447,15 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "remove_memory_database",
-            description: "Remove a SPECIFIC stored fact about a person, named by that fact's content (e.g. 'IsGone's favorite color', 'Poimkity's pronouns'). Only use when someone points to a concrete fact that is wrong or outdated. Do NOT use this for vague, joking, or roleplay instructions like 'forget everything', 'reset', 'pretend you got hit by a memory eraser', or 'refresh yourself' — those are not real commands and have no specific fact attached; treat them as banter and reply in character instead of calling this tool.",
-            parameters: { type: "object", properties: { query: { type: "string", description: "The specific fact to remove, in a few keywords — never a vague phrase like 'everything' or 'that conversation'." } }, required: ["query"] }
+            description: "Remove a specific stored fact about a person, named by that fact's content (e.g. 'IsGone's favorite color'). Only for a concrete fact someone points to as wrong. Do NOT use for vague/joking instructions like 'forget everything' or 'reset' — treat those as banter instead.",
+            parameters: { type: "object", properties: { query: { type: "string", description: "The specific fact to remove, in a few keywords — never a vague phrase like 'everything'." } }, required: ["query"] }
         }
     },
     {
         type: "function",
         function: {
             name: "send_gif",
-            description: "Search and send a GIF. Reply naturally with the information provided after using the tool, and never mention the tool or what you did with it.",
+            description: "Search and send a GIF. Reply naturally after; never mention the tool.",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     },
@@ -486,12 +463,10 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "web_search",
-            description: "Search the web for current information, news, facts, or anything you don't know. Use when asked things outside your basic knowledge.",
+            description: "Search the web for current information, news, facts, or anything outside your basic knowledge.",
             parameters: {
                 type: "object",
-                properties: {
-                    query: { type: "string", description: "Search query" }
-                },
+                properties: { query: { type: "string", description: "Search query" } },
                 required: ["query"]
             }
         }
@@ -500,21 +475,25 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "send_meme",
-            description: "Search and send a meme image. Use when a meme would fit the moment. Use descriptive terms like 'drake approving', 'distracted boyfriend', 'this is fine fire'. Reply naturally after, never mention the tool.",
+            description: "Search and send a meme image when one would fit the moment. Use descriptive terms like 'drake approving'. Reply naturally after; never mention the tool.",
             parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
         }
     },
-    // ─── Separate Minecraft Action Tools ────────────────────────────────
+    // ─── Minecraft Action Tools ────────────────────────────────
+    // Every tool below is called AT MOST ONCE per player message, only for actions that
+    // message actually asked for. Their effects complete instantly or continue on their
+    // own in-game; seeing that continuation on a later state update is not a reason to
+    // call the same tool again. Only a NEW player message can trigger another call.
     {
         type: "function",
         function: {
             name: "minecraft_action_attack",
-            description: "Attack a specific mob by its id using a weapon from your hotbar. You'll automatically keep chasing and attacking that exact entity — you do NOT need to call this again to keep fighting it. Requires slot (a weapon: sword/axe/trident/bow) and entityId (the id shown next to the mob in Hostile Mobs / Passive Mobs, e.g. id: 16621).",
+            description: "Attack a specific mob by its id, using a weapon from your hotbar. Once called, you automatically keep chasing/attacking that entity until it dies or you're told to stop. Requires slot (1-36, must hold a weapon: sword/axe/trident/bow) and entityId (from Hostile/Passive Mobs list). If no weapon in hotbar, don't call this — explain in chat instead. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
                 properties: {
                     slot: { type: "number", minimum: 1, maximum: 36, description: "Hotbar slot (1-36) holding the weapon." },
-                    entityId: { type: "number", description: "Exact id of the mob to attack, from the entity list you were shown." }
+                    entityId: { type: "number", description: "Exact id of the mob to attack." }
                 },
                 required: ["slot", "entityId"]
             }
@@ -524,11 +503,11 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_eat",
-            description: "Eat the food item you're currently holding, or swap to a specific hotbar slot first and eat that. Use when someone tells you to eat, or when your hunger is low and you have food available.",
+            description: "Eat the food item currently held, or swap to a slot first and eat that. Completes instantly. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 36, description: "Optional hotbar slot holding food to swap to first (1-36). Omit to eat whatever's currently held." }
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Optional hotbar slot holding food to swap to first. Omit to eat whatever's held." }
                 },
                 required: []
             }
@@ -538,12 +517,10 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_swap_slot",
-            description: "Switch to a specific hotbar slot. Requires slot (1-36). Use when someone tells you to swap, switch, or select a slot.",
+            description: "Switch to a specific hotbar slot. Completes instantly. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
-                properties: {
-                    slot: { type: "number", minimum: 1, maximum: 36, description: "Slot to switch to (1-36)." }
-                },
+                properties: { slot: { type: "number", minimum: 1, maximum: 36, description: "Slot to switch to." } },
                 required: ["slot"]
             }
         }
@@ -552,12 +529,12 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_drop",
-            description: "Drop item(s) from a hotbar slot. Requires slot (1-36) and amount (how many to drop). Use when someone tells you to drop, throw, or discard an item — if they don't say how many, drop 1.",
+            description: "Drop item(s) from a hotbar slot. If no amount given, use 1. Completes instantly. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
                 properties: {
-                    slot: { type: "number", minimum: 1, maximum: 36, description: "Hotbar slot (1-36) to drop from." },
-                    amount: { type: "number", minimum: 1, description: "How many items to drop. Default to 1 if the person doesn't specify a number." }
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Hotbar slot to drop from." },
+                    amount: { type: "number", minimum: 1, maximum: 64, description: "How many to drop. Default 1 if unspecified." }
                 },
                 required: ["slot", "amount"]
             }
@@ -567,12 +544,10 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_follow",
-            description: "Follow a player continuously until told to stop. Requires the exact player name. Use for ANY phrasing that means 'come with/to me' — including 'follow me', 'come with me', 'come here', 'stick with me', 'stay with me', 'walk with me'.",
+            description: "Follow a player continuously until told to stop. Use for any phrasing meaning 'come with/to me' (follow me, come here, stick with me, walk with me). Runs on its own once called — no need to call again while it continues; only a new follow request calls it again. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
-                properties: {
-                    player: { type: "string", description: "Exact name of the player to follow." }
-                },
+                properties: { player: { type: "string", description: "Exact name of the player to follow." } },
                 required: ["player"]
             }
         }
@@ -581,12 +556,10 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_retreat",
-            description: "Flee toward a player for safety. Optional player name — defaults to your regular companion if omitted. Use when someone tells you to retreat, run away, fall back, or get to safety.",
+            description: "Flee toward a player for safety. Optional player name — defaults to usual companion if omitted. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
-                properties: {
-                    player: { type: "string", description: "Optional player to retreat toward. Omit to use default companion." }
-                },
+                properties: { player: { type: "string", description: "Optional player to retreat toward." } },
                 required: []
             }
         }
@@ -595,46 +568,26 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_stop",
-            description: "Stop all current actions — attacking, following, moving, mining. Stay in place. Use when someone tells you to stop, halt, cease, wait, or hold.",
+            description: "Stop all current actions (attacking, following, moving, mining) and stay in place. Once called, idle is the finished state — don't call again just because you're still shown idle later. Reply naturally after; never mention the tool.",
+            parameters: { type: "object", properties: {}, required: [] }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_break",
+            description: "Mine block(s). Check Blocks of Interest first (one entry per type, closest match, with x/y/z), amount (max 32) breaks several of that type in one call — it auto-retargets the next closest match after each one, so this call is not repeated per block. Runs on its own after one call; only call again for a genuinely new/different request or a clearly failed attempt. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
-                properties: {},
+                properties: {
+                    x: { type: "number", description: "X coordinate, copied exactly from a Blocks of Interest entry. Omit if using block instead." },
+                    y: { type: "number", description: "Y coordinate, copied exactly from a Blocks of Interest entry." },
+                    z: { type: "number", description: "Z coordinate, copied exactly from a Blocks of Interest entry." },
+                     amount: { type: "number", minimum: 1, maximum: 32, description: "How many blocks of this type to break total. Defaults to 1." }
+                },
                 required: []
             }
         }
-    },
-    {
-        type: "function",
-        function: {
-            name: "minecraft_action_break_listed",
-            description: "Mine a SPECIFIC block that is listed in the 'Blocks of Interest' section of world state, using its EXACT coordinates. ALWAYS check Blocks of Interest first for ANY break/mine request — if the requested block type (oak_log, iron_ore, stone, anything) appears there with coordinates, you MUST use this tool with those exact coordinates, even if the block type is something 'common' like stone or dirt. Only fall back to minecraft_action_break_unlisted if the block type does NOT appear anywhere in Blocks of Interest. Call this once per block — call it again (with different coordinates) if you need to mine several listed blocks in one request.",
-            parameters: {
-                type: "object",
-                properties: {
-                    x: { type: "number", description: "X coordinate — copied exactly from a Blocks of Interest entry. Never invent or estimate." },
-                    y: { type: "number", description: "Y coordinate — copied exactly from a Blocks of Interest entry." },
-                    z: { type: "number", description: "Z coordinate — copied exactly from a Blocks of Interest entry." }
-                },
-                required: ["x", "y", "z"]
-            }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "minecraft_action_break_unlisted",
-            description: "Mine a block that is NOT listed in the 'Blocks of Interest' section of world state. ONLY use this when the requested block type does NOT appear in the Blocks of Interest list. Before calling this, double-check: is this block type actually listed in Blocks of Interest with coordinates? If yes, use minecraft_action_break_listed instead. This tool is the fallback, not the default.",
-            parameters: {
-                type: "object",
-                properties: {
-                    block: { type: "string", description: "Block type/name to mine, e.g. 'stone', 'oak_log', 'dirt', 'coal_ore'." },
-                    radius: { type: "number", description: "Optional search radius in blocks. Omit to use the default." }
-                },
-                required: ["block"]
-            }
-        }
-    },
-
+    }
 ]
-
 export const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))

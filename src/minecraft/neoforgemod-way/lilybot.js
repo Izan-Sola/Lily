@@ -14,6 +14,7 @@ export function requestDuelData(opponentName) {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+let triggerSurvivalTick = null
 let currentMode = process.env.MODE ?? 'bendcraft'
 let survivalLoopStarted = false
 
@@ -118,7 +119,8 @@ function _connect(port) {
 
         if (getMode() === 'bendcraft') requestAbilityData()
         if (getMode() === 'survival' && !survivalLoopStarted) {
-            startSurvivalLoop(stateController, mcSend, mcChat)
+            const { triggerTick } = startSurvivalLoop(stateController, mcSend, mcChat)
+            triggerSurvivalTick = triggerTick 
             survivalLoopStarted = true
         }
 
@@ -154,7 +156,7 @@ async function _handleEvent(event) {
             console.log(`[MC CHAT] ${player}: ${message}`)
 
             getStateController()?.setLastUserMessage(player, message)  
-
+          
             try {
                 const aiReply = await aiInstance.chat(
                     "minecraft",
@@ -405,10 +407,8 @@ async function _handleEvent(event) {
             stateController?.handleSourceBlock(event);
             break;
         }   
-        case "block_broken": {
-            stateController?.handleBlockBroken(event);
-            break;
-        }
+        case 'mining_started': stateController?.handleMiningStarted(event); break
+        case 'block_broken': stateController?.handleBlockBroken(event); break
            
     }
 }

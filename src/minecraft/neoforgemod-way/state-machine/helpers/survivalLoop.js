@@ -3,6 +3,7 @@ import { ToolExecutor, TOOLS } from '../../../../ai/tools.js'
 const ACTIONS_INTERVAL_MS = 30000
 const MSG_MIN_MS = 2 * 60 * 1000
 const MSG_MAX_MS = 6 * 60 * 1000
+const HISTORY_MAX_TURNS = 8 // keep last N exchanges threaded into the call
 
 // Survival loop only ever needs the minecraft_action_* tools — no memory/web/meme tools here.
 const SURVIVAL_TOOLS = TOOLS.filter(t => t.function.name.startsWith('minecraft_action_'))
@@ -13,12 +14,20 @@ function randomMsgDelay() {
 
 export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "http://localhost:11435") {
     let nextMessageAt = Date.now() + randomMsgDelay()
-
-    // Single shared executor — always reads the *current* stateController via the getter.
     const toolExecutor = new ToolExecutor({}, mcSend, () => stateController)
 
-    setInterval(async () => {
+    // history lives on stateController so it survives across ticks
+    if (!stateController.chatHistory) stateController.chatHistory = []
+    async function runTick() {
         if (!stateController) return
+
+        // Don't let the autonomous loop step on an action already in progress
+        // (started either by LOOP 1 / a direct command, or by a previous survival tick).
+        const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
+        if (busyStates.includes(stateController.currentStateName)) {
+            console.log(`[SURVIVAL] Skipping tick — busy in ${stateController.currentStateName}`)
+            return
+        }
 
         const allowMessage = Date.now() >= nextMessageAt
         if (allowMessage) {
@@ -26,8 +35,14 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
         }
 
         const prompt = buildSurvivalPrompt(stateController, { allowMessage })
-        console.log(`[SURVIVAL] Prompt (allowMessage=${allowMessage}):`, prompt)
+  
         if (!prompt) return
+
+        // thread history as real turns instead of collapsing into one string
+        const messages = [
+            ...stateController.chatHistory.slice(-HISTORY_MAX_TURNS),
+            { role: "user", content: prompt }
+        ]
 
         try {
             const response = await fetch(`${ollamaUrl}/v1/chat/completions`, {
@@ -36,7 +51,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
                 body: JSON.stringify({
                     model: "Lily",
                     stream: false,
-                    messages: [{ role: "user", content: prompt }],
+                    messages,
                     tools: SURVIVAL_TOOLS,
                     tool_choice: "auto",
                     temperature: 0.4,
@@ -57,19 +72,16 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
                 return
             }
 
-            console.log('[SURVIVAL] Lily response:', JSON.stringify(message, null, 2))
-
-            // Only allow chat output on the ticks that actually offered it —
-            // ignore stray content if the model produces text anyway.
             const chatText = message.content?.trim()
             if (allowMessage && chatText) mcChat(chatText)
 
-            // Process every tool call returned this tick, in order. Sequential
-            // (not parallel) on purpose — some actions change state (e.g. break
-            // transitions into MINING, retreat transitions into RECOVERING) that
-            // can make a later call in the same batch valid/invalid depending on
-            // what already happened, so each call needs to see the effect of the
-            // one before it.
+            // record this turn in history
+            stateController.chatHistory.push({ role: "user", content: prompt })
+            stateController.chatHistory.push({ role: "assistant", content: message.content ?? "", tool_calls: message.tool_calls })
+            if (stateController.chatHistory.length > HISTORY_MAX_TURNS * 2) {
+                stateController.chatHistory = stateController.chatHistory.slice(-HISTORY_MAX_TURNS * 2)
+            }
+
             const toolCalls = message.tool_calls ?? []
             for (const call of toolCalls) {
                 await handleSurvivalToolCall(call, toolExecutor)
@@ -77,7 +89,13 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
         } catch (err) {
             console.error('[SURVIVAL] AI error:', err.message)
         }
-    }, ACTIONS_INTERVAL_MS)
+    }
+
+    setInterval(runTick, ACTIONS_INTERVAL_MS)
+
+    // expose so a new chat message can trigger an immediate tick,
+    // instead of waiting up to 30s for the next scheduled one
+    return { triggerTick: runTick }
 }
 
 async function handleSurvivalToolCall(call, toolExecutor) {

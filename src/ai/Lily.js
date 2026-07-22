@@ -21,7 +21,7 @@ const DEFAULT_OPTIONS = {
     maxRawMessages: 30,
     maxToolLoops: 15,
     maxToolRepeats: 3,
-    maxUsesPerTool: 2, // generic per-tool-name cap per turn (minecraft_action tools are exempt)
+    maxUsesPerTool: 2, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
     memoryQueryMinScore: 0.3,
     memoryRemoveMinScore: 0.70,
     memoryRemoveK: 2,
@@ -174,8 +174,14 @@ export class Lily {
         return this.getRawBuffer(channelId).get()
     }
 
+    // suppressActionReminder: once an in-world action has already been dispatched
+    // this turn, we stop re-injecting the "call the matching tool now" nudge on
+    // every subsequent loop iteration/completion — that reminder was previously
+    // rebuilt from scratch and reattached to the same original user message on
+    // every single loop, which kept pressuring the model to find *something*
+    // else to call even after the requested action was already done.
     buildMessagesForOllama(channelId, systemPromptOverride = null, opts = {}) {
-        const { skipHistory = false, skipRawContext = false } = opts
+        const { skipHistory = false, skipRawContext = false, suppressActionReminder = false } = opts
         const messages = []
 
         messages.push({ role: "system", content: systemPromptOverride ?? SYSTEM_PROMPT })
@@ -185,7 +191,7 @@ export class Lily {
         if (!skipRawContext) {
             const rawContext = this.getRawContext(channelId)
             if (rawContext.length) {
-                const reminder = channelId === MINECRAFT_CHANNEL_ID
+                const reminder = (channelId === MINECRAFT_CHANNEL_ID && !suppressActionReminder)
                     ? "\n[If the newest message asks you to do something physical, call the matching tool now — don't just reply in words.]\n"
                     : ""
                 const block = `[Recent chat]\n${rawContext.join("\n")}\n[End recent chat]\n${reminder}`
@@ -348,27 +354,41 @@ export class Lily {
     //      tool+args pair more than opts.maxToolRepeats times, catching a
     //      model stuck re-issuing an identical call even if it's still
     //      within the flat count budget.
-    // minecraft_action tools are exempt from both, same as the original
-    // commented-out rationale: repeated identical in-world actions (mining
-    // the same block, re-attacking) are legitimate and only bounded by
-    // maxToolLoops overall.
+    //
+    // minecraft_action tools get their OWN flat cap of 1 per distinct action
+    // name per turn (not opts.maxUsesPerTool, and no tracker repeat-check —
+    // repeated identical in-world actions like re-attacking the same mob
+    // across turns are legitimate and are instead bounded by the early-exit
+    // in runToolLoop, see didMinecraftAction there). Without this cap, a
+    // model that calls e.g. break, then in a LATER loop iteration calls
+    // stop, then eat, then swap, then attack, then follow — none of which
+    // repeats a prior tool name — sails through unblocked, since a same-name
+    // repeat check can't catch a model inventing a *different* unrequested
+    // action each round. The early-exit fix in runToolLoop is what actually
+    // stops those later rounds from happening at all; this cap is just a
+    // backstop in case a single model response tries to call the same
+    // minecraft action tool twice.
     async runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, pushFn) {
-        if (!isMinecraftActionTool(name)) {
-            const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
-            if (usesSoFar >= this.opts.maxUsesPerTool) {
-                log(`🚫 [BLOCKED] ${name} already used ${usesSoFar}x this turn (cap: ${this.opts.maxUsesPerTool})`)
-                pushFn(`You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
-                return null
-            }
+        const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
+        const cap = isMinecraftActionTool(name) ? 1 : this.opts.maxUsesPerTool
 
+        if (usesSoFar >= cap) {
+            log(`🚫 [BLOCKED] ${name} already used ${usesSoFar}x this turn (cap: ${cap})`)
+            pushFn(isMinecraftActionTool(name)
+                ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
+                : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
+            return null
+        }
+
+        if (!isMinecraftActionTool(name)) {
             const repeatBlock = tracker.check(name, args)
             if (repeatBlock) {
                 pushFn(repeatBlock)
                 return null
             }
-
-            toolsUsedThisTurn.set(name, usesSoFar + 1)
         }
+
+        toolsUsedThisTurn.set(name, usesSoFar + 1)
 
         const result = await this.tools.execute(name, args)
 
@@ -411,12 +431,16 @@ export class Lily {
         })
     }
 
-    // Final fallback used when the tool-loop budget (maxToolLoops) runs out.
-    // Instead of returning a generic "I got lost" error, force one last
-    // completion with tools disabled so the model has to produce a normal
-    // in-character reply — the turn ends exactly like any other turn.
+    // Final fallback used both when the tool-loop budget (maxToolLoops) runs out,
+    // AND (new) immediately after a minecraft_action tool has been dispatched —
+    // see didMinecraftAction in runToolLoop. Forces one last completion with
+    // tools disabled so the model has to produce a normal in-character reply
+    // instead of being offered another 14 rounds of "what else could I call".
     async finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl) {
-        const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
+        // suppressActionReminder: if we're here because an action already fired,
+        // the "call the matching tool now" nudge would be actively contradictory
+        // (tools are disabled for this completion) — see buildMessagesForOllama.
+        const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, { ...opts, suppressActionReminder: true })
         let attemptScratch = [...scratch]
         const MAX_RETRIES = 6
 
@@ -526,7 +550,6 @@ export class Lily {
                     return { id: tc.id, name: tc.function.name, args }
                 })
 
-                const idByName = new Map(calls.map(c => [c.name + JSON.stringify(c.args), c.id]))
                 const gif = await this.runToolCalls(
                     channelId, calls, tracker, toolsUsedThisTurn, actionsThisTurn,
                     (name, text) => {
@@ -538,6 +561,21 @@ export class Lily {
                     }
                 )
                 if (gif) pendingGifUrl = gif
+
+                // Once a real in-world action has been dispatched, end the turn here
+                // instead of looping again. A single model response can already
+                // contain MULTIPLE tool_calls (e.g. "stop and follow me" → both
+                // calls arrive together in msg.tool_calls), so this doesn't break
+                // legitimate multi-action requests — it only stops her from being
+                // offered a fresh round of tools afterward to invent something new
+                // to do, which is what produced the attack/follow/eat/swap spam
+                // on unrelated entities and blocks nobody asked about.
+                const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
+                if (didMinecraftAction) {
+                    log(`🎯 [ACTION DISPATCHED] Ending turn, no further tool offers this turn`)
+                    return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
+                }
+
                 continue
             }
 
@@ -551,6 +589,17 @@ export class Lily {
                         (_name, text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
                     )
                     if (gif) pendingGifUrl = gif
+
+                    // Same early-exit rule as the native tool_calls path above —
+                    // embedded <tool_call> tags can also contain multiple calls in
+                    // one content block (parseEmbeddedToolCalls returns them all),
+                    // so multi-action requests are still handled in a single pass.
+                    const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
+                    if (didMinecraftAction) {
+                        log(`🎯 [ACTION DISPATCHED] Ending turn, no further tool offers this turn`)
+                        return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
+                    }
+
                     continue
                 }
 

@@ -112,21 +112,7 @@ export class StateController {
         return match?.type ?? null
     }
 
-    _collectMiningCluster(targetBlock, maxBlocks = 8, maxRadius = 6) {
-        const cluster = [targetBlock]
-        if (!targetBlock.type || !this.blocksOfInterest?.length) return cluster
-
-        const rest = this.blocksOfInterest
-            .filter(b => b.type === targetBlock.type &&
-                !(b.x === targetBlock.x && b.y === targetBlock.y && b.z === targetBlock.z))
-            .map(b => ({ ...b, dist: this._dist(targetBlock, b) }))
-            .filter(b => b.dist <= maxRadius)
-            .sort((a, b) => a.dist - b.dist)
-            .slice(0, maxBlocks - 1)
-        console.log('[MINE] cluster built:', cluster.length + rest.length, 'blocks')
-
-        return [...cluster, ...rest]
-    }
+   
 
     nearestHostileWithin(maxDist) {
         if (!this.lilyPos || !this.hostiles.length) return null
@@ -146,16 +132,18 @@ export class StateController {
                 this.setFollowTarget(args.player)
                 this.transitionTo(State.FOLLOWING)
                 return { ok: true }
-            case 'break': {
-                if (args.x == null || args.y == null || args.z == null) {
-                    return { ok: false, message: 'break needs x, y, and z.' }
+  case 'break': {
+                const hasCoords = args.x != null && args.y != null && args.z != null
+                const hasBlock = typeof args.block === 'string' && args.block.trim().length > 0
+                if (!hasCoords && !hasBlock) {
+                    return { ok: false, message: 'break needs either x/y/z or a block name.' }
                 }
-                const targetBlock = {
-                    x: args.x, y: args.y, z: args.z,
-                    type: args.blockType ?? this._findBlockType(args)
-                }
-                const cluster = this._collectMiningCluster(targetBlock)
-                this.transitionTo(State.MINING, { blocks: cluster })
+                const amount = Math.max(1, Math.min(32, args.amount ?? 1))
+                this.transitionTo(State.MINING, {
+                    payload: hasCoords
+                        ? { x: args.x, y: args.y, z: args.z, amount }
+                        : { block: args.block, radius: args.radius, amount }
+                })
                 return { ok: true }
             }
             case 'break_closest_generic': {
@@ -206,7 +194,6 @@ export class StateController {
                 this.mcSend('drop', { slot: args.slot });
                 return { ok: true };
             }
-
             default:
                 return { ok: false, message: `Unknown action: ${action}` }
         }
@@ -283,7 +270,11 @@ export class StateController {
             this.currentState.onBlockBroken(event)
         }
     }
-
+    handleMiningStarted(event) {
+        if (this.currentStateName === State.MINING) {
+            this.currentState.onMiningStarted(event)
+        }
+    }
     findEntityById(id) {
         return this.hostiles.find(e => e.id === id)
             ?? this.passives.find(e => e.id === id)

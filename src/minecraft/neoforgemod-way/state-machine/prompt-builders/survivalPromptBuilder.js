@@ -9,7 +9,7 @@ function formatEntity(e, lilyPos) {
 
 function formatBlockOfInterest(b, lilyPos) {
     const dist = lilyPos ? Math.floor(Math.hypot(b.x - lilyPos.x, b.z - lilyPos.z)) : '?'
-    return ` ${b.category}: ${b.block} at (${b.x}, ${b.y}, ${b.z}) — ${dist} blocks away`
+    return ` ${b.block} at (${b.x}, ${b.y}, ${b.z})`// — ${dist} blocks away`
 }
 
 function formatPlayer(name, p, lilyPos) {
@@ -109,7 +109,7 @@ ${getStateDescription(ctx)}
 ${formatEnvironmentInfo(ctx)}
 
 # YOUR STATUS
-- Health: ${hp}/20
+- Health: ${hp}/20_break
 - Hunger: ${hunger}/20
 - Armor: ${armor}/20
 - Position: (${Math.floor(lilyPos.x)}, ${Math.floor(lilyPos.y)}, ${Math.floor(lilyPos.z)})
@@ -128,7 +128,8 @@ ${nearbyPassive}
 
 # NEARBY BLOCKS OF INTEREST
 (wood, ore, food sources — use these coordinates if you decide to mine/break something; never guess coordinates)
-${nearbyBlocks}`.trim()
+${nearbyBlocks}
+`.trim()
 }
 
 export function buildSurvivalPrompt(ctx, { allowMessage = false } = {}) {

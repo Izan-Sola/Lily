@@ -14,6 +14,8 @@ const DEFAULT_OPTIONS = {
     top_p: 0.9,
     top_k: 40,
     min_p: 0.08,
+    repeat_penalty: 1.075,
+    repeat_last_n: 164,
     max_tokens: 4096,
     maxConvoMessages: 30,
     maxMinecraftConvoMessages: 14,   // smaller window for the minecraft channel: freshness of
@@ -313,16 +315,21 @@ export class Lily {
                 repeat_penalty: this.opts.repeat_penalty,
                 repeat_last_n: this.opts.repeat_last_n,
                 max_tokens: this.opts.max_tokens,
+                stop: ["</answer>", "<|user|>", "<|endoftext|>"],
             }
-
-            // noTools forces a plain-text completion — no tools field at all —
-            // used when we want a guaranteed natural reply (e.g. tool-loop budget exhausted).
             if (!noTools) {
                 payload.tools = foreignTools.length ? [...baseTools, ...foreignTools] : baseTools
             }
 
             const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, payload, { timeout: this.opts.ollamaTimeout })
-            return data.choices?.[0]?.message ?? null
+            const msg = data.choices?.[0]?.message ?? null
+            if (msg?.content) {
+                msg.content = msg.content
+                    .replace(/<think>[\s\S]*?<\/think>/g, "")   // discard thinking entirely
+                    .replace(/<\/?answer>/g, "")                 // strip the tags, keep the text inside
+                    .trim()
+            }
+            return msg
         } catch (err) {
             const detail = err.response?.data ? JSON.stringify(err.response.data) : ""
             logError(`[OLLAMA] ${err.message} ${detail}`)
@@ -450,7 +457,7 @@ export class Lily {
             if (attempt > 0) {
                 messages.push({
                     role: "user",
-                    content: `[System: You're out of tool uses for this turn. Reply to the message naturally, in your own words — no <tool_call> tags, no tool syntax, no mention of tools.]`
+                    content: `[System: You cannot tool call more in this turn. Stop attempting to call tools this turn, and naturally reply to the user with a text reply addressing his message.]`
                 })
             }
 

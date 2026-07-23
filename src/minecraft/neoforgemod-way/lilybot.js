@@ -158,12 +158,13 @@ async function _handleEvent(event) {
             getStateController()?.setLastUserMessage(player, message)  
           
             try {
+              //  console.log(buildMinecraftSystemPrompt(getStateController()))
                 const aiReply = await aiInstance.chat(
                     "minecraft",
                     `${player}: ${message}`,
                     buildMinecraftSystemPrompt(getStateController())
-                )
-
+                )   
+         
                 const text = aiReply?.text?.trim()
                 const gifUrl = aiReply?.gifUrl
 

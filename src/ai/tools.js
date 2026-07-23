@@ -9,70 +9,40 @@ const LIMITS = {
     memoryWrite: 1,   // addto / update / remove_memory_database — shared slot
     media: 1,         // send_gif / send_meme — shared slot
     webSearch: 2,     // web_search
-    total: 3,         // ANY tool calls combined, hard ceiling
-    narration: 1,      // max times we tolerate the model narrating instead of calling, before we force a tool-free reply
-    badArgs: 1,        // max times we tolerate a malformed/empty-argument call before forcing a tool-free reply
+    total: 3,         // ANY chat-context tool call, combined — hard ceiling
+    narration: 1,     // narrated-instead-of-called attempts tolerated before forcing a tool-free reply
+    badArgs: 1,       // malformed/empty-argument calls tolerated before forcing a tool-free reply
 }
 
 // ─── Tool Executor ──────────────────────────────────────────────────────
-export class ToolExecutor {
+//
+// Turn-loop contract (read this before touching turn state):
+//   1. Call resetTurn() once at the START of handling each new incoming
+//      user message — NOT per loop iteration within that turn.
+//   2. After every tool execution, check shouldHardStop(). If true, stop
+//      calling tools entirely and force a final generation with `tools`
+//      removed from the request, e.g.:
+//
+//        const result = await toolExecutor.execute(name, args)
+//        messages.push({ role: "tool", tool_call_id: id, content: result })
+//        if (toolExecutor.shouldHardStop()) {
+//            return await callModel(messages /* no `tools` field */)
+//        }
+//
+//      An 8B model under load frequently does NOT comply with a "STOP" a
+//      instruction baked into a tool result string — it just tries a
+//      different tool name next. shouldHardStop() must be checked by the
+//      loop code itself; the in-band STOP message alone is not enough.
+//   3. When the model narrates a tool call in prose instead of emitting a
+//      real one, call recordNarration() and check its return value the
+//      same way — true means force a tool-free final generation.
+class ToolExecutor {
     constructor(opts, mcSend = null, getStateController = null) {
         this.opts = opts
         this.mcSend = mcSend
         this.getStateController = getStateController
         this.lastMineTime = 0
-
-        // ── Per-turn usage guards ──────────────────────────────────────
-        // Call resetTurn() from the loop code once at the START of handling
-        // each new incoming user message (NOT per loop iteration within that
-        // turn).
-        this.turnUsage = { memoryWrite: 0, media: 0, memoryQuery: 0, webSearch: 0, total: 0 }
-        this.turnHasQueriedMemory = false
-
-        // ── Hard-stop state ─────────────────────────────────────────────
-        // THIS IS THE FIX for the "15 loops in one turn" bug. Previously,
-        // a blocked tool result (with stop:true baked into the JSON string)
-        // was just fed back to the model as a tool result and the model was
-        // trusted to read "stop" and comply. An 8B model under load will
-        // frequently NOT comply — it just tries a different tool name next.
-        //
-        // The loop code MUST check `executor.shouldHardStop()` after EVERY
-        // tool execution (not just parse the JSON) and, if true, break out
-        // of the tool-calling loop entirely and force a final generation
-        // with tools disabled / removed from the request, so the model is
-        // structurally incapable of attempting another call. Do not feed
-        // the model another round with tools available once this is true.
-        //
-        //     const result = await toolExecutor.execute(name, args)
-        //     messages.push({ role: "tool", tool_call_id: id, content: result })
-        //     if (toolExecutor.shouldHardStop()) {
-        //         const final = await callModel(messages /* no `tools` field */)
-        //         return final
-        //     }
-        //
-        // If this check isn't present in the outer loop, every hard-stop
-        // below is purely cosmetic and the model will keep being invited
-        // back into the tool-calling loop indefinitely.
-        this.turnHardStop = false
-
-        // ── Narration-recovery state ────────────────────────────────────
-        // The loop code detects narration (model described a tool call in
-        // prose instead of emitting a real one) and should call
-        // recordNarration() when that happens, then check the return value.
-        // Once the narration budget is exhausted, the loop should force a
-        // tool-free final generation instead of re-prompting and hoping.
-        this.turnNarrationCount = 0
-
-        // ── Bad-argument-recovery state ─────────────────────────────────
-        // Fixes the "model keeps calling tools with blank/garbage args"
-        // spiral. A single malformed call (empty query/text, etc.) gets a
-        // soft error inviting a real retry. A SECOND malformed call in the
-        // same turn means the model is thrashing, not correcting itself —
-        // at that point we hard-stop instead of letting it keep trying,
-        // since a bad-args error consumes a total-budget slot but NOT its
-        // tool-specific slot, and would otherwise let the model retry
-        // near-indefinitely within just the 3-call total ceiling.
-        this.turnBadArgs = 0
+        this.resetTurn()
     }
 
     resetTurn() {
@@ -83,17 +53,15 @@ export class ToolExecutor {
         this.turnBadArgs = 0
     }
 
-    // Call this from the outer loop right after ANY tool execution.
-    // Returns true if the loop must stop calling tools and force a final
-    // visible reply (with tools removed from the next request payload).
+    // Loop code checks this after every tool execution.
     shouldHardStop() {
         return this.turnHardStop
     }
 
-    // Call this from the outer loop when the model produces prose that
-    // describes/announces a tool call instead of emitting a real one.
-    // Returns true once narration has happened too many times and the loop
-    // should force a tool-free final generation instead of retrying.
+    // Loop code calls this when the model describes/announces a tool call
+    // in prose instead of emitting a real one. Returns true once the
+    // narration budget is exhausted and the loop should force a tool-free
+    // final generation instead of retrying.
     recordNarration() {
         this.turnNarrationCount++
         if (this.turnNarrationCount > LIMITS.narration) {
@@ -117,9 +85,22 @@ export class ToolExecutor {
         return JSON.stringify({ status: "ok", message, ...extra })
     }
 
+    // Generic per-turn budget guard, shared by every limited chat-context
+    // tool (memory query, memory write, media, web search). Returns a
+    // blocked-result string once `key` has hit `limit`, else null.
+    _checkLimit(key, limit, label) {
+        if (this.turnUsage[key] >= limit) {
+            return this._blocked(
+                `STOP. You've already hit the limit for ${label} this turn (max ${limit}). Do not call it again for any reason. ` +
+                `Write your visible, in-character reply now using only what you already have.`
+            )
+        }
+        return null
+    }
+
     // Every tool call attempt (successful, blocked, or errored) counts
-    // against the total-3 ceiling. Once hit, sets turnHardStop so the loop
-    // can break unconditionally instead of relying on the model to comply.
+    // against the total-3 ceiling. Checked first in execute() for every
+    // non-Minecraft tool, before the tool-specific limit.
     _spendTotal() {
         if (this.turnUsage.total >= LIMITS.total) {
             return this._blocked(
@@ -136,16 +117,15 @@ export class ToolExecutor {
         return this._err("Can't perform actions right now.")
     }
 
-    // Shared arg validator for any tool that takes a free-text search query.
-    // Fixes the "model called the tool with empty/garbage arguments" bug:
-    // instead of silently searching for "" and getting nothing (which reads
-    // to the model like the tool is broken, so it thrashes trying other
-    // tools), we reject immediately with an explicit instruction.
+    // Shared arg validator for any tool that takes a free-text query/fact.
+    // Rejects empty/too-short arguments immediately with an explicit
+    // instruction, instead of silently searching "" and letting the model
+    // read the empty result as "the tool is broken" and start thrashing.
     //
     // First offense in a turn: soft error, real retry still possible within
-    // the total budget. Second offense in the SAME turn: treat it as a hard
-    // stop — the model is not converging on a real value, so stop inviting
-    // more attempts and force it to answer with what it has.
+    // the total budget. Second offense in the SAME turn: hard-stop — the
+    // model isn't converging on a real value, so stop inviting more
+    // attempts and force it to answer with what it has.
     _requireQuery(query, minWords, exampleHint) {
         const trimmed = (query ?? "").trim()
         if (!trimmed || trimmed.split(/\s+/).length < minWords) {
@@ -183,13 +163,8 @@ export class ToolExecutor {
     }
 
     async memoryQuery(query, { daysAgo = null, windowDays = 2, daysBack = null } = {}) {
-        if (this.turnUsage.memoryQuery >= LIMITS.memoryQuery) {
-            return this._blocked(
-                `STOP. You have already searched memory ${this.turnUsage.memoryQuery} time(s) this turn — that is the maximum (${LIMITS.memoryQuery}). ` +
-                `Do not call query_memory_database again this turn for any reason. ` +
-                `If you didn't find what you needed, say so in character or move on — do not retry with different keywords. Write your visible reply now.`
-            )
-        }
+        const limitErr = this._checkLimit('memoryQuery', LIMITS.memoryQuery, 'memory search (query_memory_database)')
+        if (limitErr) return limitErr
 
         // Mode 3 (open-ended recap) is exempt from the query-text requirement.
         if (daysBack === null) {
@@ -254,21 +229,9 @@ export class ToolExecutor {
         }
     }
 
-    // Shared gate for add/update/remove — they all spend the same 1/turn slot.
-    _memoryWriteGuard() {
-        if (this.turnUsage.memoryWrite >= LIMITS.memoryWrite) {
-            return this._blocked(
-                `STOP. You have already made a memory write this turn (add, update, and remove all share ONE slot per turn). ` +
-                `Do not call addto_memory_database, update_memory_database, or remove_memory_database again for any reason, even a different fact. ` +
-                `Write your visible in-character reply to the user now.`
-            )
-        }
-        return null
-    }
-
     async memoryAdd(factText, source = "user") {
-        const guard = this._memoryWriteGuard()
-        if (guard) return guard
+        const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
+        if (limitErr) return limitErr
         const argErr = this._requireQuery(factText, 2, "ShinyShadow_ said their favorite color is teal")
         if (argErr) return argErr
         this.turnUsage.memoryWrite++
@@ -284,8 +247,8 @@ export class ToolExecutor {
     }
 
     async memoryUpdate(searchQuery, updatedText) {
-        const guard = this._memoryWriteGuard()
-        if (guard) return guard
+        const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
+        if (limitErr) return limitErr
         if (!this.turnHasQueriedMemory) {
             return this._blocked(
                 `You haven't looked up the existing fact yet this turn. You must call query_memory_database first to confirm what it currently says — ` +
@@ -314,8 +277,8 @@ export class ToolExecutor {
     }
 
     async memoryRemove(searchQuery) {
-        const guard = this._memoryWriteGuard()
-        if (guard) return guard
+        const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
+        if (limitErr) return limitErr
         const argErr = this._requireQuery(searchQuery, 2, "IsGone favorite color")
         if (argErr) return argErr
         this.turnUsage.memoryWrite++
@@ -335,9 +298,9 @@ export class ToolExecutor {
         }
     }
 
+    // Not part of the live chat-turn budget — called out-of-band by a
+    // batch/summarizer process, not by the model mid-conversation.
     async addEpisodicMemory({ summary, raw, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation_batch" }) {
-        // Not part of the live chat turn budget — called out-of-band by a
-        // batch/summarizer process, not by the model mid-conversation.
         log(`🎞️ [EPISODIC BATCH ADD] "${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}"`)
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_episodic`, {
@@ -350,20 +313,9 @@ export class ToolExecutor {
         }
     }
 
-    // Shared gate for gif/meme — they share one media slot per turn.
-    _mediaGuard() {
-        if (this.turnUsage.media >= LIMITS.media) {
-            return this._blocked(
-                `STOP. You have already sent a gif or meme this turn (send_gif and send_meme share ONE slot per turn). ` +
-                `Do not call either tool again. You already have media queued up — write your visible in-character reply to go with it now.`
-            )
-        }
-        return null
-    }
-
     async searchGif(query) {
-        const guard = this._mediaGuard()
-        if (guard) return guard
+        const limitErr = this._checkLimit('media', LIMITS.media, 'sending a gif or meme — they share one slot')
+        if (limitErr) return limitErr
         const argErr = this._requireQuery(query, 2, "excited anime girl jumping")
         if (argErr) return argErr
         this.turnUsage.media++
@@ -388,8 +340,8 @@ export class ToolExecutor {
     }
 
     async searchMeme(query) {
-        const guard = this._mediaGuard()
-        if (guard) return guard
+        const limitErr = this._checkLimit('media', LIMITS.media, 'sending a gif or meme — they share one slot')
+        if (limitErr) return limitErr
         const argErr = this._requireQuery(query, 2, "drake approving")
         if (argErr) return argErr
         this.turnUsage.media++
@@ -418,14 +370,8 @@ export class ToolExecutor {
     }
 
     async webSearch(query) {
-        if (this.turnUsage.webSearch >= LIMITS.webSearch) {
-            this.turnHardStop = true
-            return JSON.stringify({
-                status: "blocked", stop: true,
-                message: `STOP. You have already used web_search ${this.turnUsage.webSearch} time(s) this turn — that is the maximum (${LIMITS.webSearch}). ` +
-                    `Do not call web_search again this turn. Answer the user now using whatever you already found.`
-            })
-        }
+        const limitErr = this._checkLimit('webSearch', LIMITS.webSearch, 'web_search')
+        if (limitErr) return limitErr
         const argErr = this._requireQuery(query, 2, "current Minecraft version")
         if (argErr) return argErr
         this.turnUsage.webSearch++
@@ -451,9 +397,9 @@ export class ToolExecutor {
     }
 
     // ─── Minecraft Actions ───────────────────────────────────────────────
-    // These are NOT part of the chat turn budget above (they run in the
-    // Minecraft-agent context, not the Discord chat context, and have their
-    // own per-action cooldowns like lastMineTime).
+    // Run in the Minecraft-agent context, not the Discord chat context —
+    // exempt from the chat-turn budget above, and gated by their own
+    // per-action cooldowns (e.g. lastMineTime) instead.
     _simpleDispatch(action, payload, okMessage, failFallback) {
         const stateController = this.getStateController?.()
         if (!stateController) return this._noController()
@@ -617,7 +563,7 @@ export class ToolExecutor {
 
 // ─── Tool Definitions ──────────────────────────────────────────────────────
 
-export const TOOLS = [
+const TOOLS = [
     {
         type: "function",
         function: {
@@ -696,7 +642,7 @@ export const TOOLS = [
             }
         }
     },
-    // ─── Minecraft Action Tools (unchanged) ────────────────────────────────
+    // ─── Minecraft Action Tools ─────────────────────────────────────────
     {
         type: "function",
         function: {
@@ -723,6 +669,20 @@ export const TOOLS = [
                     slot: { type: "number", minimum: 1, maximum: 36, description: "Optional hotbar slot holding food to swap to first. Omit to eat whatever's held." }
                 },
                 required: []
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_swap_slot",
+            description: "Switch your held hotbar slot without using or dropping anything. Requires slot (1-36). Completes instantly. Reply naturally after; never mention the tool.",
+            parameters: {
+                type: "object",
+                properties: {
+                    slot: { type: "number", minimum: 1, maximum: 36, description: "Hotbar slot to switch to." }
+                },
+                required: ["slot"]
             }
         }
     },
@@ -777,7 +737,7 @@ export const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_break",
-            description: "Mine block(s). Check Blocks of Interest first (one entry per type, closest match, with x/y/z), amount (max 32) breaks several of that type in one call — it auto-retargets the next closest match after each one, so this call is not repeated per block. Runs on its own after one call; only call again for a genuinely new/different request or a clearly failed attempt. Reply naturally after; never mention the tool.",
+            description: "Mine block(s). Check Blocks of Interest first (one entry per type, closest match, with x/y/z); amount (max 32) breaks several of that type in one call — it auto-retargets the next closest match after each one, so this call is not repeated per block. Runs on its own after one call; only call again for a genuinely new/different request or a clearly failed attempt. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
                 properties: {
@@ -791,4 +751,7 @@ export const TOOLS = [
         }
     }
 ]
-export const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
+
+const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))
+
+export { ToolExecutor, TOOLS, TOOL_NAMES }

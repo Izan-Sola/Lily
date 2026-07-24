@@ -102,7 +102,7 @@ async function attachmentToBase64(attachment) {
 
         return { base64: b64, mimeType }
     } catch (err) {
-        console.error("[MEDIA] Failed to process attachment:", err.message)
+        Logger.error("Failed to process attachment: " + err.message, "MEDIA")
         try { fs.unlink(tmpIn, () => { }) } catch { }
         try { fs.unlink(tmpOut, () => { }) } catch { }
         return null
@@ -130,9 +130,9 @@ async function extractImagesFromEmbeds(message) {
             const b64 = fs.readFileSync(tmpOut).toString("base64")
             fs.unlink(tmpOut, () => { })
             results.push({ base64: b64, mimeType: "image/jpeg" })
-            Logger.success(`🖼️ [MEDIA] Extracted frame from embed GIF`)
+            Logger.success("Extracted frame from embed GIF", "MEDIA")
         } catch (err) {
-            Logger.error("[MEDIA] Failed to process embed:", err.message)
+            Logger.error("Failed to process embed: " + err.message, "MEDIA")
         }
     }
 
@@ -158,7 +158,7 @@ async function extractImagesFromMessage(message) {
             const lateEmbeds = await extractImagesFromEmbeds(refetched)
             results.push(...lateEmbeds)
         } catch (err) {
-            console.error("[MEDIA] Failed to re-fetch message for embeds:", err.message)
+            Logger.error("Failed to re-fetch message for embeds: " + err.message, "MEDIA")
         }
     }
 
@@ -265,7 +265,7 @@ export async function playInGuild(guildId, text) {
     const state = guildPlayers.get(guildId)
     if (!state) return
     if (state.isProcessing) {
-        Logger.warning("🔇 [VOICE] Skipping — already processing audio")
+        Logger.warning("Skipping — already processing audio", "VOICE")
         return
     }
     state.isProcessing = true
@@ -345,7 +345,7 @@ class VoiceSession {
             if (!member || member.user.bot) return
             if (this.activeSpeakers.has(userId)) return
 
-            Logger.info(`🎙️ [VOICE] ${member.displayName} started speaking`)
+            Logger.info(`${member.displayName} started speaking`, "VOICE")
 
             const audioStream = receiver.subscribe(userId, {
                 end: { behavior: EndBehaviorType.AfterSilence, duration: this.silenceThreshold }
@@ -373,7 +373,7 @@ class VoiceSession {
                 if (duration >= this.minSpeechDuration && chunks.length > 0) {
                     await this.processAudio(userId, member.displayName, chunks, duration)
                 } else {
-                    Logger.warning(`🎙️ [VOICE] ${member.displayName} speech too short (${duration}ms), ignoring`)
+                    Logger.warning(`${member.displayName} speech too short (${duration}ms), ignoring`, "VOICE")
                 }
 
                 this.activeSpeakers.delete(userId)
@@ -382,12 +382,12 @@ class VoiceSession {
             decoder.on("data", onData)
             decoder.on("end", onEnd)
             decoder.on("error", (err) => {
-                console.error(`[VOICE] Decoder error for ${userId}:`, err.message)
+                Logger.error("Decoder error for " + userId + ": " + err.message, "VOICE")
                 onEnd()
             })
 
             audioStream.on("error", (err) => {
-                console.error(`[VOICE] Stream error for ${userId}:`, err.message)
+                Logger.error("Stream error for " + userId + ": " + err.message, "VOICE")
                 onEnd()
             })
 
@@ -408,11 +408,11 @@ class VoiceSession {
     async processAudio(userId, displayName, chunks, duration) {
         const prefs = getPrefs(userId)
         if (!prefs.voiceProcess) {
-            Logger.warning(`🎙️ [VOICE] ${displayName} has voice processing disabled`)
+            Logger.warning(`${displayName} has voice processing disabled`, "VOICE")
             return
         }
 
-        Logger.info(`🎙️ [VOICE] Processing ${displayName}: ${duration}ms, ${chunks.length} chunks`)
+        Logger.info(`Processing ${displayName}: ${duration}ms, ${chunks.length} chunks`, "VOICE")
 
         try {
             const sessionId = `${userId}_${Date.now()}`
@@ -429,11 +429,11 @@ class VoiceSession {
             fs.unlink(wavPath, () => { })
 
             if (!transcript || transcript.length < 5) {
-                Logger.warning(`🎙️ [VOICE] ${displayName} said nothing intelligible`)
+                Logger.warning(`${displayName} said nothing intelligible`, "VOICE")
                 return
             }
 
-            LOgger.info(`📝 [STT] ${displayName}: "${transcript}"`)
+            Logger.info(`${displayName}: "${transcript}"`, "STT")
 
             ai.pushRawMessage(this.channelId, displayName, transcript)
             ai.observe(`${displayName} said (voice): ${transcript}`)
@@ -463,12 +463,12 @@ class VoiceSession {
             const clean = stripLeadingSlashCommand(text)
 
             if (clean && clean !== "none" && clean !== "None" && clean.length > 0) {
-                Logger.success(`🎙️ [VOICE] Lily responding: "${clean}"`)
+                Logger.success(`Lily responding: "${clean}"`, "VOICE")
                 await playInGuild(this.guild.id, clean)
             }
 
         } catch (err) {
-            Logger.error(`[VOICE] Error processing ${displayName}:`, err.message)
+            Logger.error("Error processing " + displayName + ": " + err.message, "VOICE")
         }
     }
 
@@ -485,7 +485,7 @@ class VoiceSession {
 
 export function startVoiceSession(connection, guild, channelId) {
     const session = new VoiceSession(guild, connection, channelId)
-    Logger.success("🔊 [VOICE] Voice session started with improved handling")
+    Logger.success("Voice session started with improved handling", "VOICE")
     return session.player
 }
 
@@ -521,7 +521,7 @@ export async function createBot() {
         try {
             await command.execute(interaction)
         } catch (error) {
-            console.error(error)
+            Logger.error("Error executing command: " + error.message, "COMMAND")
             await interaction.reply({ content: "Error executing command", ephemeral: true })
         }
     })
@@ -573,7 +573,7 @@ export async function createBot() {
                             }
                         }
                     } catch (err) {
-                        console.error("Butt in handler error:", err)
+                        Logger.error("Butt in handler error: " + err.message, "BUTT IN")
                     }
                 }
             }
@@ -595,7 +595,7 @@ export async function createBot() {
                 }))
             ai.injectChannelContext(channelId, prior)
         } catch (err) {
-            console.error("[CONTEXT] Failed to fetch prior messages:", err.message)
+            Logger.error("Failed to fetch prior messages: " + err.message, "CONTEXT")
         }
 
         // ─── Voice message handler (reply to bot with audio) ──────────────────
@@ -626,7 +626,7 @@ export async function createBot() {
                         return
                     }
 
-                    Logger.info(`📝 [VOICE MSG] ${authorName} said: "${transcript}"`)
+                    Logger.info(`${authorName} said: "${transcript}"`, "VOICE MESSAGE")
                     const reply = await ai.chat(channelId, `[${authorName}] says to you in a voice message: ${transcript}`)
                     const { text } = parseReply(reply)
                     const cleanReply = stripLeadingSlashCommand(text)
@@ -642,7 +642,7 @@ export async function createBot() {
                         await playInGuild(message.guild.id, cleanReply)
                     }
                 } catch (err) {
-                    console.error("Voice message handler error:", err)
+                    Logger.error("Voice message handler error: " + err.message, "VOICE_MESSAGE")
                     await message.reply("Something went wrong processing your voice message, sowwy! 🍓")
                 }
                 return
@@ -658,7 +658,7 @@ export async function createBot() {
         // Extract images/videos/GIFs from the message
         let images = await extractImagesFromMessage(message)
         if (images.length > 0) {
-            Logger.info(`🖼️ [MEDIA] Extracted ${images.length} image(s) from message`)
+            Logger.info(`Extracted ${images.length} image(s) from message`, "MEDIA")
         }
 
         let formattedMessage = ""
@@ -670,7 +670,7 @@ export async function createBot() {
                     // Extract images from the referenced message too
                     const referencedImages = await extractImagesFromMessage(referenced)
                     if (referencedImages.length > 0) {
-                        Logger.info(`🖼️ [MEDIA] Extracted ${referencedImages.length} image(s) from referenced message`)
+                        Logger.info(`Extracted ${referencedImages.length} image(s) from referenced message`, "MEDIA")
                         images.push(...referencedImages)
                     }
 
@@ -682,7 +682,9 @@ export async function createBot() {
                         formattedMessage = `[${authorName}] says to you, mentioning ${repliedUser} who said "${quoted}"${referencedImages.length ? " (with an image)" : ""}: ${userInput}`
                     }
                 }
-            } catch { }
+            } catch (err) {
+                Logger.error("Error processing message reference: " + err.message, "MESSAGE")
+            }
         }
 
         if (!formattedMessage && message.mentions.users.size > 1) {
@@ -705,7 +707,7 @@ export async function createBot() {
             const reply = await ai.chat(channelId, formattedMessage, null, {}, images)
             await sendReply(message, reply)   // now a no-op if reply is null
         } catch (err) {
-            console.error("Ping handler error:", err)
+            Logger.error("Ping handler error: " + err.message, "MESSAGE")
             await message.reply("I'm having trouble thinking right now, sorry!")
         }
     })

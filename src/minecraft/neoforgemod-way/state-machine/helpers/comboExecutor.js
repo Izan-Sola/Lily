@@ -21,9 +21,9 @@ export function loadCombos() {
     try {
         const raw = fs.readFileSync(path.join(__dirname, '../states/data/PKCombosData.json'), 'utf8')
         combosData = JSON.parse(raw)
-        Logger.info(`[COMBOS] Loaded ${combosData.combos?.length ?? 0} combos`)
+        Logger.info(`Loaded ${combosData.combos?.length ?? 0} combos`, "COMBOS")
     } catch (err) {
-        console.error('[COMBOS] Failed to load PKCombosData.json:', err.message)
+        Logger.error('Failed to load PKCombosData.json: ' + err.message, "COMBOS")
         combosData = { combos: [] }
     }
     return combosData
@@ -191,7 +191,7 @@ export function parseComboSteps(combo) {
                             steps.push({ type: 'move', direction: type, blocking: true, duration })
                             break
                         default:
-                            console.warn(`[COMBOS] Unknown action type "${type}" in combo "${combo.name}" — skipped`)
+                            Logger.warning(`Unknown action type "${type}" in combo "${combo.name}" — skipped`, "COMBOS")
                             break
                     }
                 }
@@ -239,7 +239,7 @@ export async function executeStep(step, { bindings, cleanName, mcSend, onSource,
                 mcSend('hotbar', { slot })
                 await sleep(step.duration)
             } else {
-                console.warn(`[COMBOS] Cannot find slot for ability: ${step.ability}`)
+               Logger.warning(`[COMBOS] Cannot find slot for ability: ${step.ability}`)
             }
             await sleep(POST_ACTION_GAP)
             break

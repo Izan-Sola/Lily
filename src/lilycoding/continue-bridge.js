@@ -133,7 +133,7 @@ function checkForCatastrophicOverwrite(toolCall) {
         const changes = args.changes ?? ""
         const stubHits = (changes.match(STUB_BODY_PATTERN) ?? []).length
         if (stubHits >= OVERWRITE_GUARD.minStubHits) {
-            console.warn(`[BRIDGE] 🚫 BLOCKED stub-body patch: ${filepath} (${stubHits} '{ ... }' bodies found)`)
+            Logger.warning(`BLOCKED stub-body patch: ${filepath} (${stubHits} '{ ... }' bodies found)`)
             return (
                 `BLOCKED: this patch for ${filepath} contains ${stubHits} function/method ` +
                 `bodies written as literal "{ ... }" instead of real code — that would delete ` +
@@ -154,7 +154,7 @@ function checkForCatastrophicOverwrite(toolCall) {
 
     const shrinkRatio = newContent.length / Math.max(originalContent.length, 1)
     if (shrinkRatio < OVERWRITE_GUARD.maxShrinkRatio) {
-        console.warn(
+        Logger.warning(
             `[BRIDGE] 🚫 BLOCKED catastrophic overwrite: ${filepath} ` +
             `(original ${originalContent.length} chars / ${originalLines} lines -> ` +
             `proposed ${newContent.length} chars, ratio ${shrinkRatio.toFixed(2)})`
@@ -184,7 +184,7 @@ function warnIfApplyLooksShrunk(messages, resultText) {
 
     const ratio = resultText.length / userText.length
     if (ratio < 0.35) {
-        console.warn(
+        Logger.warning(
             `[BRIDGE] ⚠️ APPLY OUTPUT LOOKS SHRUNK — this was NOT blocked (apply writes ` +
             `directly to disk, no tool call to intercept). Input context: ${userText.length} ` +
             `chars, output: ${resultText.length} chars (ratio ${ratio.toFixed(2)}). ` +

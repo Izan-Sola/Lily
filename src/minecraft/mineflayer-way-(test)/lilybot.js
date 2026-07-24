@@ -12,7 +12,7 @@ let aiInstance = null
 
 export function startMinecraftBot({ host, port = 25565, username = "Lily", version, ai, relayChannelId = null }) {
     if (mcBot) {
-        Logger.info("⛏️ [MC] Bot already running")
+        Logger.info("Bot already running", "MC")
         return
     }
 
@@ -29,7 +29,7 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
     mcBot.loadPlugin(pathfinder)
 
     mcBot.once("spawn", () => {
-        Logger.info(`⛏️ [MC] ${username} spawned in ${host}`)
+        Logger.info(`${username} spawned in ${host}`, "MC")
 
         const defaultMove = new Movements(mcBot)
         mcBot.pathfinder.setMovements(defaultMove)
@@ -52,7 +52,7 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
         if (sender === mcBot.username) return
         if (!message.trim()) return
 
-        Logger.info(`⛏️ [MC CHAT] ${sender}: ${message}`)
+        Logger.info(`${sender}: ${message}`, "MC CHAT")
         aiInstance.pushRawMessage("minecraft", sender, message)
 
         const lower = message.toLowerCase()
@@ -74,32 +74,32 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
         //         const text = typeof reply === "object" ? reply.text : reply
         //         if (text) splitMessage(text).forEach(chunk => mcBot.chat(chunk))
         //     } catch (err) {
-        //         console.error("⛏️ [MC] Chat handler error:", err)
+        //         Logger.error("Chat handler error: " + err.message, "MC")
         //     }
         // }
     })
     mcBot.on("kicked", reason => {
-        console.error("⛏️ [MC] Kicked:", JSON.stringify(reason, null, 2))
+        Logger.error("Kicked: " + JSON.stringify(reason, null, 2), "MC")
         stateMachine?.stop()
         mcBot = null
     })
     mcBot.on("death", () => {
-        Logger.info("⛏️ [MC] Bot died, respawning...")
+        Logger.info("Bot died, respawning...", "MC")
         mcBot.respawn()
     })
 
     mcBot.on("kicked", reason => {
-        console.error("⛏️ [MC] Kicked:", reason)
+        Logger.error("Kicked: " + reason, "MC")
         stateMachine?.stop()
         mcBot = null
     })
 
     mcBot.on("error", err => {
-        console.error("⛏️ [MC] Error:", err.message)
+        Logger.error(err.message, "MC")
     })
 
     mcBot.on("end", reason => {
-        Logger.info("⛏️ [MC] Disconnected:", reason)
+        Logger.info("Disconnected: " + reason, "MC")
         stateMachine?.stop()
         mcBot = null
     })

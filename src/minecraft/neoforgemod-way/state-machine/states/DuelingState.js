@@ -63,7 +63,7 @@ export class DuelingState {
     }
 
     onEnter() {
-        Logger.info(`[Dueling] Facing ${this.ctx.duelTarget}`);
+        Logger.info(`Facing ${this.ctx.duelTarget}`, "DUELING");
         this.ctx.sneak.setSneaking(false);
         this.ctx.move.stop();
 
@@ -86,7 +86,7 @@ export class DuelingState {
     }
 
     onExit() {
-        Logger.info('[Dueling] Duel ended');
+        Logger.info('Duel ended', "DUELING");
         this.ctx.mcSend('unsprint', {});
         this.fetchBusy = false;
         this._actionQueue = [];
@@ -103,7 +103,7 @@ export class DuelingState {
         }
         const target = this.ctx.players[targetName];
         if (!target) {
-            Logger.info(`[Dueling] Target ${targetName} left, ending duel`);
+            Logger.info(`Target ${targetName} left, ending duel`, "DUELING");
             this.ctx.setDuelTarget(null);
             return;
         }
@@ -112,7 +112,7 @@ export class DuelingState {
 
         // Watchdog: unstick fetchBusy if it has been held too long
         if (this.fetchBusy && this._fetchBusySince && now - this._fetchBusySince > MAX_BUSY_MS) {
-            console.warn(`[Dueling] fetch stuck for ${MAX_BUSY_MS}ms — force-resetting`);
+            Logger.warning(`Fetch stuck for ${MAX_BUSY_MS}ms — force-resetting`, "DUELING");
             this.fetchBusy = false;
             this._fetchBusySince = null;
             this.nextPromptAt = 0;
@@ -191,7 +191,7 @@ export class DuelingState {
         if (!prompt || typeof prompt !== 'string'
             || prompt === 'Opponent not found.'
             || prompt === 'Lily position unknown.') {
-            console.warn('[Dueling] Prompt not ready:', prompt);
+            Logger.warning('Prompt not ready: ' + prompt, "SURVIVAL");
             this._setNextPromptAt(MIN_PROMPT_DELAY);
             return;
         }
@@ -207,7 +207,7 @@ export class DuelingState {
                     this._drainQueue();
                 }
             })
-            .catch(err => console.error('[Dueling] AI fetch error:', err.message))
+            .catch(err => Logger.error('AI fetch error: ' + err.message), "DUELING")
             .finally(() => {
                 this.fetchBusy = false;
                 this._fetchBusySince = null;
@@ -215,7 +215,7 @@ export class DuelingState {
     }
 
     async _fetchAction(prompt, targetName) {
-        Logger.info('[Dueling] DUELING PROMPT', prompt);
+        //Logger.info('[Dueling] DUELING PROMPT', prompt);
         const response = await fetch("http://localhost:11435/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -234,13 +234,13 @@ export class DuelingState {
 
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content;
-        Logger.info('[Dueling] Lily decision:', text);
+        Logger.info('Lily decision: ' + text, "DUELING");
         if (!text) return null;
 
         try {
             return JSON.parse(text);
         } catch {
-            console.error('[Dueling] AI response was not valid JSON:', text);
+            Logger.error('AI response was not valid JSON: ' + text, "DUELING");
             return null;
         }
     }
@@ -256,7 +256,7 @@ export class DuelingState {
         const { action, targetName } = this._actionQueue.shift();
 
         this._executeAction(action, targetName)
-            .catch(err => console.error('[Dueling] Execute error:', err.message))
+            .catch(err => Logger.error('Execute error: ' + err.message), "DUELING")
             .finally(() => {
                 this._executing = false;
                 this._drainQueue();
@@ -338,7 +338,7 @@ export class DuelingState {
     async _executeComboSlot(slot) {
         const combo = this._getComboForSlot(slot);
         if (!combo) {
-            console.warn(`[Dueling] No combo for virtual slot ${slot}`);
+            Logger.warning(`[Dueling] No combo for virtual slot ${slot}`);
             return;
         }
 

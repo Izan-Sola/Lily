@@ -9,8 +9,8 @@ export class RecoveringState {
   onEnter(payload = {}) {
     this.explicit = !!payload.explicit
     Logger.info(this.explicit
-      ? `[Recovering] Told to retreat toward ${this.ctx.opts.followTarget}`
-      : `[Recovering] Low HP (${this.ctx.lilyHp}) – retreating toward ${this.ctx.opts.followTarget}`)
+      ? `Told to retreat toward ${this.ctx.opts.followTarget}`
+      : `[Recovering] Low HP (${this.ctx.lilyHp}) – retreating toward ${this.ctx.opts.followTarget}`, "RECOVERING")
     this.ctx.sneak.setSneaking(false)
   }
 

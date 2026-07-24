@@ -6,6 +6,7 @@ import { DuelingState } from './states/DuelingState.js'
 import { SneakHelper } from './helpers/sneak.js'
 import { MovementHelper } from './helpers/movement.js'
 import { MiningState } from './states/MiningState.js'
+import { Logger } from '../../../utils/Logger.js'
 
 export const State = {
     IDLE: 'IDLE',
@@ -66,7 +67,7 @@ export class StateController {
 
     start() {
         if (this.tickInterval) return
-        Logger.info('[STATE] Controller started')
+        Logger.info('Controller started', "STATE")
         this.tickInterval = setInterval(() => this._tick(), this.opts.tickMs)
     }
 
@@ -77,7 +78,7 @@ export class StateController {
         this.sneak.setSneaking(false)
         this.move.stop()
         this.transitionTo(State.IDLE)
-        Logger.info('[STATE] Controller stopped')
+        Logger.info('Controller stopped', "STATE")
     }
 
     transitionTo(stateName, payload = {}) {
@@ -91,14 +92,14 @@ export class StateController {
         const oldName = this.currentStateName
         const newState = this.states[stateName]
         if (!newState) {
-            console.error(`[STATE] Unknown state: ${stateName}`)
+            Logger.error(`Unknown state: ${stateName}`, "STATE")
             return
         }
         if (this.currentState?.onExit) this.currentState.onExit()
         this.currentStateName = stateName
         this.currentState = newState
         if (this.currentState?.onEnter) this.currentState.onEnter(payload)
-        Logger.info(`[STATE] ➡️ ${oldName} → ${stateName}${payload?.player ? ` (${payload.player})` : ''}`)
+        Logger.info(`➡️ ${oldName} → ${stateName}${payload?.player ? ` (${payload.player})` : ''}`, "STATE")
     }
 
     getPlayerByName(name) {
@@ -112,7 +113,7 @@ export class StateController {
         return match?.type ?? null
     }
 
-   
+
 
     nearestHostileWithin(maxDist) {
         if (!this.lilyPos || !this.hostiles.length) return null
@@ -132,7 +133,7 @@ export class StateController {
                 this.setFollowTarget(args.player)
                 this.transitionTo(State.FOLLOWING)
                 return { ok: true }
-  case 'break': {
+            case 'break': {
                 const hasCoords = args.x != null && args.y != null && args.z != null
                 const hasBlock = typeof args.block === 'string' && args.block.trim().length > 0
                 if (!hasCoords && !hasBlock) {
@@ -212,20 +213,20 @@ export class StateController {
             if (this.duelTarget) {
                 this.duelTarget = null
                 if (this.currentStateName === State.DUELING) this.transitionTo(State.IDLE)
-                Logger.info('[DUEL] Duel ended')
+                Logger.info('Duel ended', "DUEL")
                 this.mcSend('unsprint', {})
             }
             return
         }
         this.duelTarget = targetName
         this.transitionTo(State.DUELING)
-        Logger.info(`[DUEL] Now dueling ${targetName}`)
+        Logger.info(`Now dueling ${targetName}`, "DUEL")
         this.mcSend('get_bindings')
     }
 
     setFollowTarget(name) {
         this.opts.followTarget = name
-        Logger.info(`[STATE] Follow target → ${name}`)
+        Logger.info(`Follow target → ${name}`, "STATE")
     }
 
     getStatus() {
@@ -249,7 +250,7 @@ export class StateController {
 
     updateAbilityStats(statsMap) {
         this.abilityStats = statsMap
-        Logger.info(`[STATS] Updated ability stats for ${Object.keys(statsMap).length} abilities`)
+        Logger.info(`Updated ability stats for ${Object.keys(statsMap).length} abilities`, "STATS")
     }
 
     getFollowTarget() { return this.players[this.opts.followTarget] ?? null }
@@ -304,7 +305,6 @@ export class StateController {
         if (this.currentState?.onTick) await this.currentState.onTick()
     }
 }
-
 /**
  * STATE CONTROLLER
  * ─────────────────────────────────────────────────────────────────────────────

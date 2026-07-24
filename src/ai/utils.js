@@ -36,7 +36,7 @@ export class ToolCallTracker {
         this.calls.set(key, count)
 
         if (count > this.maxRepeats) {
-            Logger.warning(`🚫 [BLOCKED] ${key} (x${count})`)
+            Logger.warning(`${key} (x${count})`, "BLOCKED")
             return `[System: You already called ${name} with these exact arguments ${count - 1} time(s). Stop calling it and reply now.]`
         }
         return null

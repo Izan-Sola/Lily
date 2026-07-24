@@ -1040,4 +1040,3 @@
 
 export { Lily } from './Lily.js'
 export { sanitizeInput } from './utils.js'
-import { log, logError } from '../../src/utils/Logger.js'

@@ -42,7 +42,7 @@ export async function execute(interaction) {
         fs.unlink(oggPath, () => {})
 
     } catch (err) {
-        console.error("[/audiolily] Error:", err)
+        Logger.error("Error: " + err, "ERROR")
         // ← only reply if not already replied
         if (!interaction.replied && !interaction.deferred) {
             await interaction.reply({ content: "Sowwy, something went wrong! 🍓", ephemeral: true })

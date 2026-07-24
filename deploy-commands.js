@@ -16,7 +16,7 @@ const deploy = async () => {
     for (const file of commandFiles) {
         const command = await import(`./src/commands/${file}`)
         commands.push(command.data.toJSON())
-        Logger.info(`📦 Loaded command: ${command.data.name}`)
+        Logger.info(`Loaded command: ${command.data.name}`, "SLASH COMMANDS")
     }
 
     const rest = new REST({ version: "10" }).setToken(config.token)
@@ -26,9 +26,9 @@ const deploy = async () => {
             Routes.applicationCommands(config.clientId),
             { body: commands }
         )
-        Logger.success("✅ Slash commands deployed successfully!")
+        Logger.success("Slash commands deployed successfully!", "SLASH COMMANDS")
     } catch (error) {
-        Logger.error("❌ Error deploying slash commands:", error.message)
+        Logger.error("Error deploying slash commands: " + error.message, "SLASH COMMANDS")
         throw error
     }
 }

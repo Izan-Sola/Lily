@@ -1,5 +1,5 @@
 import axios from "axios"
-import { log, logError, Logger } from '../../src/utils/Logger.js'
+import { Logger } from '../../src/utils/Logger.js'
 import { tavily } from "@tavily/core"
 
 // ─── Turn budget limits ─────────────────────────────────────────────────
@@ -170,7 +170,7 @@ class ToolExecutor {
     }
 
     async wikiSearch(query) {
-        Logger.info(`🔍 [WIKI] "${query}"`)
+        Logger.info(`"${query}"`, "WIKI")
         try {
             const { data } = await axios.get(`${this.opts.vectorDbUrl}/search`, {
                 params: { q: query },
@@ -180,7 +180,7 @@ class ToolExecutor {
             if (!text?.trim() || text === "{}") return "No relevant information found in the wiki."
             return text
         } catch (err) {
-            Logger.error(`[WIKI] ${err.message}`)
+            Logger.error(err.message, "WIKI")
             return "No relevant information found in the wiki right now."
         }
     }
@@ -205,7 +205,7 @@ class ToolExecutor {
         })
 
         if (daysBack !== null) {
-            Logger.info(`🧠 [MEMORY QUERY] recency-only daysBack=${daysBack}`)
+            Logger.info(`Queried recent memories up to ${daysBack} days back`, "MEMORY QUERY")
             try {
                 const { data } = await axios.post(`${this.opts.memoryDbUrl}/recent`, {
                     limit: 10, days_back: daysBack, min_importance: 0.3
@@ -218,12 +218,12 @@ class ToolExecutor {
                     return e.type === "episodic" ? `[${date}] ${e.content}` : `[${date}] ${e.text}`
                 }).join("\n"))
             } catch (err) {
-                Logger.error(`[MEMORY QUERY] ${err.message}`)
+                Logger.error(err.message, "MEMORY QUERY")
                 return finish("No relevant information found in memory.")
             }
         }
 
-        Logger.info(`🧠 [MEMORY QUERY] "${query}" daysAgo=${daysAgo ?? "any"}`)
+        Logger.info(`Queried memory: "${query}" from ${daysAgo ?? "any"} days ago`, "MEMORY QUERY")
         try {
             const k = daysAgo !== null ? 25 : 10
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
@@ -253,7 +253,7 @@ class ToolExecutor {
                 return e.text
             }).join("\n"))
         } catch (err) {
-            Logger.error(`[MEMORY QUERY] ${err.message}`)
+            Logger.error(err.message, "MEMORY QUERY")
             return finish("No relevant information found in memory.")
         }
     }
@@ -265,13 +265,13 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.memoryWrite++
 
-        Logger.info(`💾 [MEMORY ADD] "${factText.slice(0, 100)}${factText.length > 100 ? '...' : ''}"`)
+        Logger.info(` Added memory: "${factText.slice(0, 100)}${factText.length > 100 ? '...' : ''}"`, "MEMORY ADD")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, { text: factText, source }, { timeout: this.opts.dbTimeout })
             if (data.status !== "ok") return this._err(data.message ?? "Failed to store information.")
             return this._ok(data.message ?? "Stored.")
         } catch (err) {
-            Logger.error(`[MEMORY ADD] ${err.message}`)
+            Logger.error(err.message, "MEMORY ADD")
             return this._err("Failed to store information.")
         }
     }
@@ -296,13 +296,13 @@ class ToolExecutor {
         }
         this.turnUsage.memoryWrite++
 
-        Logger.info(`✏️ [MEMORY UPDATE] "${searchQuery}" → "${updatedText.slice(0, 100)}"`)
+        Logger.info(`Updated memory: "${searchQuery}" → "${updatedText.slice(0, 100)}"`, "MEMORY UPDATE")
         try {
             const { data } = await axios.put(`${this.opts.memoryDbUrl}/update_fact`, { query: searchQuery, text: updatedText }, { timeout: this.opts.dbTimeout })
             if (data.status !== "ok") return this._err(data.message ?? "Failed to update entry.")
             return this._ok(data.message ?? "Updated.")
         } catch (err) {
-            Logger.error(`[MEMORY UPDATE] ${err.message}`)
+            Logger.error(err.message, "MEMORY UPDATE")
             return this._err("Failed to update entry.")
         }
     }
@@ -314,7 +314,7 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.memoryWrite++
 
-        Logger.info(`🗑️ [MEMORY REMOVE] "${searchQuery}"`)
+        Logger.info(`Attempted to remove memory: "${searchQuery}"`, "MEMORY REMOVE")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/remove_by_query`, {
                 query: searchQuery, k: this.opts.memoryRemoveK, min_score: this.opts.memoryRemoveMinScore, types: ["fact"]
@@ -331,7 +331,7 @@ class ToolExecutor {
             }
             return this._ok(`Removed: ${data.removed.join(", ")}`, { removed: data.removed })
         } catch (err) {
-            Logger.error(`[MEMORY REMOVE] ${err.message}`)
+            Logger.error(err.message, "MEMORY REMOVE")
             return this._err("Failed to remove entries.")
         }
     }
@@ -339,14 +339,14 @@ class ToolExecutor {
     // Not part of the live chat-turn budget — called out-of-band by a
     // batch/summarizer process, not by the model mid-conversation.
     async addEpisodicMemory({ summary, raw, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation_batch" }) {
-        Logger.info(`🎞️ [EPISODIC BATCH ADD] "${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}"`)
+        Logger.info(`"${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}"`, "EPISODIC BATCH ADD")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_episodic`, {
                 summary, raw, participants, emotions, importance, channel, source,
             }, { timeout: this.opts.dbTimeout })
             return JSON.stringify({ status: data.status, message: data.message })
         } catch (err) {
-            Logger.error(`[EPISODIC BATCH ADD] ${err.message}`)
+            Logger.error(err.message, "EPISODIC BATCH ADD")
             return this._err("Failed to store episodic memory.")
         }
     }
@@ -358,7 +358,7 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.media++
 
-        Logger.info(`🎞️ [GIF] "${query}"`)
+        Logger.info(`Querying Klipy API: "${query}"`, "GIF")
         try {
             const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/gifs/search`, {
                 params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
@@ -369,10 +369,10 @@ class ToolExecutor {
             const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
             if (!url) return JSON.stringify({ status: "not_found", message: "No GIF URL — don't retry, just reply without a gif." })
-            Logger.success(`✅ [GIF] Found`)
-            return this._ok("Gif found and already queued to send — do NOT put the url in your text, just react to it naturally.", { url })
+            Logger.success(`Gif found, URL: ${url}`, "GIF")
+            return this._ok("Gif found and already queued to send — do NOT put the url in your text, just reply naturally to the user.", { url })
         } catch (err) {
-            Logger.error(`[GIF] ${err.message}`)
+            Logger.error(err.message, "GIF")
             return this._err("Failed to search for GIF.")
         }
     }
@@ -384,7 +384,7 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.media++
 
-        Logger.info(`🎭 [MEME] "${query}"`)
+        Logger.info(`"${query}"`, "MEME")
         try {
             const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/static-memes/search`, {
                 params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
@@ -398,11 +398,11 @@ class ToolExecutor {
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
             if (!url) return JSON.stringify({ status: "not_found", message: "No meme URL — don't retry, just reply without a meme." })
 
-            Logger.success(`✅ [MEME] Found`)
+            Logger.success(`Found`, "MEME")
             return this._ok("Meme found and already queued to send — do NOT put the url in your text, just react to it naturally.", { url })
         } catch (err) {
-            Logger.error(`[MEME] ${err.message}`)
-            if (err.response) Logger.error(`[MEME RESPONSE] ${JSON.stringify(err.response.data)}`)
+            Logger.error(err.message, "MEME")
+            if (err.response) Logger.error(JSON.stringify(err.response.data), "MEME RESPONSE")
             return this._err("Failed to search for meme.")
         }
     }
@@ -414,7 +414,7 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.webSearch++
 
-        Logger.info(`🌐 [WEB SEARCH] "${query}"`)
+        Logger.info(`Querying Tavily API: "${query}"`, "WEB SEARCH")
         try {
             const client = tavily({ apiKey: process.env.TAVILY_API_KEY })
             const response = await client.search(query, {
@@ -441,7 +441,7 @@ class ToolExecutor {
                 instruction: "Search complete. Summarize this in your own words for your visible, in-character reply now — don't search again unless this truly didn't cover it, and never paste URLs or raw excerpts verbatim."
             })
         } catch (err) {
-            Logger.error(`[WEB SEARCH] ${err.message}`)
+            Logger.error(err.message, "WEB SEARCH")
             return this._err("Web search failed.")
         }
     }
@@ -467,13 +467,13 @@ class ToolExecutor {
         if (entityId === undefined || entityId === null) {
             return this._err("entityId required — pick one from the Hostile/Passive Mobs list.")
         }
-        Logger.info(`⚔️ [MINECRAFT] attack slot:${slot} target:${entityId}`)
+        Logger.info(`attack slot:${slot} target:${entityId}`, "MINECRAFT")
         return this._simpleDispatch('attack', { slot, entityId }, "Engaging target.", "Attack failed.")
     }
 
     async minecraftActionEat(args = {}) {
         const { slot } = args
-        Logger.info(`🍎 [MINECRAFT] eat${slot ? ` slot:${slot}` : ''}`)
+        Logger.info(`Lily ate slot number ${slot ? ` ${slot}` : ''}`, "MINECRAFT")
         return this._simpleDispatch('use', { slot }, "Ate.", "Eat failed.")
     }
 
@@ -482,7 +482,7 @@ class ToolExecutor {
         if (!slot || slot < 1 || slot > 36) {
             return this._err("slot (1-36) required.")
         }
-        Logger.info(`🔄 [MINECRAFT] swap_slot → ${slot}`)
+        Logger.info(`Lily swapped to slot number ${slot}`, "MINECRAFT")
         return this._simpleDispatch('swap_slot', { slot }, `Swapped to slot ${slot}.`, "Swap failed.")
     }
 
@@ -498,7 +498,7 @@ class ToolExecutor {
             return this._err(`Can't drop more than ${MAX_DROPS_PER_CALL} at once.`)
         }
 
-        Logger.info(`📤 [MINECRAFT] drop → slot:${slot} amount:${count}`)
+        Logger.info(`Lily has dropped the item in slot ${slot} ${count} time(s)`, "MINECRAFT")
         const stateController = this.getStateController?.()
         if (!stateController) return this._noController()
 
@@ -520,18 +520,18 @@ class ToolExecutor {
         if (!player) {
             return this._err("player name required.")
         }
-        Logger.info(`🚶 [MINECRAFT] follow → ${player}`)
+        Logger.info(`Lily is now following ${player}`, "MINECRAFT")
         return this._simpleDispatch('follow', { player }, `Following ${player}.`, "Follow failed.")
     }
 
     async minecraftActionRetreat(args = {}) {
         const { player } = args
-        Logger.info(`🏃 [MINECRAFT] retreat${player ? ` → ${player}` : ''}`)
+        Logger.info(`Lily is retreating towards ${player ? ` → ${player}` : ''}`, "MINECRAFT")
         return this._simpleDispatch('retreat', { player }, "Retreating.", "Retreat failed.")
     }
 
     async minecraftActionStop() {
-        Logger.info(`✋ [MINECRAFT] stop`)
+        Logger.info(`Lily stopping`, "MINECRAFT")
         return this._simpleDispatch('stop', {}, "Stopped.", "Stop failed.")
     }
 
@@ -553,7 +553,7 @@ class ToolExecutor {
         }
         this.lastMineTime = now
 
-        Logger.info(`⛏️ [MINECRAFT] break → ${hasCoords ? `(${x}, ${y}, ${z})` : `"${block}"${radius ? ` radius:${radius}` : ''}`} x${amount}`)
+        Logger.info(`Lily is breaking the block at ${hasCoords ? `(${x}, ${y}, ${z})` : `"${block}"${radius ? ` radius:${radius}` : ''}`} x${amount}`, "MINECRAFT")
 
         const stateController = this.getStateController?.()
         if (!stateController) return this._noController()
@@ -582,7 +582,7 @@ class ToolExecutor {
                 case "minecraft_action_stop": return this.minecraftActionStop()
                 case "minecraft_action_break": return this.minecraftActionBreak(args)
                 default:
-                    console.warn(`⚠️ [TOOL] Unknown: ${name}`)
+                    Logger.warning(`Unknown: ${name}`, "TOOL")
                     return `Unknown tool: ${name}`
             }
         }
@@ -605,7 +605,7 @@ class ToolExecutor {
             case "send_meme": return this.searchMeme(args?.query ?? "")
             case "send_gif": return this.searchGif(args?.query ?? "")
             default:
-                console.warn(`⚠️ [TOOL] Unknown: ${name}`)
+                Logger.warning(`Unknown: ${name}`, "TOOL")
                 return `Unknown tool: ${name}`
         }
     }

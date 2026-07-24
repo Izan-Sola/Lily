@@ -13,7 +13,7 @@ export class SneakHelper {
     if (this.isSneaking === value) return;
     this.isSneaking = value;
     this.mcSend('sneak', { value });
-    Logger.info(`[SNEAK] ${value ? 'ON' : 'OFF'}`);
+    Logger.info(`${value ? 'ON' : 'OFF'}`, "SNEAK");
   }
 
   // Creates a temporary pulse: sets sneaking off briefly then on again after a delay.

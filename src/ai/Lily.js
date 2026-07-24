@@ -4,7 +4,7 @@ import { sanitizeInput, ToolCallTracker } from './utils.js'
 import { ConversationHistory, RawBuffer } from './history.js'
 import { SYSTEM_PROMPT, SUMMARIZE_PROMPT } from './prompts.js'
 import { ToolExecutor, TOOLS, TOOL_NAMES } from './tools.js'
-import { log, logError, Logger } from '../../src/utils/Logger.js'
+import { Logger } from '../../src/utils/Logger.js'
 // Channel id used for the Minecraft bridge — see getToolsForChannel().
 const MINECRAFT_CHANNEL_ID = "minecraft"
 
@@ -54,7 +54,7 @@ function isMinecraftActionTool(name) {
 // result already gets folded into her actual reply, so marking them too
 // would just be redundant noise in history.
 const SILENT_EFFECT_TOOLS = new Set([
-// THIS was fine but after improving system prompt this got redundant and actually worsened her, gotta clean this up
+    // THIS was fine but after improving system prompt this got redundant and actually worsened her, gotta clean this up
 ])
 
 const GIF_TOOLS = new Set(["send_gif", "send_meme"])
@@ -157,7 +157,7 @@ export class Lily {
     injectChannelContext(channelId, recentMessages) {
         const lines = recentMessages.map(m => `${m.authorName}: ${m.content}`)
         this.getRawBuffer(channelId).replace(lines)
-        Logger.info(`📥 [CONTEXT] Injected ${lines.length} messages into raw buffer for channel ${channelId}`)
+        Logger.info(`Injected ${lines.length} messages into raw buffer for channel ${channelId}`, "CONTEXT")
     }
 
     pushToConvoHistory(channelId, message) {
@@ -224,7 +224,7 @@ export class Lily {
 
     async summarizeAndStore(lines, { logPrefix, maxTokens = 300, memorySource = "conversation_batch", participants = [], emotions = [], importance = 0.5 }) {
         if (lines.length < 2) return
-        Logger.info(`📝 [${logPrefix}] Summarizing ${lines.length} entries...`)
+        Logger.info(`Summarizing ${lines.length} entries...`, "SUMMARIZE")
         try {
             const { data } = await axios.post(`${this.opts.ollamaUrl}/v1/chat/completions`, {
                 model: this.opts.model,
@@ -250,7 +250,7 @@ export class Lily {
                 source: memorySource,
             })
         } catch (err) {
-            Logger.error(`[${logPrefix}] ${err.message}`)
+            Logger.error(err.message, "SUMMARIZE")
         }
     }
 
@@ -328,7 +328,7 @@ export class Lily {
             return msg
         } catch (err) {
             const detail = err.response?.data ? JSON.stringify(err.response.data) : ""
-            Logger.error(`[OLLAMA] ${err.message} ${detail}`)
+            Logger.error(`${err.message} ${detail}`, "OLLAMA")
             return null
         }
     }
@@ -376,7 +376,7 @@ export class Lily {
         const cap = isMinecraftActionTool(name) ? 1 : this.opts.maxUsesPerTool
 
         if (usesSoFar >= cap) {
-            Logger.warning(`[BLOCKED] ${name} already used ${usesSoFar}x this turn (cap: ${cap})`)
+            Logger.warning(`${name} already used ${usesSoFar}x this turn (cap: ${cap})`, "BLOCKED")
             pushFn(isMinecraftActionTool(name)
                 ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
                 : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
@@ -411,7 +411,7 @@ export class Lily {
         return this.withChannelLock(channelId, async () => {
             const allSeen = toolResults.length > 0 && toolResults.every(tr => this._resumedIds.has(tr.tool_call_id))
             if (allSeen) {
-                Logger.warning(`⏭️ [DUPLICATE RESUME] Already answered: ${toolResults.map(t => t.tool_call_id).join(", ")}`)
+                Logger.warning(`Already answered: ${toolResults.map(t => t.tool_call_id).join(", ")}`, "DUPLICATE RESUME")
                 return this._resumedIds.get(toolResults[toolResults.length - 1].tool_call_id)
             }
 
@@ -463,15 +463,15 @@ export class Lily {
 
             if (content && content.toLowerCase() !== "none") {
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
-                Logger.success(`✅ [LILY REPLY - BUDGET EXHAUSTED] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
+                Logger.success(`${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY - BUDGET EXHAUSTED")
                 return { text: content, gifUrl: pendingGifUrl }
             }
 
-            Logger.warning(`⚠️ [BUDGET FALLBACK RETRY ${attempt + 1}] Tool-call-only or empty content, retrying`)
+            Logger.warning(`Tool-call-only or empty content, retrying`, `BUDGET FALLBACK RETRY ${attempt + 1}`)
             if (raw) attemptScratch = [...attemptScratch, { role: "assistant", content: raw }]
         }
 
-        Logger.error(`[BUDGET FALLBACK] Exhausted ${MAX_RETRIES} retries without a natural reply`)
+        Logger.error(`Exhausted ${MAX_RETRIES} retries without a natural reply`, "BUDGET FALLBACK")
         return null
     }
 
@@ -503,7 +503,6 @@ export class Lily {
         const actionsThisTurn = []
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
-           // Logger(`🔄 [LOOP ${i + 1}]`)
             let messages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
             messages.push(...scratch)
 
@@ -527,18 +526,18 @@ export class Lily {
                 const foreignCalls = msg.tool_calls.filter(tc => foreignToolNames.has(tc.function.name))
 
                 if (foreignCalls.length) {
-                    Logger.info(`🔌 [HANDOFF] ${foreignCalls.map(tc => `${tc.function.name}(${tc.function.arguments})`).join(" | ")} -> Continue`)
+                    Logger.info(`${foreignCalls.map(tc => `${tc.function.name}(${tc.function.arguments})`).join(" | ")} -> Continue`, "HANDOFF")
                     if (foreignCalls.length > 1) {
-                        Logger.warning(`⚠️ [MULTI-TOOL] Model tried ${foreignCalls.length} tool calls at once — only forwarding the first`)
+                        Logger.warning(`Model tried ${foreignCalls.length} tool calls at once — only forwarding the first`, "MULTI-TOOL")
                     }
                     const single = foreignCalls[0]
                     this.pushToConvoHistory(channelId, { role: "assistant", content: msg.content ?? "", tool_calls: [single] })
                     return { text: msg.content ?? "", gifUrl: null, tool_calls: [single] }
                 }
 
-                Logger.success(`🔧 [NATIVE] ${msg.tool_calls.map(tc => tc.function.name).join(", ")}`)
+                Logger.success(`${msg.tool_calls.map(tc => tc.function.name).join(", ")}`, "NATIVE")
                 scratch.push({ role: "assistant", content: msg.content ?? "", tool_calls: msg.tool_calls })
-
+                NATIVE
                 const calls = msg.tool_calls.map(tc => {
                     let args = {}
                     try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
@@ -563,7 +562,7 @@ export class Lily {
                 // the 11-loop empty-arg spam. This must be checked here, not left
                 // to the model to notice.
                 if (this.tools.shouldHardStop()) {
-                    Logger.warning(`🛑 [HARD STOP] Tool budget/limit exhausted this turn, forcing final reply`)
+                    Logger.warning(`Tool budget/limit exhausted this turn, forcing final reply`, "HARD STOP")
                     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
                 }
 
@@ -573,7 +572,7 @@ export class Lily {
                 // fresh round of tools afterward to invent something new to do.
                 const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
                 if (didMinecraftAction) {
-                    Logger.info(`🎯 [ACTION DISPATCHED] Ending turn, no further tool offers this turn`)
+                    Logger.info(`Ending turn, no further tool offers this turn`, "ACTION DISPATCHED")
                     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
                 }
 
@@ -593,20 +592,20 @@ export class Lily {
 
                     // Same hard-stop check as the native tool_calls path above.
                     if (this.tools.shouldHardStop()) {
-                        Logger.warning(`🛑 [HARD STOP] Tool budget/limit exhausted this turn, forcing final reply`)
+                        Logger.warning(`Tool budget/limit exhausted this turn, forcing final reply`, "HARD STOP")
                         return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
                     }
 
                     const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
                     if (didMinecraftAction) {
-                        Logger.info(`🎯 [ACTION DISPATCHED] Ending turn, no further tool offers this turn`)
+                        Logger.info(`Ending turn, no further tool offers this turn`, "ACTION DISPATCHED")
                         return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
                     }
 
                     continue
                 }
 
-                Logger.warning(`⚠️ [MALFORMED] ${content.slice(0, 200)}`)
+                Logger.warning(`${content.slice(0, 200)}`, "MALFORMED")
                 scratch.push({ role: "assistant", content })
                 scratch.push({
                     role: "user",
@@ -616,7 +615,7 @@ export class Lily {
             }
 
             if ([...TOOL_NAMES].some(name => content.includes(name))) {
-                Logger.warning(`⚠️ [NARRATE] Model described tool instead of calling`)
+                Logger.warning(`Model described tool instead of calling`, "NARRATE")
                 scratch.push({ role: "assistant", content })
 
                 // Wire up the executor's own narration budget (LIMITS.narration).
@@ -624,7 +623,7 @@ export class Lily {
                 // calling can loop all the way to maxToolLoops just re-reading
                 // the same reminder each time.
                 if (this.tools.recordNarration()) {
-                    Logger.warning(`🛑 [HARD STOP] Narration budget exhausted, forcing final reply`)
+                    Logger.warning(`Narration budget exhausted, forcing final reply`, "HARD STOP")
                     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
                 }
 
@@ -641,15 +640,15 @@ export class Lily {
                     : content
 
                 this.pushToConvoHistory(channelId, { role: "assistant", content: historyContent })
-                Logger.success(`✅ [LILY REPLY] ${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`)
+                Logger.success(`${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY")
                 return { text: content, gifUrl: pendingGifUrl }
             }
 
-            Logger.error(`⚠️ [EMPTY] No content`)
+            Logger.error(`No content`, "EMPTY")
             return { text: "I'm not sure about that one!", gifUrl: null }
         }
 
-        Logger.warning(`⏹️ [LOOP BUDGET EXHAUSTED] Forcing final no-tools reply`)
+        Logger.warning(`Forcing final no-tools reply`, "LOOP BUDGET EXHAUSTED")
         return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
     }
 
@@ -664,7 +663,7 @@ export class Lily {
             channelId,
             messages,
         }, { timeout: 3000 }).catch(err => {
-            Logger.error(`📝 [BLOG HISTORY] Push failed (non-fatal): ${err.message}`)
+            Logger.error(`Push failed (non-fatal): ${err.message}`, "BLOG HISTORY")
         })
     }
 
@@ -673,16 +672,16 @@ export class Lily {
         if (!clean && images.length === 0) return null
 
         if (this.channelLocks.get(channelId)) {
-            Logger.warning(`🚫 [BUSY] Ignoring message in channel ${channelId} while Lily is still replying: ${clean.slice(0, 100)}`)
+            Logger.warning(`Ignoring message in channel ${channelId} while Lily is still replying: ${clean.slice(0, 100)}`, "BUSY")
             return null
         }
 
-        Logger.info(`\n💬 [${logPrefix}] ${clean.slice(0, 200)}${images.length ? ` + ${images.length} image(s)` : ""}`)
+        Logger.info(`${clean.slice(0, 200)}${images.length ? ` + ${images.length} image(s)` : ""}`, logPrefix)
 
         const { skipped, result } = await this.tryChannelLock(channelId, async () => {
             this.pushToConvoHistory(channelId, { role: "user", content: clean || "[sent an image]" })
 
-       
+
             this.tools.resetTurn()
 
             const count = (this.channelMessageCounts.get(channelId) ?? 0) + 1
@@ -701,7 +700,7 @@ export class Lily {
         })
 
         if (skipped) {
-            Logger.warning(`🚫 [BUSY] Ignoring message in channel ${channelId} while Lily is still replying (race)`)
+            Logger.warning(`Ignoring message in channel ${channelId} while Lily is still replying (race)`, "BUSY")
             return null
         }
 

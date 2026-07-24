@@ -14,7 +14,7 @@ export const getMode = () => currentMode
 
 // When the bot is ready, log in and start the Minecraft connection
 client.once("clientReady", () => {
-    Logger.success(`Logged in as ${client.user.tag}`)
+    Logger.success(`Logged in as ${client.user.tag}`, "CLIENT")
     startMinecraftBot({
         host: process.env.MC_BRIDGE_HOST ?? "localhost",
         port: parseInt("8765"),

@@ -9,7 +9,7 @@ export class IdleState {
         this.ctx.move.stop()
         this.ctx.sneak.cancelHold()
         this.ctx.sneak.setSneaking(false)
-        Logger.info('[Idle] Entered')
+        Logger.info('Entered Idle state', "IDLE")
     }
 
     onTick() {
@@ -47,7 +47,7 @@ export class IdleState {
     }
 
     onExit() {
-        Logger.info('[Idle] Exited')
+        Logger.info('Exited Idle state', "IDLE")
     }
 }
 /**

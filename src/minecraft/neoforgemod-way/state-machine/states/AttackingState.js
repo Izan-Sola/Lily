@@ -9,7 +9,7 @@ export class AttackingState {
 
   onEnter(payload = {}) {
     this.targetId = payload.entityId ?? null
-    Logger.info(`[Attacking] Engaging ${this.targetId != null ? `target id:${this.targetId}` : 'nearest hostile (autonomous)'}`)
+    Logger.info(`Engaging ${this.targetId != null ? `target id:${this.targetId}` : 'nearest hostile (autonomous)'}`, "ATTACKING")
 
     if (this.attackInterval) clearInterval(this.attackInterval)
     this.attackInterval = setInterval(() => {
@@ -62,6 +62,6 @@ export class AttackingState {
     }
     this.targetId = null
     this.ctx.move.stop()
-    Logger.info('[Attacking] Exited')
+    Logger.info('Exited', "ATTACKING")
   }
 }

@@ -26,7 +26,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
         // (started either by LOOP 1 / a direct command, or by a previous survival tick).
         const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
         if (busyStates.includes(stateController.currentStateName)) {
-            Logger.info(`[SURVIVAL] Skipping tick — busy in ${stateController.currentStateName}`)
+            Logger.info(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
             return
         }
 
@@ -62,14 +62,14 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
 
             if (!response.ok) {
                 const errBody = await response.text().catch(() => '')
-                console.error('[SURVIVAL] HTTP', response.status, errBody)
+                Logger.error('HTTP ' + response.status + errBody, "SURVIVAL")
                 return
             }
 
             const data = await response.json()
             const message = data.choices?.[0]?.message
             if (!message) {
-                console.error('[SURVIVAL] No message in response:', JSON.stringify(data))
+                Logger.error('No message in response: ' + JSON.stringify(data), "SURVIVAL")
                 return
             }
 
@@ -88,7 +88,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
                 await handleSurvivalToolCall(call, toolExecutor)
             }
         } catch (err) {
-            console.error('[SURVIVAL] AI error:', err.message)
+            Logger.error('[SURVIVAL] AI error:', err.message)
         }
     }
 
@@ -102,7 +102,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
 async function handleSurvivalToolCall(call, toolExecutor) {
     const name = call.function?.name
     if (!name) {
-        console.warn('[SURVIVAL] Tool call missing function name:', JSON.stringify(call))
+        Logger.warning('Tool call missing function name: ' + JSON.stringify(call), "SURVIVAL")
         return
     }
 
@@ -110,10 +110,10 @@ async function handleSurvivalToolCall(call, toolExecutor) {
     try {
         args = call.function.arguments ? JSON.parse(call.function.arguments) : {}
     } catch (err) {
-        Logger.error(`[SURVIVAL] Invalid tool call arguments for ${name}:`, call.function.arguments)
+        Logger.error(`Invalid tool call arguments for ${name}:` + call.function.arguments, "SURVIVAL")
         return
     }
 
     const result = await toolExecutor.execute(name, args)
-    Logger.info(`[SURVIVAL] ${name} →`, result)
+    Logger.info(`${name} → ` + result, "SURVIVAL")
 }

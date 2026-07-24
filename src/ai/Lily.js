@@ -504,14 +504,6 @@ export class Lily {
         const foreignTools = opts.tools ?? []
         const foreignToolNames = new Set(foreignTools.map(t => t.function?.name).filter(Boolean))
         const scratch = []
-
-        // Tracks silent-effect tool calls made THIS turn so we can annotate the
-        // persisted convo-history entry (not what's actually said) — otherwise a
-        // successful action/write and a pure-chat turn look identical in her own
-        // history, and over a long session she starts pattern-matching toward
-        // "we're just chatting" even on turns where she acted. Works for any
-        // channel — minecraft_action tools simply never appear outside the
-        // minecraft channel since they're filtered out of the tool list there.
         const actionsThisTurn = []
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
@@ -560,8 +552,6 @@ export class Lily {
                 const gif = await this.runToolCalls(
                     channelId, calls, tracker, toolsUsedThisTurn, actionsThisTurn,
                     (name, text) => {
-                        // find matching call's id (calls are unique enough per-turn for this lookup;
-                        // falls back to iterating if args collide across ids)
                         const call = calls.find(c => c.name === name && !c._used)
                         if (call) call._used = true
                         scratch.push({ role: "tool", tool_call_id: call?.id, content: text })
@@ -569,14 +559,22 @@ export class Lily {
                 )
                 if (gif) pendingGifUrl = gif
 
-                // Once a real in-world action has been dispatched, end the turn here
-                // instead of looping again. A single model response can already
-                // contain MULTIPLE tool_calls (e.g. "stop and follow me" → both
-                // calls arrive together in msg.tool_calls), so this doesn't break
-                // legitimate multi-action requests — it only stops her from being
-                // offered a fresh round of tools afterward to invent something new
-                // to do, which is what produced the attack/follow/eat/swap spam
-                // on unrelated entities and blocks nobody asked about.
+                // Check the executor's own hard-stop signal FIRST, before the
+                // minecraft-action early exit. A blocked() call (budget/limit hit,
+                // bad-args exhausted, etc.) sets turnHardStop — an 8B model won't
+                // reliably obey the in-band "STOP" text in the tool result, it'll
+                // just try a different tool name next loop, which is what produced
+                // the 11-loop empty-arg spam. This must be checked here, not left
+                // to the model to notice.
+                if (this.tools.shouldHardStop()) {
+                    log(`🛑 [HARD STOP] Tool budget/limit exhausted this turn, forcing final reply`)
+                    return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
+                }
+
+                // A single model response can contain MULTIPLE tool_calls together
+                // (e.g. "stop and follow me"), so this doesn't break legitimate
+                // multi-action requests — it only stops her from being offered a
+                // fresh round of tools afterward to invent something new to do.
                 const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
                 if (didMinecraftAction) {
                     log(`🎯 [ACTION DISPATCHED] Ending turn, no further tool offers this turn`)
@@ -597,10 +595,12 @@ export class Lily {
                     )
                     if (gif) pendingGifUrl = gif
 
-                    // Same early-exit rule as the native tool_calls path above —
-                    // embedded <tool_call> tags can also contain multiple calls in
-                    // one content block (parseEmbeddedToolCalls returns them all),
-                    // so multi-action requests are still handled in a single pass.
+                    // Same hard-stop check as the native tool_calls path above.
+                    if (this.tools.shouldHardStop()) {
+                        log(`🛑 [HARD STOP] Tool budget/limit exhausted this turn, forcing final reply`)
+                        return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
+                    }
+
                     const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
                     if (didMinecraftAction) {
                         log(`🎯 [ACTION DISPATCHED] Ending turn, no further tool offers this turn`)
@@ -622,6 +622,16 @@ export class Lily {
             if ([...TOOL_NAMES].some(name => content.includes(name))) {
                 log(`⚠️ [NARRATE] Model described tool instead of calling`)
                 scratch.push({ role: "assistant", content })
+
+                // Wire up the executor's own narration budget (LIMITS.narration).
+                // Without this check, a model that keeps narrating instead of
+                // calling can loop all the way to maxToolLoops just re-reading
+                // the same reminder each time.
+                if (this.tools.recordNarration()) {
+                    log(`🛑 [HARD STOP] Narration budget exhausted, forcing final reply`)
+                    return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
+                }
+
                 scratch.push({
                     role: "user",
                     content: `[System: Do NOT mention tool names in your reply. Use <tool_call> if needed, otherwise just reply naturally.]`
@@ -630,9 +640,6 @@ export class Lily {
             }
 
             if (content && content.toLowerCase() !== "none") {
-                // Persisted history gets a marker for silent-effect tools so future
-                // turns can "see" that she acted/wrote/sent something — the reply
-                // actually sent to chat/game (the returned `text`) is untouched.
                 const historyContent = actionsThisTurn.length
                     ? `${content} [did: ${actionsThisTurn.join(", ")}]`
                     : content
@@ -646,8 +653,6 @@ export class Lily {
             return { text: "I'm not sure about that one!", gifUrl: null }
         }
 
-        // maxToolLoops budget exhausted — don't error out, just make her talk
-        // like a normal turn ending. No mention of hitting a limit.
         log(`⏹️ [LOOP BUDGET EXHAUSTED] Forcing final no-tools reply`)
         return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
     }
@@ -680,6 +685,9 @@ export class Lily {
 
         const { skipped, result } = await this.tryChannelLock(channelId, async () => {
             this.pushToConvoHistory(channelId, { role: "user", content: clean || "[sent an image]" })
+
+       
+            this.tools.resetTurn()
 
             const count = (this.channelMessageCounts.get(channelId) ?? 0) + 1
             this.channelMessageCounts.set(channelId, count)

@@ -5,13 +5,13 @@ import { tavily } from "@tavily/core"
 // ─── Turn budget limits ─────────────────────────────────────────────────
 // Single source of truth for every per-turn cap. Update here, nowhere else.
 const LIMITS = {
-    memoryQuery: 2,   // query_memory_database
-    memoryWrite: 1,   // addto / update / remove_memory_database — shared slot
-    media: 1,         // send_gif / send_meme — shared slot
-    webSearch: 2,     // web_search
-    total: 3,         // ANY chat-context tool call, combined — hard ceiling
-    narration: 1,     // narrated-instead-of-called attempts tolerated before forcing a tool-free reply
-    badArgs: 1,       // malformed/empty-argument calls tolerated before forcing a tool-free reply
+    memoryQuery: 30,   // query_memory_database
+    memoryWrite: 30,   // addto / update / remove_memory_database — shared slot
+    media: 30,         // send_gif / send_meme — shared slot
+    webSearch: 30,     // web_search
+    total: 20,         // ANY chat-context tool call, combined — hard ceiling
+    narration: 30,     // narrated-instead-of-called attempts tolerated before forcing a tool-free reply
+    badArgs: 30,       // malformed/empty-argument calls tolerated before forcing a tool-free reply
 }
 
 // ─── Tool Executor ──────────────────────────────────────────────────────

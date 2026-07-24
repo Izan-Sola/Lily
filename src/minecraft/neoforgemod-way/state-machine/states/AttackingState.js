@@ -1,3 +1,5 @@
+import { Logger } from "../../../../utils/Logger.js"
+
 export class AttackingState {
   constructor(ctx) {
     this.ctx = ctx
@@ -7,7 +9,7 @@ export class AttackingState {
 
   onEnter(payload = {}) {
     this.targetId = payload.entityId ?? null
-    console.log(`[Attacking] Engaging ${this.targetId != null ? `target id:${this.targetId}` : 'nearest hostile (autonomous)'}`)
+    Logger.info(`[Attacking] Engaging ${this.targetId != null ? `target id:${this.targetId}` : 'nearest hostile (autonomous)'}`)
 
     if (this.attackInterval) clearInterval(this.attackInterval)
     this.attackInterval = setInterval(() => {
@@ -60,6 +62,6 @@ export class AttackingState {
     }
     this.targetId = null
     this.ctx.move.stop()
-    console.log('[Attacking] Exited')
+    Logger.info('[Attacking] Exited')
   }
 }

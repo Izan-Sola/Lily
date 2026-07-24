@@ -1,5 +1,6 @@
 import { buildSurvivalPrompt } from '../prompt-builders/survivalPromptBuilder.js'
 import { ToolExecutor, TOOLS } from '../../../../ai/tools.js'
+import { Logger } from '../../../../utils/Logger.js'
 const ACTIONS_INTERVAL_MS = 30000
 const MSG_MIN_MS = 2 * 60 * 1000
 const MSG_MAX_MS = 6 * 60 * 1000
@@ -25,7 +26,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "
         // (started either by LOOP 1 / a direct command, or by a previous survival tick).
         const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
         if (busyStates.includes(stateController.currentStateName)) {
-            console.log(`[SURVIVAL] Skipping tick — busy in ${stateController.currentStateName}`)
+            Logger.info(`[SURVIVAL] Skipping tick — busy in ${stateController.currentStateName}`)
             return
         }
 
@@ -109,10 +110,10 @@ async function handleSurvivalToolCall(call, toolExecutor) {
     try {
         args = call.function.arguments ? JSON.parse(call.function.arguments) : {}
     } catch (err) {
-        console.error(`[SURVIVAL] Invalid tool call arguments for ${name}:`, call.function.arguments)
+        Logger.error(`[SURVIVAL] Invalid tool call arguments for ${name}:`, call.function.arguments)
         return
     }
 
     const result = await toolExecutor.execute(name, args)
-    console.log(`[SURVIVAL] ${name} →`, result)
+    Logger.info(`[SURVIVAL] ${name} →`, result)
 }

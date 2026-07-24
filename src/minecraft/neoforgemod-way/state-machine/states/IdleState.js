@@ -1,3 +1,5 @@
+import { Logger } from "../../../../utils/Logger.js"
+
 export class IdleState {
     constructor(ctx) {
         this.ctx = ctx
@@ -7,7 +9,7 @@ export class IdleState {
         this.ctx.move.stop()
         this.ctx.sneak.cancelHold()
         this.ctx.sneak.setSneaking(false)
-        console.log('[Idle] Entered')
+        Logger.info('[Idle] Entered')
     }
 
     onTick() {
@@ -45,7 +47,7 @@ export class IdleState {
     }
 
     onExit() {
-        console.log('[Idle] Exited')
+        Logger.info('[Idle] Exited')
     }
 }
 /**

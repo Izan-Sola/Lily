@@ -31,7 +31,7 @@ export class LilyStateMachine {
 
     start() {
         if (this.tickInterval) return
-        console.log("⚙️ [STATE] State machine started")
+        Logger.info("⚙️ [STATE] State machine started")
         this.tickInterval = setInterval(() => this._tick(), this.opts.tickMs)
     }
 
@@ -39,7 +39,7 @@ export class LilyStateMachine {
         clearInterval(this.tickInterval)
         this.tickInterval = null
         this.state = State.IDLE
-        console.log("⚙️ [STATE] State machine stopped")
+        Logger.info("⚙️ [STATE] State machine stopped")
     }
 
     // ─── Main tick ────────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ export class LilyStateMachine {
             // ── Recovering — wait until hp is back up ──
             if (this.state === State.RECOVERING) {
                 if (hp > this.opts.lowHpThreshold + 2) {
-                    console.log("⚙️ [STATE] HP recovered, resuming")
+                    Logger.info("⚙️ [STATE] HP recovered, resuming")
                     this._transition(State.IDLE)
                 } else {
                     // keep moving away from danger
@@ -84,7 +84,7 @@ export class LilyStateMachine {
 
             // ── No hostile — clear attack state ──
             if (this.state === State.ATTACKING) {
-                console.log("⚙️ [STATE] No more hostiles, returning to follow")
+                Logger.info("⚙️ [STATE] No more hostiles, returning to follow")
                 this.target = null
                 this._transition(State.IDLE)
             }
@@ -108,7 +108,7 @@ export class LilyStateMachine {
     async _enterAttacking(entity) {
         this._transition(State.ATTACKING)
         this.target = entity
-        console.log(`⚙️ [STATE] Attacking ${entity.name ?? entity.type}`)
+        Logger.info(`⚙️ [STATE] Attacking ${entity.name ?? entity.type}`)
         // stop pathfinding so we can control movement for combat
         this.bot.pathfinder.stop()
         await this._continueAttacking()
@@ -152,7 +152,7 @@ export class LilyStateMachine {
         this._transition(State.RECOVERING)
         this.target = null
         this.bot.pathfinder.stop()
-        console.log(`⚙️ [STATE] Low HP (${this.bot.health}), recovering`)
+        Logger.info(`⚙️ [STATE] Low HP (${this.bot.health}), recovering`)
         await this._flee()
     }
 
@@ -190,7 +190,7 @@ export class LilyStateMachine {
 
     _transition(newState) {
         if (this.state === newState) return
-        console.log(`⚙️ [STATE] ${this.state} → ${newState}`)
+        Logger.info(`⚙️ [STATE] ${this.state} → ${newState}`)
         this.state = newState
     }
 
@@ -244,6 +244,6 @@ export class LilyStateMachine {
 
     setFollowTarget(username) {
         this.followTarget = username
-        console.log(`⚙️ [STATE] Follow target set to ${username}`)
+        Logger.info(`⚙️ [STATE] Follow target set to ${username}`)
     }
 }

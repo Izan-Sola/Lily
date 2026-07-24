@@ -1,3 +1,5 @@
+import { Logger } from "../../../../utils/Logger.js"
+
 export class RecoveringState {
   constructor(ctx) {
     this.ctx = ctx
@@ -6,7 +8,7 @@ export class RecoveringState {
 
   onEnter(payload = {}) {
     this.explicit = !!payload.explicit
-    console.log(this.explicit
+    Logger.info(this.explicit
       ? `[Recovering] Told to retreat toward ${this.ctx.opts.followTarget}`
       : `[Recovering] Low HP (${this.ctx.lilyHp}) – retreating toward ${this.ctx.opts.followTarget}`)
     this.ctx.sneak.setSneaking(false)

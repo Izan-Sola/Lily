@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { Logger } from '../../../../utils/Logger.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -20,7 +21,7 @@ export function loadCombos() {
     try {
         const raw = fs.readFileSync(path.join(__dirname, '../states/data/PKCombosData.json'), 'utf8')
         combosData = JSON.parse(raw)
-        console.log(`[COMBOS] Loaded ${combosData.combos?.length ?? 0} combos`)
+        Logger.info(`[COMBOS] Loaded ${combosData.combos?.length ?? 0} combos`)
     } catch (err) {
         console.error('[COMBOS] Failed to load PKCombosData.json:', err.message)
         combosData = { combos: [] }

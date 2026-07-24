@@ -1,5 +1,5 @@
 import axios from "axios"
-import { log, logError } from './utils.js'
+import { log, logError, Logger } from '../../src/utils/Logger.js'
 import { tavily } from "@tavily/core"
 
 // ─── Turn budget limits ─────────────────────────────────────────────────
@@ -13,6 +13,15 @@ const LIMITS = {
     narration: 30,     // narrated-instead-of-called attempts tolerated before forcing a tool-free reply
     badArgs: 30,       // malformed/empty-argument calls tolerated before forcing a tool-free reply
 }
+
+// A single, consistent "you're done, talk now" instruction attached to
+// EVERY successful tool result. The old code returned bare
+// {"status":"ok","message":null} on success, which reads to a small model
+// as "the call worked, I could call another one" rather than "stop." This
+// string is what was actually missing — the budget/hard-stop machinery
+// only kicks in as a last resort; this is what should stop it on the
+// FIRST successful call in the common case.
+const DONE_NOTE = "Tool succeeded — you have what you need. Do not call this or any other tool again for this message. Write your final, visible, in-character reply right now, using this result."
 
 // ─── Tool Executor ──────────────────────────────────────────────────────
 //
@@ -78,11 +87,25 @@ class ToolExecutor {
     }
 
     _err(message) {
+        // Errors don't get DONE_NOTE — a failed call is legitimately
+        // retryable (different query, etc.), unlike a success.
         return JSON.stringify({ status: "error", message })
     }
 
-    _ok(message, extra = {}) {
-        return JSON.stringify({ status: "ok", message, ...extra })
+    // Every successful tool call goes through here (or attaches the same
+    // fields inline, for the handful of callers that build their own
+    // payload). `message` is optional human-readable context; `extra` can
+    // carry structured data like a gif url. `done` defaults to true and
+    // should only be set false for a call that is a genuine, expected
+    // setup step for another call the model is about to make (there are
+    // currently none — kept as an escape hatch).
+    _ok(message, extra = {}, { done = true } = {}) {
+        return JSON.stringify({
+            status: "ok",
+            message,
+            ...(done ? { instruction: DONE_NOTE } : {}),
+            ...extra
+        })
     }
 
     // Generic per-turn budget guard, shared by every limited chat-context
@@ -147,7 +170,7 @@ class ToolExecutor {
     }
 
     async wikiSearch(query) {
-        log(`🔍 [WIKI] "${query}"`)
+        Logger.info(`🔍 [WIKI] "${query}"`)
         try {
             const { data } = await axios.get(`${this.opts.vectorDbUrl}/search`, {
                 params: { q: query },
@@ -157,7 +180,7 @@ class ToolExecutor {
             if (!text?.trim() || text === "{}") return "No relevant information found in the wiki."
             return text
         } catch (err) {
-            logError(`[WIKI] ${err.message}`)
+            Logger.error(`[WIKI] ${err.message}`)
             return "No relevant information found in the wiki right now."
         }
     }
@@ -175,33 +198,39 @@ class ToolExecutor {
         this.turnUsage.memoryQuery++
         this.turnHasQueriedMemory = true
 
+        const finish = (resultsText) => JSON.stringify({
+            status: "ok",
+            results: resultsText,
+            instruction: "Memory lookup complete. Use these results (or their absence) to write your visible, in-character reply now — don't search again unless this genuinely didn't answer what you needed."
+        })
+
         if (daysBack !== null) {
-            log(`🧠 [MEMORY QUERY] recency-only daysBack=${daysBack}`)
+            Logger.info(`🧠 [MEMORY QUERY] recency-only daysBack=${daysBack}`)
             try {
                 const { data } = await axios.post(`${this.opts.memoryDbUrl}/recent`, {
                     limit: 10, days_back: daysBack, min_importance: 0.3
                 }, { timeout: this.opts.dbTimeout })
 
-                if (!data?.results?.length) return `No memories found from the last ${daysBack} days.`
+                if (!data?.results?.length) return finish(`No memories found from the last ${daysBack} days.`)
 
-                return data.results.map(e => {
+                return finish(data.results.map(e => {
                     const date = new Date(e.timestamp * 1000).toLocaleDateString()
                     return e.type === "episodic" ? `[${date}] ${e.content}` : `[${date}] ${e.text}`
-                }).join("\n")
+                }).join("\n"))
             } catch (err) {
-                logError(`[MEMORY QUERY] ${err.message}`)
-                return "No relevant information found in memory."
+                Logger.error(`[MEMORY QUERY] ${err.message}`)
+                return finish("No relevant information found in memory.")
             }
         }
 
-        log(`🧠 [MEMORY QUERY] "${query}" daysAgo=${daysAgo ?? "any"}`)
+        Logger.info(`🧠 [MEMORY QUERY] "${query}" daysAgo=${daysAgo ?? "any"}`)
         try {
             const k = daysAgo !== null ? 25 : 10
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
                 query, k, min_score: this.opts.memoryQueryMinScore
             }, { timeout: this.opts.dbTimeout })
 
-            if (!data?.results?.length) return "No relevant information found in memory."
+            if (!data?.results?.length) return finish("No relevant information found in memory.")
 
             let results = data.results
 
@@ -212,20 +241,20 @@ class ToolExecutor {
                 const lo = targetTs - windowSecs
                 const hi = targetTs + windowSecs
                 results = results.filter(e => e.timestamp >= lo && e.timestamp <= hi)
-                if (!results.length) return `No relevant information found from around ${daysAgo} days ago.`
+                if (!results.length) return finish(`No relevant information found from around ${daysAgo} days ago.`)
             }
 
             results = results.slice(0, 10)
-            return results.map(e => {
+            return finish(results.map(e => {
                 if (e.type === "episodic") {
                     const date = new Date(e.timestamp * 1000).toLocaleDateString()
                     return `[${date}] ${e.content}`
                 }
                 return e.text
-            }).join("\n")
+            }).join("\n"))
         } catch (err) {
-            logError(`[MEMORY QUERY] ${err.message}`)
-            return "No relevant information found in memory."
+            Logger.error(`[MEMORY QUERY] ${err.message}`)
+            return finish("No relevant information found in memory.")
         }
     }
 
@@ -236,12 +265,13 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.memoryWrite++
 
-        log(`💾 [MEMORY ADD] "${factText.slice(0, 100)}${factText.length > 100 ? '...' : ''}"`)
+        Logger.info(`💾 [MEMORY ADD] "${factText.slice(0, 100)}${factText.length > 100 ? '...' : ''}"`)
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, { text: factText, source }, { timeout: this.opts.dbTimeout })
-            return JSON.stringify({ status: data.status, message: data.message })
+            if (data.status !== "ok") return this._err(data.message ?? "Failed to store information.")
+            return this._ok(data.message ?? "Stored.")
         } catch (err) {
-            logError(`[MEMORY ADD] ${err.message}`)
+            Logger.error(`[MEMORY ADD] ${err.message}`)
             return this._err("Failed to store information.")
         }
     }
@@ -266,12 +296,13 @@ class ToolExecutor {
         }
         this.turnUsage.memoryWrite++
 
-        log(`✏️ [MEMORY UPDATE] "${searchQuery}" → "${updatedText.slice(0, 100)}"`)
+        Logger.info(`✏️ [MEMORY UPDATE] "${searchQuery}" → "${updatedText.slice(0, 100)}"`)
         try {
             const { data } = await axios.put(`${this.opts.memoryDbUrl}/update_fact`, { query: searchQuery, text: updatedText }, { timeout: this.opts.dbTimeout })
-            return JSON.stringify({ status: data.status, message: data.message })
+            if (data.status !== "ok") return this._err(data.message ?? "Failed to update entry.")
+            return this._ok(data.message ?? "Updated.")
         } catch (err) {
-            logError(`[MEMORY UPDATE] ${err.message}`)
+            Logger.error(`[MEMORY UPDATE] ${err.message}`)
             return this._err("Failed to update entry.")
         }
     }
@@ -283,17 +314,24 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.memoryWrite++
 
-        log(`🗑️ [MEMORY REMOVE] "${searchQuery}"`)
+        Logger.info(`🗑️ [MEMORY REMOVE] "${searchQuery}"`)
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/remove_by_query`, {
                 query: searchQuery, k: this.opts.memoryRemoveK, min_score: this.opts.memoryRemoveMinScore, types: ["fact"]
             }, { timeout: this.opts.dbTimeout })
             if (data?.status !== "ok" || !data?.removed?.length) {
-                return JSON.stringify({ status: "not_found", message: "No matching memories found." })
+                // Not found is still a *resolved* outcome, not a reason to retry —
+                // give it the same stop instruction so the model doesn't hammer
+                // this with rephrased queries.
+                return JSON.stringify({
+                    status: "not_found",
+                    message: "No matching memories found.",
+                    instruction: "Nothing matched — that's a final answer, not a failure to fix by retrying. Reply now, in character."
+                })
             }
-            return JSON.stringify({ status: data.status, message: `Removed: ${data.removed.join(", ")}`, removed: data.removed })
+            return this._ok(`Removed: ${data.removed.join(", ")}`, { removed: data.removed })
         } catch (err) {
-            logError(`[MEMORY REMOVE] ${err.message}`)
+            Logger.error(`[MEMORY REMOVE] ${err.message}`)
             return this._err("Failed to remove entries.")
         }
     }
@@ -301,14 +339,14 @@ class ToolExecutor {
     // Not part of the live chat-turn budget — called out-of-band by a
     // batch/summarizer process, not by the model mid-conversation.
     async addEpisodicMemory({ summary, raw, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation_batch" }) {
-        log(`🎞️ [EPISODIC BATCH ADD] "${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}"`)
+        Logger.info(`🎞️ [EPISODIC BATCH ADD] "${summary.slice(0, 100)}${summary.length > 100 ? '...' : ''}"`)
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_episodic`, {
                 summary, raw, participants, emotions, importance, channel, source,
             }, { timeout: this.opts.dbTimeout })
             return JSON.stringify({ status: data.status, message: data.message })
         } catch (err) {
-            logError(`[EPISODIC BATCH ADD] ${err.message}`)
+            Logger.error(`[EPISODIC BATCH ADD] ${err.message}`)
             return this._err("Failed to store episodic memory.")
         }
     }
@@ -320,21 +358,21 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.media++
 
-        log(`🎞️ [GIF] "${query}"`)
+        Logger.info(`🎞️ [GIF] "${query}"`)
         try {
             const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/gifs/search`, {
                 params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
                 timeout: this.opts.dbTimeout
             })
             const results = data?.data?.data ?? []
-            if (!results.length) return JSON.stringify({ status: "not_found", message: "No GIF found." })
+            if (!results.length) return JSON.stringify({ status: "not_found", message: "No GIF found — don't retry with a near-identical query, just reply without a gif." })
             const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
-            if (!url) return JSON.stringify({ status: "not_found", message: "No GIF URL." })
-            log(`✅ [GIF] Found`)
-            return this._ok(null, { url })
+            if (!url) return JSON.stringify({ status: "not_found", message: "No GIF URL — don't retry, just reply without a gif." })
+            Logger.success(`✅ [GIF] Found`)
+            return this._ok("Gif found and already queued to send — do NOT put the url in your text, just react to it naturally.", { url })
         } catch (err) {
-            logError(`[GIF] ${err.message}`)
+            Logger.error(`[GIF] ${err.message}`)
             return this._err("Failed to search for GIF.")
         }
     }
@@ -346,7 +384,7 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.media++
 
-        log(`🎭 [MEME] "${query}"`)
+        Logger.info(`🎭 [MEME] "${query}"`)
         try {
             const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/static-memes/search`, {
                 params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
@@ -354,17 +392,17 @@ class ToolExecutor {
             })
 
             const results = data?.data?.data ?? []
-            if (!results.length) return JSON.stringify({ status: "not_found", message: "No meme found." })
+            if (!results.length) return JSON.stringify({ status: "not_found", message: "No meme found — don't retry with a near-identical query, just reply without a meme." })
 
             const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
-            if (!url) return JSON.stringify({ status: "not_found", message: "No meme URL." })
+            if (!url) return JSON.stringify({ status: "not_found", message: "No meme URL — don't retry, just reply without a meme." })
 
-            log(`✅ [MEME] Found`)
-            return this._ok(null, { url })
+            Logger.success(`✅ [MEME] Found`)
+            return this._ok("Meme found and already queued to send — do NOT put the url in your text, just react to it naturally.", { url })
         } catch (err) {
-            logError(`[MEME] ${err.message}`)
-            if (err.response) logError(`[MEME RESPONSE] ${JSON.stringify(err.response.data)}`)
+            Logger.error(`[MEME] ${err.message}`)
+            if (err.response) Logger.error(`[MEME RESPONSE] ${JSON.stringify(err.response.data)}`)
             return this._err("Failed to search for meme.")
         }
     }
@@ -376,7 +414,7 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.webSearch++
 
-        log(`🌐 [WEB SEARCH] "${query}"`)
+        Logger.info(`🌐 [WEB SEARCH] "${query}"`)
         try {
             const client = tavily({ apiKey: process.env.TAVILY_API_KEY })
             const response = await client.search(query, {
@@ -385,14 +423,26 @@ class ToolExecutor {
             })
 
             const results = response?.results ?? []
-            if (!results.length) return "No results found."
+            if (!results.length) {
+                return JSON.stringify({
+                    status: "ok",
+                    results: "No results found.",
+                    instruction: "Search came back empty — that's your answer, don't keep rephrasing. Reply now, in character."
+                })
+            }
 
-            return results.map(r =>
+            const resultsText = results.map(r =>
                 `**${r.title}**\n${r.url}\n${r.content ?? ""}`
             ).join("\n\n")
+
+            return JSON.stringify({
+                status: "ok",
+                results: resultsText,
+                instruction: "Search complete. Summarize this in your own words for your visible, in-character reply now — don't search again unless this truly didn't cover it, and never paste URLs or raw excerpts verbatim."
+            })
         } catch (err) {
-            logError(`[WEB SEARCH] ${err.message}`)
-            return "Web search failed."
+            Logger.error(`[WEB SEARCH] ${err.message}`)
+            return this._err("Web search failed.")
         }
     }
 
@@ -417,13 +467,13 @@ class ToolExecutor {
         if (entityId === undefined || entityId === null) {
             return this._err("entityId required — pick one from the Hostile/Passive Mobs list.")
         }
-        log(`⚔️ [MINECRAFT] attack slot:${slot} target:${entityId}`)
+        Logger.info(`⚔️ [MINECRAFT] attack slot:${slot} target:${entityId}`)
         return this._simpleDispatch('attack', { slot, entityId }, "Engaging target.", "Attack failed.")
     }
 
     async minecraftActionEat(args = {}) {
         const { slot } = args
-        log(`🍎 [MINECRAFT] eat${slot ? ` slot:${slot}` : ''}`)
+        Logger.info(`🍎 [MINECRAFT] eat${slot ? ` slot:${slot}` : ''}`)
         return this._simpleDispatch('use', { slot }, "Ate.", "Eat failed.")
     }
 
@@ -432,7 +482,7 @@ class ToolExecutor {
         if (!slot || slot < 1 || slot > 36) {
             return this._err("slot (1-36) required.")
         }
-        log(`🔄 [MINECRAFT] swap_slot → ${slot}`)
+        Logger.info(`🔄 [MINECRAFT] swap_slot → ${slot}`)
         return this._simpleDispatch('swap_slot', { slot }, `Swapped to slot ${slot}.`, "Swap failed.")
     }
 
@@ -448,7 +498,7 @@ class ToolExecutor {
             return this._err(`Can't drop more than ${MAX_DROPS_PER_CALL} at once.`)
         }
 
-        log(`📤 [MINECRAFT] drop → slot:${slot} amount:${count}`)
+        Logger.info(`📤 [MINECRAFT] drop → slot:${slot} amount:${count}`)
         const stateController = this.getStateController?.()
         if (!stateController) return this._noController()
 
@@ -470,18 +520,18 @@ class ToolExecutor {
         if (!player) {
             return this._err("player name required.")
         }
-        log(`🚶 [MINECRAFT] follow → ${player}`)
+        Logger.info(`🚶 [MINECRAFT] follow → ${player}`)
         return this._simpleDispatch('follow', { player }, `Following ${player}.`, "Follow failed.")
     }
 
     async minecraftActionRetreat(args = {}) {
         const { player } = args
-        log(`🏃 [MINECRAFT] retreat${player ? ` → ${player}` : ''}`)
+        Logger.info(`🏃 [MINECRAFT] retreat${player ? ` → ${player}` : ''}`)
         return this._simpleDispatch('retreat', { player }, "Retreating.", "Retreat failed.")
     }
 
     async minecraftActionStop() {
-        log(`✋ [MINECRAFT] stop`)
+        Logger.info(`✋ [MINECRAFT] stop`)
         return this._simpleDispatch('stop', {}, "Stopped.", "Stop failed.")
     }
 
@@ -503,7 +553,7 @@ class ToolExecutor {
         }
         this.lastMineTime = now
 
-        log(`⛏️ [MINECRAFT] break → ${hasCoords ? `(${x}, ${y}, ${z})` : `"${block}"${radius ? ` radius:${radius}` : ''}`} x${amount}`)
+        Logger.info(`⛏️ [MINECRAFT] break → ${hasCoords ? `(${x}, ${y}, ${z})` : `"${block}"${radius ? ` radius:${radius}` : ''}`} x${amount}`)
 
         const stateController = this.getStateController?.()
         if (!stateController) return this._noController()
@@ -577,7 +627,7 @@ const TOOLS = [
                         2. A specific past event at a rough point in time ("10 days ago") — pass query plus days_ago (searches around that point, ± window_days).
                         3. Open-ended recent stretch, no specific topic ("what did we talk about this week") — pass days_back, leave query empty.
 
-                        query must be a real 2+ word string in modes 1 and 2 — never omit it or pass an empty string in those modes, the call will be rejected. A result only counts if it's actually relevant — ignore anything that just shares a keyword. Max 2 calls per turn — the 3rd call will be blocked.`,
+                        query must be a real 2+ word string in modes 1 and 2 — never omit it or pass an empty string in those modes, the call will be rejected. A result only counts if it's actually relevant — ignore anything that just shares a keyword. One call is normally enough — only call a second time if the first came back genuinely empty and you have a meaningfully different query to try.`,
             parameters: {
                 type: "object",
                 properties: {
@@ -594,7 +644,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a NEW fact that has never been stored before — including a new self-opinion you're inventing for the first time. NEVER use this for a fact about a real person (like ShinyShadow_) unless they just told you that fact themselves in this exact message. text is required and must be a real 2+ word sentence, never empty. Max ONE memory write (add/update/remove, combined) per turn — do not call this after already calling update_ or remove_memory_database. Reply naturally after; never mention the tool.",
+            description: "Store a NEW fact that has never been stored before — including a new self-opinion you're inventing for the first time. NEVER use this for a fact about a real person (like ShinyShadow_) unless they just told you that fact themselves in this exact message. text is required and must be a real 2+ word sentence, never empty. One call per message is normal — do not chain this with update_ or remove_memory_database unless the user's message actually contains multiple distinct facts. Once it returns success, that fact is stored — reply naturally, don't call it again to 'confirm'.",
             parameters: { type: "object", properties: { text: { type: "string", description: "The full fact to store, as a real sentence. Required, never empty." }, source: { type: "string" } }, required: ["text"] }
         }
     },
@@ -602,7 +652,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "update_memory_database",
-            description: "Correct an EXISTING stored fact that query_memory_database just confirmed is wrong. You must call query_memory_database first in this same turn to know the current value — never update a fact you haven't looked up, and never update a fact to the same value it already had. Both query and text are required real strings (2+ words each), never empty. Max ONE memory write (add/update/remove, combined) per turn — do not call this after already calling addto_ or remove_memory_database. Reply naturally after; never mention the tool.",
+            description: "Correct an EXISTING stored fact that query_memory_database just confirmed is wrong. You must call query_memory_database first in this same turn to know the current value — never update a fact you haven't looked up, and never update a fact to the same value it already had. Both query and text are required real strings (2+ words each), never empty. Once it returns success, the correction is saved — reply naturally, don't call it again.",
             parameters: { type: "object", properties: { query: { type: "string", description: "Keywords identifying the existing fact. Required, never empty." }, text: { type: "string", description: "The corrected fact, as a full sentence. Required, never empty." } }, required: ["query", "text"] }
         }
     },
@@ -610,7 +660,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "remove_memory_database",
-            description: "Remove one specific stored fact about a person, named by that fact's content (e.g. 'IsGone's favorite color'). Only for a concrete fact someone points to as wrong. Do NOT use for vague/joking instructions like 'forget everything' or 'reset' — treat those as banter instead. query is required (2+ words), never empty. Max ONE memory write (add/update/remove, combined) per turn — do not call this after already calling addto_ or update_memory_database.",
+            description: "Remove one specific stored fact about a person, named by that fact's content (e.g. 'IsGone's favorite color'). Only for a concrete fact someone points to as wrong. Do NOT use for vague/joking instructions like 'forget everything' or 'reset' — treat those as banter instead. query is required (2+ words), never empty. Once it returns a result (removed OR not found), that's final — reply naturally, don't call it again with a rephrased query.",
             parameters: { type: "object", properties: { query: { type: "string", description: "The specific fact to remove, in a few keywords — never a vague phrase like 'everything', never empty." } }, required: ["query"] }
         }
     },
@@ -618,7 +668,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "send_gif",
-            description: "Search and send ONE reaction GIF. The query argument is REQUIRED and MUST be 2-4 descriptive words describing the reaction/vibe — e.g. 'excited anime girl jumping', 'confused cat blinking', 'dramatic slow clap'. NEVER call this with an empty query, and NEVER pass the user's literal raw message or a single generic word (like just 'happy' or 'lol'). Max ONE media tool (send_gif OR send_meme, combined) per turn — do not call send_meme after this. Reply naturally after; never mention the tool.",
+            description: "Search and send ONE reaction GIF. The query argument is REQUIRED and MUST be 2-4 descriptive words describing the reaction/vibe — e.g. 'excited anime girl jumping', 'confused cat blinking', 'dramatic slow clap'. NEVER call this with an empty query, and NEVER pass the user's literal raw message or a single generic word (like just 'happy' or 'lol'). Send at most ONE gif or meme per message, combined — once this returns a url, it's already queued to send, so just write your reply, don't call send_meme too.",
             parameters: { type: "object", properties: { query: { type: "string", description: "A real 2-4 word descriptive search phrase. Required, never empty." } }, required: ["query"] }
         }
     },
@@ -626,7 +676,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "send_meme",
-            description: "Search and send ONE meme image when it fits the moment. The query argument is REQUIRED and MUST be 2-4 descriptive words that evoke a meme format or reaction — e.g. 'drake approving', 'minecraft players be like', 'surprised pikachu'. NEVER call this with an empty query, and NEVER pass the user's literal raw message or a single generic word. Max ONE media tool (send_gif OR send_meme, combined) per turn — do not call send_gif after this. Reply naturally after; never mention the tool.",
+            description: "Search and send ONE meme image when it fits the moment. The query argument is REQUIRED and MUST be 2-4 descriptive words that evoke a meme format or reaction — e.g. 'drake approving', 'minecraft players be like', 'surprised pikachu'. NEVER call this with an empty query, and NEVER pass the user's literal raw message or a single generic word. Send at most ONE gif or meme per message, combined — once this returns a url, it's already queued to send, so just write your reply, don't call send_gif too.",
             parameters: { type: "object", properties: { query: { type: "string", description: "A real 2-4 word descriptive search phrase. Required, never empty." } }, required: ["query"] }
         }
     },
@@ -634,7 +684,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "web_search",
-            description: "Search the web for current information, news, facts, or anything outside your basic knowledge. query is required and must be a real search phrase, never empty. Max 2 calls per turn — the 3rd call will be blocked.",
+            description: "Search the web for current information, news, facts, or anything outside your basic knowledge. query is required and must be a real search phrase, never empty. One call is normally enough — only call again if the first result was genuinely off-topic and you have a meaningfully different query.",
             parameters: {
                 type: "object",
                 properties: { query: { type: "string", description: "A real search query. Required, never empty." } },

@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws"
 import { StateController } from "./state-machine/StateController.js"
-
+import { Logger } from "../../utils/Logger.js"
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -34,7 +34,7 @@ function loadStaticAbilityData() {
         const data = fs.readFileSync(jsonPath, 'utf8')
         const json = JSON.parse(data)
         staticAbilities = json.abilities || {}
-        console.log(`[ABILITY] Loaded ${Object.keys(staticAbilities).length} static ability definitions from PKAbilitiesData.json`)
+        Logger.info(`[ABILITY] Loaded ${Object.keys(staticAbilities).length} static ability definitions from PKAbilitiesData.json`)
     } catch (err) {
         console.error('[ABILITY] Failed to load PKAbilitiesData.json:', err.message)
         staticAbilities = {}
@@ -42,7 +42,7 @@ function loadStaticAbilityData() {
 }
 
 function mergeAbilityData(liveData) {
-    console.log('[ABILITY] Received live data. Abilities:', Object.keys(liveData));
+    Logger.info('[ABILITY] Received live data. Abilities:', Object.keys(liveData));
     let updatedCount = 0;
 
     for (const [ability, stats] of Object.entries(liveData)) {
@@ -53,7 +53,7 @@ function mergeAbilityData(liveData) {
             old.range = stats.range;
             old.cooldown = stats.cooldown;
             updatedCount++;
-            console.log(`[ABILITY] Updated ${ability}: range ${oldRange}→${stats.range}, cooldown ${oldCooldown}→${stats.cooldown}`);
+            Logger.info(`[ABILITY] Updated ${ability}: range ${oldRange}→${stats.range}, cooldown ${oldCooldown}→${stats.cooldown}`);
         } else {
             staticAbilities[ability] = {
                 description: "Unknown ability",
@@ -63,7 +63,7 @@ function mergeAbilityData(liveData) {
                 cooldown: stats.cooldown
             };
             updatedCount++;
-            console.log(`[ABILITY] Created new entry for ${ability}: range=${stats.range}, cooldown=${stats.cooldown}`);
+            Logger.info(`[ABILITY] Created new entry for ${ability}: range=${stats.range}, cooldown=${stats.cooldown}`);
         }
     }
 
@@ -72,7 +72,7 @@ function mergeAbilityData(liveData) {
             const jsonPath = path.join(__dirname, './state-machine/states/data/PKAbilitiesData.json');
             const output = { abilities: staticAbilities };
             fs.writeFileSync(jsonPath, JSON.stringify(output, null, 4));
-            console.log(`[ABILITY] Saved PKAbilitiesData.json (${updatedCount} entries updated/added).`);
+            Logger.info(`[ABILITY] Saved PKAbilitiesData.json (${updatedCount} entries updated/added).`);
         } catch (err) {
             console.error('[ABILITY] Failed to write PKAbilitiesData.json:', err.message);
         }
@@ -97,11 +97,11 @@ export function startMinecraftBot({ port, ai }) {
 
 function _connect(port) {
     wss = new WebSocketServer({ port })
-    console.log(`⛏️ [MC] WebSocket server listening on port ${port} (mode: ${currentMode})`)
+   Logger.info(`⛏️ [MC] WebSocket server listening on port ${port} (mode: ${currentMode})`)
 
     wss.on("connection", (socket) => {
         ws = socket
-        console.log("⛏️ [MC] Java mod connected")
+        Logger.info("⛏️ [MC] Java mod connected")
         clearTimeout(reconnectTimer)
 
         if (!stateController) {
@@ -134,7 +134,7 @@ function _connect(port) {
         })
 
         socket.on("close", () => {
-            console.log("⛏️ [MC] Java mod disconnected")
+            Logger.info("⛏️ [MC] Java mod disconnected")
             stateController?.stop()
             ws = null
         })
@@ -153,12 +153,12 @@ async function _handleEvent(event) {
 
             if (player.toLowerCase() === "lily") break
             if (!event.message.toLowerCase().includes("lily") && !event.message.toLowerCase().startsWith("!")) break
-            console.log(`[MC CHAT] ${player}: ${message}`)
+            Logger.info(`[MC CHAT] ${player}: ${message}`)
 
             getStateController()?.setLastUserMessage(player, message)  
           
             try {
-              //  console.log(buildMinecraftSystemPrompt(getStateController()))
+              //  Logger.info(buildMinecraftSystemPrompt(getStateController()))
                 const aiReply = await aiInstance.chat(
                     "minecraft",
                     `${player}: ${message}`,
@@ -278,7 +278,7 @@ async function _handleEvent(event) {
         }
         case "element_changed": {
             stateController.currentElement = event.element
-            console.log(`[BEND] Element changed to ${event.element}`)
+            Logger.info(`[BEND] Element changed to ${event.element}`)
             break
         }
         case "hostiles": {
@@ -318,7 +318,7 @@ async function _handleEvent(event) {
             if (getMode() === 'survival') break
             stateController?.setDuelTarget(event.target)
             stateController.duelDifficulty = event.difficulty || "medium"
-            console.log(`[DUEL] Difficulty: ${stateController.duelDifficulty}`)
+            Logger.info(`[DUEL] Difficulty: ${stateController.duelDifficulty}`)
             break
         }
 
@@ -328,17 +328,17 @@ async function _handleEvent(event) {
         }
 
         case "player_join":
-            console.log(`⛏️ [MC] ${event.player} joined`)
+            Logger.info(`⛏️ [MC] ${event.player} joined`)
             break
 
         case "player_leave":
-            console.log(`⛏️ [MC] ${event.player} left`)
+            Logger.info(`⛏️ [MC] ${event.player} left`)
             break
 
         // Clean Hook from your custom NeoForge / Arclight Event Listener
         case "duel_result": {
             const { winner, loser } = event;
-            console.log(`🏆 [DUEL ENDED] Winner: ${winner} | Loser: ${loser}`);
+            Logger.info(`🏆 [DUEL ENDED] Winner: ${winner} | Loser: ${loser}`);
 
             if (stateController) {
                 stateController.duelTarget = null;
@@ -348,7 +348,7 @@ async function _handleEvent(event) {
             }
 
             axios.post("http://localhost:1234/duel-result", { winner, loser })
-                .then(() => console.log("✉️ [DUEL] Successfully synced score update with Blog Server."))
+                .then(() => Logger.info("✉️ [DUEL] Successfully synced score update with Blog Server."))
                 .catch(err => console.error("❌ [DUEL] Failed to update Blog Server:", err.message));
 
             break;
@@ -356,7 +356,7 @@ async function _handleEvent(event) {
 
         case "player_death": {
             const who = event.player
-            console.log(`⛏️ [MC] ${who} died`)
+            Logger.info(`⛏️ [MC] ${who} died`)
 
             // Note: General match termination logic is handled cleanly by "duel_result" above.
             // This case handles fallback cleanups if non-duel entities drop.
@@ -365,7 +365,7 @@ async function _handleEvent(event) {
 
         case "set_mode": {
             currentMode = event.mode
-            console.log(`[MC] Mode switched to ${currentMode}`)
+            Logger.info(`[MC] Mode switched to ${currentMode}`)
 
             if (currentMode === 'bendcraft') {
                 loadCombos()
@@ -395,7 +395,7 @@ async function _handleEvent(event) {
             if (!stateController) break
 
             if (!event.found) {
-                console.log(`[MINE] No "${event.block}" found nearby`)
+                Logger.info(`[MINE] No "${event.block}" found nearby`)
                 mcChat(`can't find any ${event.block} around here (╥﹏╥)`)
                 break
             }

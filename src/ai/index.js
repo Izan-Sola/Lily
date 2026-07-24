@@ -1039,4 +1039,5 @@
 //  */
 
 export { Lily } from './Lily.js'
-export { initLogChannel, log, logError, sanitizeInput } from './utils.js'
+export { sanitizeInput } from './utils.js'
+import { log, logError } from '../../src/utils/Logger.js'

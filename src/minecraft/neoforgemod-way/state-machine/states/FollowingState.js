@@ -1,10 +1,12 @@
+import { Logger } from "../../../../utils/Logger.js"
+
 export class FollowingState {
   constructor(ctx) {
     this.ctx = ctx
   }
 
   onEnter() {
-    console.log(`[Following] Started following ${this.ctx.opts.followTarget}`)
+    Logger.info(`[Following] Started following ${this.ctx.opts.followTarget}`)
   }
 
   onTick() {

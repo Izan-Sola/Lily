@@ -66,7 +66,7 @@ export class StateController {
 
     start() {
         if (this.tickInterval) return
-        console.log('[STATE] Controller started')
+        Logger.info('[STATE] Controller started')
         this.tickInterval = setInterval(() => this._tick(), this.opts.tickMs)
     }
 
@@ -77,7 +77,7 @@ export class StateController {
         this.sneak.setSneaking(false)
         this.move.stop()
         this.transitionTo(State.IDLE)
-        console.log('[STATE] Controller stopped')
+        Logger.info('[STATE] Controller stopped')
     }
 
     transitionTo(stateName, payload = {}) {
@@ -98,7 +98,7 @@ export class StateController {
         this.currentStateName = stateName
         this.currentState = newState
         if (this.currentState?.onEnter) this.currentState.onEnter(payload)
-        console.log(`[STATE] ➡️ ${oldName} → ${stateName}${payload?.player ? ` (${payload.player})` : ''}`)
+        Logger.info(`[STATE] ➡️ ${oldName} → ${stateName}${payload?.player ? ` (${payload.player})` : ''}`)
     }
 
     getPlayerByName(name) {
@@ -212,20 +212,20 @@ export class StateController {
             if (this.duelTarget) {
                 this.duelTarget = null
                 if (this.currentStateName === State.DUELING) this.transitionTo(State.IDLE)
-                console.log('[DUEL] Duel ended')
+                Logger.info('[DUEL] Duel ended')
                 this.mcSend('unsprint', {})
             }
             return
         }
         this.duelTarget = targetName
         this.transitionTo(State.DUELING)
-        console.log(`[DUEL] Now dueling ${targetName}`)
+        Logger.info(`[DUEL] Now dueling ${targetName}`)
         this.mcSend('get_bindings')
     }
 
     setFollowTarget(name) {
         this.opts.followTarget = name
-        console.log(`[STATE] Follow target → ${name}`)
+        Logger.info(`[STATE] Follow target → ${name}`)
     }
 
     getStatus() {
@@ -249,7 +249,7 @@ export class StateController {
 
     updateAbilityStats(statsMap) {
         this.abilityStats = statsMap
-        console.log(`[STATS] Updated ability stats for ${Object.keys(statsMap).length} abilities`)
+        Logger.info(`[STATS] Updated ability stats for ${Object.keys(statsMap).length} abilities`)
     }
 
     getFollowTarget() { return this.players[this.opts.followTarget] ?? null }

@@ -4,6 +4,7 @@ import mineflayerPathfinder from "mineflayer-pathfinder"
 const { pathfinder, Movements, goals } = mineflayerPathfinder
 
 import { LilyStateMachine } from "./states.js"
+import { Logger } from "../../utils/Logger.js"
 
 let mcBot = null
 let stateMachine = null
@@ -11,7 +12,7 @@ let aiInstance = null
 
 export function startMinecraftBot({ host, port = 25565, username = "Lily", version, ai, relayChannelId = null }) {
     if (mcBot) {
-        console.log("⛏️ [MC] Bot already running")
+        Logger.info("⛏️ [MC] Bot already running")
         return
     }
 
@@ -28,7 +29,7 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
     mcBot.loadPlugin(pathfinder)
 
     mcBot.once("spawn", () => {
-        console.log(`⛏️ [MC] ${username} spawned in ${host}`)
+        Logger.info(`⛏️ [MC] ${username} spawned in ${host}`)
 
         const defaultMove = new Movements(mcBot)
         mcBot.pathfinder.setMovements(defaultMove)
@@ -51,7 +52,7 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
         if (sender === mcBot.username) return
         if (!message.trim()) return
 
-        console.log(`⛏️ [MC CHAT] ${sender}: ${message}`)
+        Logger.info(`⛏️ [MC CHAT] ${sender}: ${message}`)
         aiInstance.pushRawMessage("minecraft", sender, message)
 
         const lower = message.toLowerCase()
@@ -83,7 +84,7 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
         mcBot = null
     })
     mcBot.on("death", () => {
-        console.log("⛏️ [MC] Bot died, respawning...")
+        Logger.info("⛏️ [MC] Bot died, respawning...")
         mcBot.respawn()
     })
 
@@ -98,7 +99,7 @@ export function startMinecraftBot({ host, port = 25565, username = "Lily", versi
     })
 
     mcBot.on("end", reason => {
-        console.log("⛏️ [MC] Disconnected:", reason)
+        Logger.info("⛏️ [MC] Disconnected:", reason)
         stateMachine?.stop()
         mcBot = null
     })

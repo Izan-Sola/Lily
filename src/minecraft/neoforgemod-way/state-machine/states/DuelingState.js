@@ -6,6 +6,7 @@ import {
     comboDuration,
     abilityAsCombo,
 } from '../helpers/comboExecutor.js'
+import { Logger } from '../../../../utils/Logger.js';
 
 const MAX_BUSY_MS = 6000;
 const MAX_NEXT_PROMPT_DELAY = 8000;
@@ -62,7 +63,7 @@ export class DuelingState {
     }
 
     onEnter() {
-        console.log(`[Dueling] Facing ${this.ctx.duelTarget}`);
+        Logger.info(`[Dueling] Facing ${this.ctx.duelTarget}`);
         this.ctx.sneak.setSneaking(false);
         this.ctx.move.stop();
 
@@ -85,7 +86,7 @@ export class DuelingState {
     }
 
     onExit() {
-        console.log('[Dueling] Duel ended');
+        Logger.info('[Dueling] Duel ended');
         this.ctx.mcSend('unsprint', {});
         this.fetchBusy = false;
         this._actionQueue = [];
@@ -102,7 +103,7 @@ export class DuelingState {
         }
         const target = this.ctx.players[targetName];
         if (!target) {
-            console.log(`[Dueling] Target ${targetName} left, ending duel`);
+            Logger.info(`[Dueling] Target ${targetName} left, ending duel`);
             this.ctx.setDuelTarget(null);
             return;
         }
@@ -214,7 +215,7 @@ export class DuelingState {
     }
 
     async _fetchAction(prompt, targetName) {
-        console.log('[Dueling] DUELING PROMPT', prompt);
+        Logger.info('[Dueling] DUELING PROMPT', prompt);
         const response = await fetch("http://localhost:11435/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -233,7 +234,7 @@ export class DuelingState {
 
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content;
-        console.log('[Dueling] Lily decision:', text);
+        Logger.info('[Dueling] Lily decision:', text);
         if (!text) return null;
 
         try {

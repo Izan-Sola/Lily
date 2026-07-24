@@ -4,7 +4,7 @@ import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 import { config } from "./src/utils/config.js"
-
+import { Logger } from "./src/utils/Logger.js"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -16,7 +16,7 @@ const deploy = async () => {
     for (const file of commandFiles) {
         const command = await import(`./src/commands/${file}`)
         commands.push(command.data.toJSON())
-        console.log(`📦 Loaded command: ${command.data.name}`)
+        Logger.info(`📦 Loaded command: ${command.data.name}`)
     }
 
     const rest = new REST({ version: "10" }).setToken(config.token)
@@ -26,9 +26,9 @@ const deploy = async () => {
             Routes.applicationCommands(config.clientId),
             { body: commands }
         )
-        console.log("✅ Slash commands deployed successfully!")
+        Logger.success("✅ Slash commands deployed successfully!")
     } catch (error) {
-        console.error("❌ Error deploying slash commands:", error.message)
+        Logger.error("❌ Error deploying slash commands:", error.message)
         throw error
     }
 }

@@ -1,3 +1,5 @@
+import { Logger } from "../../../../utils/Logger.js";
+
 export class SneakHelper {
   // Controls the player's sneaking state and timing.
   constructor(mcSend) {
@@ -11,7 +13,7 @@ export class SneakHelper {
     if (this.isSneaking === value) return;
     this.isSneaking = value;
     this.mcSend('sneak', { value });
-    console.log(`[SNEAK] ${value ? 'ON' : 'OFF'}`);
+    Logger.info(`[SNEAK] ${value ? 'ON' : 'OFF'}`);
   }
 
   // Creates a temporary pulse: sets sneaking off briefly then on again after a delay.

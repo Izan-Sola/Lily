@@ -15,10 +15,11 @@ import { fileURLToPath } from "url"
 import { exec, spawn } from "child_process"
 import { promisify } from "util"
 import prism from "prism-media"
-import { Lily, initLogChannel } from "./ai/index.js"
+import { Lily } from "./ai/index.js"
+import { initLogChannel } from "./utils/Logger.js"
 import { config } from "./utils/config.js"
 import { getPrefs } from "./utils/userPreferences.js"
-
+import { Logger } from "./utils/Logger.js"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const execAsync = promisify(exec)
@@ -129,9 +130,9 @@ async function extractImagesFromEmbeds(message) {
             const b64 = fs.readFileSync(tmpOut).toString("base64")
             fs.unlink(tmpOut, () => { })
             results.push({ base64: b64, mimeType: "image/jpeg" })
-            console.log(`🖼️ [MEDIA] Extracted frame from embed GIF`)
+            Logger.success(`🖼️ [MEDIA] Extracted frame from embed GIF`)
         } catch (err) {
-            console.error("[MEDIA] Failed to process embed:", err.message)
+            Logger.error("[MEDIA] Failed to process embed:", err.message)
         }
     }
 
@@ -191,25 +192,36 @@ except Exception as e:
     })
 }
 
-export async function speak(text) {
-    const outPath = join(tmpdir(), `lily_${randomUUID()}.wav`)
-    return new Promise((resolve, reject) => {
-        const py = spawn(PYTHON_BIN, [
-            process.env.STYLETTS2_SCRIPT,
-            "--text", text,
-            "--ref", process.env.VOICE_SAMPLE_PATH,
-            "--out", outPath,
-            "--model_dir", process.env.STYLETTS2_MODEL_DIR ?? "./models",
-        ])
-        let err = ""
-        py.stderr.on("data", d => err += d)
-        py.on("close", code => {
-            if (code !== 0) return reject(new Error(`StyleTTS2 failed: ${err.trim()}`))
-            resolve(outPath)
-        })
-    })
-}
+let busy = false
 
+export async function speak(text) {
+    if (busy) return null // already synthesizing — drop this request
+
+    busy = true
+    const outPath = join(tmpdir(), `lily_${randomUUID()}.wav`)
+
+    try {
+        return await new Promise((resolve, reject) => {
+            const py = spawn(PYTHON_BIN, [
+                process.env.STYLETTS2_SCRIPT,
+                "--text", text,
+                "--ref", process.env.VOICE_SAMPLE_PATH,
+                "--out", outPath,
+                "--model_dir", process.env.STYLETTS2_MODEL_DIR ?? "./models",
+                "--max_chars", "220",
+                "--vram_budget_mb", "1600",
+            ])
+            let err = ""
+            py.stderr.on("data", d => err += d)
+            py.on("close", code => {
+                if (code !== 0) return reject(new Error(`StyleTTS2 failed: ${err.trim()}`))
+                resolve(outPath)
+            })
+        })
+    } finally {
+        busy = false
+    }
+}
 function sanitizeInput(text) {
     return text
         .replace(/[:;=8][\-o\*\']?[\)\]\(\[dDpP\/\:\}\{@\|\\]/gi, "")
@@ -253,7 +265,7 @@ export async function playInGuild(guildId, text) {
     const state = guildPlayers.get(guildId)
     if (!state) return
     if (state.isProcessing) {
-        console.log("🔇 [VOICE] Skipping — already processing audio")
+        Logger.warning("🔇 [VOICE] Skipping — already processing audio")
         return
     }
     state.isProcessing = true
@@ -333,7 +345,7 @@ class VoiceSession {
             if (!member || member.user.bot) return
             if (this.activeSpeakers.has(userId)) return
 
-            console.log(`🎙️ [VOICE] ${member.displayName} started speaking`)
+            Logger.info(`🎙️ [VOICE] ${member.displayName} started speaking`)
 
             const audioStream = receiver.subscribe(userId, {
                 end: { behavior: EndBehaviorType.AfterSilence, duration: this.silenceThreshold }
@@ -361,7 +373,7 @@ class VoiceSession {
                 if (duration >= this.minSpeechDuration && chunks.length > 0) {
                     await this.processAudio(userId, member.displayName, chunks, duration)
                 } else {
-                    console.log(`🎙️ [VOICE] ${member.displayName} speech too short (${duration}ms), ignoring`)
+                    Logger.warning(`🎙️ [VOICE] ${member.displayName} speech too short (${duration}ms), ignoring`)
                 }
 
                 this.activeSpeakers.delete(userId)
@@ -396,11 +408,11 @@ class VoiceSession {
     async processAudio(userId, displayName, chunks, duration) {
         const prefs = getPrefs(userId)
         if (!prefs.voiceProcess) {
-            console.log(`🎙️ [VOICE] ${displayName} has voice processing disabled`)
+            Logger.warning(`🎙️ [VOICE] ${displayName} has voice processing disabled`)
             return
         }
 
-        console.log(`🎙️ [VOICE] Processing ${displayName}: ${duration}ms, ${chunks.length} chunks`)
+        Logger.info(`🎙️ [VOICE] Processing ${displayName}: ${duration}ms, ${chunks.length} chunks`)
 
         try {
             const sessionId = `${userId}_${Date.now()}`
@@ -417,11 +429,11 @@ class VoiceSession {
             fs.unlink(wavPath, () => { })
 
             if (!transcript || transcript.length < 5) {
-                console.log(`🎙️ [VOICE] ${displayName} said nothing intelligible`)
+                Logger.warning(`🎙️ [VOICE] ${displayName} said nothing intelligible`)
                 return
             }
 
-            console.log(`📝 [STT] ${displayName}: "${transcript}"`)
+            LOgger.info(`📝 [STT] ${displayName}: "${transcript}"`)
 
             ai.pushRawMessage(this.channelId, displayName, transcript)
             ai.observe(`${displayName} said (voice): ${transcript}`)
@@ -451,12 +463,12 @@ class VoiceSession {
             const clean = stripLeadingSlashCommand(text)
 
             if (clean && clean !== "none" && clean !== "None" && clean.length > 0) {
-                console.log(`🎙️ [VOICE] Lily responding: "${clean}"`)
+                Logger.success(`🎙️ [VOICE] Lily responding: "${clean}"`)
                 await playInGuild(this.guild.id, clean)
             }
 
         } catch (err) {
-            console.error(`[VOICE] Error processing ${displayName}:`, err.message)
+            Logger.error(`[VOICE] Error processing ${displayName}:`, err.message)
         }
     }
 
@@ -473,7 +485,7 @@ class VoiceSession {
 
 export function startVoiceSession(connection, guild, channelId) {
     const session = new VoiceSession(guild, connection, channelId)
-    console.log("🔊 [VOICE] Voice session started with improved handling")
+    Logger.success("🔊 [VOICE] Voice session started with improved handling")
     return session.player
 }
 
@@ -614,7 +626,7 @@ export async function createBot() {
                         return
                     }
 
-                    console.log(`📝 [VOICE MSG] ${authorName} said: "${transcript}"`)
+                    Logger.info(`📝 [VOICE MSG] ${authorName} said: "${transcript}"`)
                     const reply = await ai.chat(channelId, `[${authorName}] says to you in a voice message: ${transcript}`)
                     const { text } = parseReply(reply)
                     const cleanReply = stripLeadingSlashCommand(text)
@@ -646,7 +658,7 @@ export async function createBot() {
         // Extract images/videos/GIFs from the message
         let images = await extractImagesFromMessage(message)
         if (images.length > 0) {
-            console.log(`🖼️ [MEDIA] Extracted ${images.length} image(s) from message`)
+            Logger.info(`🖼️ [MEDIA] Extracted ${images.length} image(s) from message`)
         }
 
         let formattedMessage = ""
@@ -658,7 +670,7 @@ export async function createBot() {
                     // Extract images from the referenced message too
                     const referencedImages = await extractImagesFromMessage(referenced)
                     if (referencedImages.length > 0) {
-                        console.log(`🖼️ [MEDIA] Extracted ${referencedImages.length} image(s) from referenced message`)
+                        Logger.info(`🖼️ [MEDIA] Extracted ${referencedImages.length} image(s) from referenced message`)
                         images.push(...referencedImages)
                     }
 

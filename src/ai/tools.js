@@ -384,7 +384,7 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.media++
 
-        Logger.info(`"${query}"`, "MEME")
+        Logger.info(`Querying Klipy API: "${query}"`, "MEME")
         try {
             const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/static-memes/search`, {
                 params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
@@ -398,8 +398,8 @@ class ToolExecutor {
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
             if (!url) return JSON.stringify({ status: "not_found", message: "No meme URL — don't retry, just reply without a meme." })
 
-            Logger.success(`Found`, "MEME")
-            return this._ok("Meme found and already queued to send — do NOT put the url in your text, just react to it naturally.", { url })
+            Logger.success(`Meme found, URL: ${url}`, "MEME")
+            return this._ok("Meme found and already queued to send — do NOT put the url in your text, just reply to the user message naturally.", { url })
         } catch (err) {
             Logger.error(err.message, "MEME")
             if (err.response) Logger.error(JSON.stringify(err.response.data), "MEME RESPONSE")

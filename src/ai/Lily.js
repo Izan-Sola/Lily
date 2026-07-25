@@ -23,7 +23,7 @@ const DEFAULT_OPTIONS = {
     maxRawMessages: 30,
     maxToolLoops: 15,
     maxToolRepeats: 3,
-    maxUsesPerTool: 2, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
+    maxUsesPerTool: 8, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
     memoryQueryMinScore: 0.3,
     memoryRemoveMinScore: 0.70,
     memoryRemoveK: 2,
@@ -46,22 +46,7 @@ function isMinecraftActionTool(name) {
     return name === "minecraft_action" || name.startsWith("minecraft_action")
 }
 
-// Tools whose effect is invisible in the final natural-language reply — the
-// persisted convo-history entry gets a compact [did: ...] marker for these,
-// so on later turns she can "see" that the action happened instead of it
-// looking identical to a turn where she just talked. Retrieval tools
-// (query_memory_database, web_search) are deliberately excluded — their
-// result already gets folded into her actual reply, so marking them too
-// would just be redundant noise in history.
-const SILENT_EFFECT_TOOLS = new Set([
-    // THIS was fine but after improving system prompt this got redundant and actually worsened her, gotta clean this up
-])
-
 const GIF_TOOLS = new Set(["send_gif", "send_meme"])
-
-function isSilentEffectTool(name) {
-    return SILENT_EFFECT_TOOLS.has(name) || isMinecraftActionTool(name)
-}
 
 export class Lily {
     /**
@@ -294,8 +279,7 @@ export class Lily {
             this.observeParticipants.set(channelId, new Set())
         }
     }
-
-    async sendToOllama(messages, foreignTools = [], noTools = false, baseTools = TOOLS) {
+    async sendToOllama(messages, foreignTools = [], noTools = false, baseTools = TOOLS, overrides = {}) {
         if (getStateController()?.currentStateName === 'DUELING') {
             return { content: "Lily is currently in a duel, she can't reply right now!" }
         }
@@ -304,14 +288,14 @@ export class Lily {
                 model: this.opts.model,
                 messages,
                 stream: false,
-                temperature: this.opts.temperature,
+                temperature: overrides.temperature ?? this.opts.temperature,
                 top_p: this.opts.top_p,
                 top_k: this.opts.top_k,
                 min_p: this.opts.min_p,
-                repeat_penalty: this.opts.repeat_penalty,
+                repeat_penalty: overrides.repeat_penalty ?? this.opts.repeat_penalty,
                 repeat_last_n: this.opts.repeat_last_n,
-                max_tokens: this.opts.max_tokens,
-                stop: ["</answer>", "<|user|>", "<|endoftext|>"],
+                max_tokens: overrides.max_tokens ?? this.opts.max_tokens,
+                stop: overrides.stop ?? ["</answer>", "<|user|>", "<|endoftext|>"],
             }
             if (!noTools) {
                 payload.tools = foreignTools.length ? [...baseTools, ...foreignTools] : baseTools
@@ -321,8 +305,8 @@ export class Lily {
             const msg = data.choices?.[0]?.message ?? null
             if (msg?.content) {
                 msg.content = msg.content
-                    .replace(/<think>[\s\S]*?<\/think>/g, "")   // discard thinking entirely
-                    .replace(/<\/?answer>/g, "")                 // strip the tags, keep the text inside
+                    .replace(/<think>[\s\S]*?<\/think>/g, "")
+                    .replace(/<\/?answer>/g, "")
                     .trim()
             }
             return msg
@@ -332,7 +316,6 @@ export class Lily {
             return null
         }
     }
-
     parseEmbeddedToolCalls(content) {
         const matches = [...content.matchAll(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g)]
         return matches.flatMap(match => {
@@ -440,12 +423,19 @@ export class Lily {
     // tools disabled so the model has to produce a normal in-character reply
     // instead of being offered another 14 rounds of "what else could I call".
     async finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl) {
-        // suppressActionReminder: if we're here because an action already fired,
-        // the "call the matching tool now" nudge would be actively contradictory
-        // (tools are disabled for this completion) — see buildMessagesForOllama.
         const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, { ...opts, suppressActionReminder: true })
         let attemptScratch = [...scratch]
-        const MAX_RETRIES = 6
+        const MAX_RETRIES = 2
+
+        // Stricter than the normal chat-turn defaults: stop the instant the model
+        // starts down the <tool_call> path again (tools are already off, so any
+        // attempt is wasted generation, not a valid response), and push the
+        // repeat penalty harder since the context is now full of the model's own
+        // recent tool-call spam that it's prone to imitating.
+        const overrides = {
+            stop: ["</answer>", "<|user|>", "<|endoftext|>", "<tool_call>"],
+            repeat_penalty: Math.max(this.opts.repeat_penalty, 1.3),
+        }
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             const messages = [...baseMessages, ...attemptScratch]
@@ -457,7 +447,7 @@ export class Lily {
                 })
             }
 
-            const msg = await this.sendToOllama(messages, [], true)
+            const msg = await this.sendToOllama(messages, [], true, TOOLS, overrides)
             const raw = (msg?.content ?? "").trim()
             const content = raw.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim()
 
@@ -471,26 +461,24 @@ export class Lily {
             if (raw) attemptScratch = [...attemptScratch, { role: "assistant", content: raw }]
         }
 
-        Logger.error(`Exhausted ${MAX_RETRIES} retries without a natural reply`, "BUDGET FALLBACK")
-        return null
+        Logger.error(`Exhausted ${MAX_RETRIES} retries without a natural reply, using scripted fallback`, "BUDGET FALLBACK")
+        const fallback = "my brain short-circuited for a sec, say that again? (>_<)"
+        this.pushToConvoHistory(channelId, { role: "assistant", content: fallback })
+        return { text: fallback, gifUrl: pendingGifUrl }
     }
-
     // Shared by both the native tool_calls path and the embedded <tool_call>
     // path below — runs each call, records it for the silent-effect history
     // marker if applicable, and pushes the result via the caller's pushFn
     // (which differs between the two formats: role:"tool" vs role:"user").
-    async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, actionsThisTurn, pushFn) {
+    async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
         let pendingGifUrl = null
         for (const { name, args } of calls) {
-            if (isSilentEffectTool(name)) {
-                actionsThisTurn.push(`${name}(${JSON.stringify(args)})`)
-            }
+
             const gif = await this.runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, (text) => pushFn(name, text))
             if (gif) pendingGifUrl = gif
         }
         return pendingGifUrl
     }
-
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
         const baseTools = this.getToolsForChannel(channelId)
@@ -500,7 +488,6 @@ export class Lily {
         const foreignTools = opts.tools ?? []
         const foreignToolNames = new Set(foreignTools.map(t => t.function?.name).filter(Boolean))
         const scratch = []
-        const actionsThisTurn = []
 
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
             let messages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
@@ -535,9 +522,9 @@ export class Lily {
                     return { text: msg.content ?? "", gifUrl: null, tool_calls: [single] }
                 }
 
-                Logger.success(`${msg.tool_calls.map(tc => tc.function.name).join(", ")}`, "NATIVE")
+                Logger.success(`Lily called the tool: ${msg.tool_calls.map(tc => tc.function.name).join(", ")}`, "NATIVE")
                 scratch.push({ role: "assistant", content: msg.content ?? "", tool_calls: msg.tool_calls })
-                NATIVE
+
                 const calls = msg.tool_calls.map(tc => {
                     let args = {}
                     try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { }
@@ -545,7 +532,7 @@ export class Lily {
                 })
 
                 const gif = await this.runToolCalls(
-                    channelId, calls, tracker, toolsUsedThisTurn, actionsThisTurn,
+                    channelId, calls, tracker, toolsUsedThisTurn,
                     (name, text) => {
                         const call = calls.find(c => c.name === name && !c._used)
                         if (call) call._used = true
@@ -554,22 +541,11 @@ export class Lily {
                 )
                 if (gif) pendingGifUrl = gif
 
-                // Check the executor's own hard-stop signal FIRST, before the
-                // minecraft-action early exit. A blocked() call (budget/limit hit,
-                // bad-args exhausted, etc.) sets turnHardStop — an 8B model won't
-                // reliably obey the in-band "STOP" text in the tool result, it'll
-                // just try a different tool name next loop, which is what produced
-                // the 11-loop empty-arg spam. This must be checked here, not left
-                // to the model to notice.
                 if (this.tools.shouldHardStop()) {
                     Logger.warning(`Tool budget/limit exhausted this turn, forcing final reply`, "HARD STOP")
                     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
                 }
 
-                // A single model response can contain MULTIPLE tool_calls together
-                // (e.g. "stop and follow me"), so this doesn't break legitimate
-                // multi-action requests — it only stops her from being offered a
-                // fresh round of tools afterward to invent something new to do.
                 const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
                 if (didMinecraftAction) {
                     Logger.info(`Ending turn, no further tool offers this turn`, "ACTION DISPATCHED")
@@ -585,12 +561,11 @@ export class Lily {
                     scratch.push({ role: "assistant", content })
 
                     const gif = await this.runToolCalls(
-                        channelId, calls, tracker, toolsUsedThisTurn, actionsThisTurn,
+                        channelId, calls, tracker, toolsUsedThisTurn,
                         (_name, text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
                     )
                     if (gif) pendingGifUrl = gif
 
-                    // Same hard-stop check as the native tool_calls path above.
                     if (this.tools.shouldHardStop()) {
                         Logger.warning(`Tool budget/limit exhausted this turn, forcing final reply`, "HARD STOP")
                         return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
@@ -618,10 +593,6 @@ export class Lily {
                 Logger.warning(`Model described tool instead of calling`, "NARRATE")
                 scratch.push({ role: "assistant", content })
 
-                // Wire up the executor's own narration budget (LIMITS.narration).
-                // Without this check, a model that keeps narrating instead of
-                // calling can loop all the way to maxToolLoops just re-reading
-                // the same reminder each time.
                 if (this.tools.recordNarration()) {
                     Logger.warning(`Narration budget exhausted, forcing final reply`, "HARD STOP")
                     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
@@ -635,11 +606,7 @@ export class Lily {
             }
 
             if (content && content.toLowerCase() !== "none") {
-                const historyContent = actionsThisTurn.length
-                    ? `${content} [did: ${actionsThisTurn.join(", ")}]`
-                    : content
-
-                this.pushToConvoHistory(channelId, { role: "assistant", content: historyContent })
+                this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY")
                 return { text: content, gifUrl: pendingGifUrl }
             }

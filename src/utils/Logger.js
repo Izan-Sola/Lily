@@ -1,6 +1,5 @@
 import axios from "axios";
 
-
 let logChannel = null;
 
 export async function initLogChannel(client) {
@@ -15,9 +14,33 @@ export async function initLogChannel(client) {
     if (!logChannel) Logger.warning("No hylily-livechat-logs channel found", "LOGGER");
 }
 
-function sendToLogChannel(message) {
+// Discord only understands a small subset of ANSI inside ```ansi blocks:
+// styles: 0 reset, 1 bold, 4 underline
+// fg: 30 gray, 31 red, 32 green, 33 yellow, 34 blue, 35 pink, 36 cyan, 37 white
+// bg: 40-47 (limited set of dark tones) - skipped here since text color reads better on mobile
+const DISCORD_ANSI = {
+    reset: "\u001b[0m",
+    bold: "\u001b[1m",
+    red: "\u001b[1;31m",
+    green: "\u001b[1;32m",
+    yellow: "\u001b[1;33m",
+    cyan: "\u001b[1;36m",
+};
+
+const TYPE_ANSI = {
+    error: DISCORD_ANSI.red,
+    warning: DISCORD_ANSI.yellow,
+    info: DISCORD_ANSI.cyan,
+    success: DISCORD_ANSI.green,
+};
+
+function sendToLogChannel(message, type = "info", title = "") {
     const truncated = message.length > 3200 ? message.slice(0, 3200) + "..." : message;
-    logChannel?.send(`\`\`\`\n${truncated}\n\`\`\``).catch(() => { });
+    const color = TYPE_ANSI[type] || DISCORD_ANSI.cyan;
+    const header = title ? `[ ${title} ]\n` : "";
+    const colored = `${color}${header}${truncated}${DISCORD_ANSI.reset}`;
+
+    logChannel?.send(`\`\`\`ansi\n${colored}\n\`\`\``).catch(() => { });
     axios.post("http://localhost:1234/log", { msg: truncated }, { timeout: 2000 }).catch(() => { });
 }
 
@@ -40,6 +63,9 @@ const TYPE_STYLE = {
 };
 
 const BOX_WIDTH = 79;
+const LEFT_INDENT = 4;
+const RIGHT_MARGIN = 4;
+const CONTENT_WIDTH = BOX_WIDTH - LEFT_INDENT - RIGHT_MARGIN;
 
 function wrapLine(line, width) {
     if (line.length <= width) return [line];
@@ -48,7 +74,6 @@ function wrapLine(line, width) {
     let current = "";
 
     for (const word of words) {
-        // wrap text out of the box
         if (word.length > width) {
             if (current) {
                 wrapped.push(current);
@@ -78,8 +103,6 @@ function padLine(line, width) {
 
 function drawBox(type, title, message) {
     const titleTag = ` [ ${title} ] `;
-
-    // equally distribute dashes left and right no matter the title length
     const sidePad = Math.max(0, BOX_WIDTH - titleTag.length);
     const left = "─".repeat(Math.floor(sidePad / 2));
     const right = "─".repeat(Math.ceil(sidePad / 2));
@@ -91,7 +114,9 @@ function drawBox(type, title, message) {
     console.log(paint(topLine));
 
     message.split("\n").forEach(rawLine => {
-        wrapLine(rawLine, BOX_WIDTH-4).forEach(line => console.log(paint("    " + line)));
+        wrapLine(rawLine, CONTENT_WIDTH).forEach(line => {
+            console.log(paint(" ".repeat(LEFT_INDENT) + line));
+        });
     });
 
     console.log("");
@@ -103,22 +128,22 @@ export class Logger {
     }
 
     static error(message, title = "ERROR") {
-        sendToLogChannel(message);
+        sendToLogChannel(message, "error", title);
         drawBox("error", title, message);
     }
 
     static info(message, title = "INFO") {
-        sendToLogChannel(message);
+        sendToLogChannel(message, "info", title);
         drawBox("info", title, message);
     }
 
     static warning(message, title = "WARNING") {
-        sendToLogChannel(message);
+        sendToLogChannel(message, "warning", title);
         drawBox("warning", title, message);
     }
 
     static success(message, title = "SUCCESS") {
-        sendToLogChannel(message);
+        sendToLogChannel(message, "success", title);
         drawBox("success", title, message);
     }
 }

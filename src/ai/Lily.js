@@ -12,16 +12,15 @@ const DEFAULT_OPTIONS = {
     model: "Lily",
     temperature: 0.65,
     top_p: 0.9,
-    top_k: 40,
+    top_k: 75,
     min_p: 0.08,
-    repeat_penalty: 1.075,
-    repeat_last_n: 164,
+    repeat_penalty: 1.05,
+    repeat_last_n: 400,
     max_tokens: 4096,
-    maxConvoMessages: 30,
-    maxMinecraftConvoMessages: 14,   // smaller window for the minecraft channel: freshness of
-    // rule-following matters more there than long banter recall
+    maxConvoMessages: 12,
+    maxMinecraftConvoMessages: 14,
     maxRawMessages: 30,
-    maxToolLoops: 15,
+    maxToolLoops: 5,
     maxToolRepeats: 3,
     maxUsesPerTool: 8, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
     memoryQueryMinScore: 0.3,
@@ -30,8 +29,7 @@ const DEFAULT_OPTIONS = {
     episodicQueryMinScore: 0.40,
     episodicRemoveMinScore: 0.80,
     episodicRemoveK: 3,
-    // Smaller, more frequent batches — each embedded summary stays topic-focused
-    // instead of blurring many unrelated exchanges into one blob.
+
     summarizeEvery: 20,
     summarizeLastN: 20,
     observeEvery: 20,
@@ -425,7 +423,7 @@ export class Lily {
     async finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl) {
         const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, { ...opts, suppressActionReminder: true })
         let attemptScratch = [...scratch]
-        const MAX_RETRIES = 2
+        const MAX_RETRIES = 6
 
         // Stricter than the normal chat-turn defaults: stop the instant the model
         // starts down the <tool_call> path again (tools are already off, so any
@@ -453,7 +451,7 @@ export class Lily {
 
             if (content && content.toLowerCase() !== "none") {
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
-                Logger.success(`${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY - BUDGET EXHAUSTED")
+                Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY - BUDGET EXHAUSTED")
                 return { text: content, gifUrl: pendingGifUrl }
             }
 
@@ -462,7 +460,7 @@ export class Lily {
         }
 
         Logger.error(`Exhausted ${MAX_RETRIES} retries without a natural reply, using scripted fallback`, "BUDGET FALLBACK")
-        const fallback = "my brain short-circuited for a sec, say that again? (>_<)"
+        const fallback = "... (•ᴗ•)"
         this.pushToConvoHistory(channelId, { role: "assistant", content: fallback })
         return { text: fallback, gifUrl: pendingGifUrl }
     }
@@ -473,9 +471,9 @@ export class Lily {
     async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
         let pendingGifUrl = null
         for (const { name, args } of calls) {
-
             const gif = await this.runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, (text) => pushFn(name, text))
             if (gif) pendingGifUrl = gif
+            if (this.tools.shouldHardStop()) break
         }
         return pendingGifUrl
     }
@@ -607,7 +605,7 @@ export class Lily {
 
             if (content && content.toLowerCase() !== "none") {
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
-                Logger.success(`${content.slice(0, 200)}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY")
+                Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY")
                 return { text: content, gifUrl: pendingGifUrl }
             }
 

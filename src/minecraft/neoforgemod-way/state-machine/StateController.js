@@ -326,7 +326,7 @@ export class StateController {
  *
  * SHARED STATE:
  *   this.players         → { name: { x, y, z, hp } } updated every tick from mod
- *   this.lilyPos         → { x, y, z } Lily's position, null until first update
+ *   this.lilyPos         → { x, y, z } Lily's position, null until first updat
  *   this.lilyHp          → Lily's HP 0–20, default 20
  *   this.hostiles        → [{ x, y, z, type, id, hp }] nearby hostile entities
  *   this.duelTarget      → player name being dueled or null

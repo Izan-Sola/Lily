@@ -265,7 +265,7 @@ class ToolExecutor {
         if (argErr) return argErr
         this.turnUsage.memoryWrite++
 
-        Logger.info(` Added memory: "${factText.slice(0, 100)}${factText.length > 100 ? '...' : ''}"`, "MEMORY ADD")
+        Logger.info(` Added memory: "${factText}"`, "MEMORY ADD")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, { text: factText, source }, { timeout: this.opts.dbTimeout })
             if (data.status !== "ok") return this._err(data.message ?? "Failed to store information.")
@@ -296,7 +296,7 @@ class ToolExecutor {
         }
         this.turnUsage.memoryWrite++
 
-        Logger.info(`Updated memory: "${searchQuery}" → "${updatedText.slice(0, 100)}"`, "MEMORY UPDATE")
+        Logger.info(`Updated memory: "${searchQuery}" → "${updatedText}"`, "MEMORY UPDATE")
         try {
             const { data } = await axios.put(`${this.opts.memoryDbUrl}/update_fact`, { query: searchQuery, text: updatedText }, { timeout: this.opts.dbTimeout })
             if (data.status !== "ok") return this._err(data.message ?? "Failed to update entry.")
@@ -373,7 +373,7 @@ class ToolExecutor {
             return this._ok("Gif found and already queued to send — do NOT put the url in your text, just reply naturally to the user.", { url })
         } catch (err) {
             Logger.error(err.message, "GIF")
-            return this._err("Failed to search for GIF.")
+            return this._err("Gif not found, ignore this and reply naturally to the user. Do NOT attempt to send another gif this turn.")
         }
     }
 
@@ -403,7 +403,7 @@ class ToolExecutor {
         } catch (err) {
             Logger.error(err.message, "MEME")
             if (err.response) Logger.error(JSON.stringify(err.response.data), "MEME RESPONSE")
-            return this._err("Failed to search for meme.")
+            return this._err("Meme not found, ignore this and reply naturally to the user. Do NOT attempt to send another meme this turn.")
         }
     }
 

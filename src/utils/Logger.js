@@ -14,10 +14,6 @@ export async function initLogChannel(client) {
     if (!logChannel) Logger.warning("No hylily-livechat-logs channel found", "LOGGER");
 }
 
-// Discord only understands a small subset of ANSI inside ```ansi blocks:
-// styles: 0 reset, 1 bold, 4 underline
-// fg: 30 gray, 31 red, 32 green, 33 yellow, 34 blue, 35 pink, 36 cyan, 37 white
-// bg: 40-47 (limited set of dark tones) - skipped here since text color reads better on mobile
 const DISCORD_ANSI = {
     reset: "\u001b[0m",
     bold: "\u001b[1m",
@@ -32,8 +28,9 @@ const TYPE_ANSI = {
     warning: DISCORD_ANSI.yellow,
     info: DISCORD_ANSI.cyan,
     success: DISCORD_ANSI.green,
-};
+}
 
+// discord logs
 function sendToLogChannel(message, type = "info", title = "") {
     const truncated = message.length > 3200 ? message.slice(0, 3200) + "..." : message;
     const color = TYPE_ANSI[type] || DISCORD_ANSI.cyan;

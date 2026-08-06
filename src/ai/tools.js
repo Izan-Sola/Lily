@@ -279,12 +279,9 @@ class ToolExecutor {
     async memoryUpdate(searchQuery, updatedText) {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr
-        if (!this.turnHasQueriedMemory) {
-            return this._blocked(
-                `You haven't looked up the existing fact yet this turn. You must call query_memory_database first to confirm what it currently says — ` +
-                `never guess at the old value. Do not call update_memory_database again until you've queried. If you don't actually need to correct anything, skip this and reply now.`
-            )
-        }
+
+        // (removed the turnHasQueriedMemory gate — update can be called directly)
+
         const argErr = this._requireQuery(searchQuery, 2, "shinyshadow_ favorite color") || this._requireQuery(updatedText, 2, "ShinyShadow_'s favorite color is now teal")
         if (argErr) return argErr
         // Reject no-op calls: same text passed as both the lookup query and the replacement.

@@ -469,7 +469,7 @@ export class Lily {
     // marker if applicable, and pushes the result via the caller's pushFn
     // (which differs between the two formats: role:"tool" vs role:"user").
     async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
-        let pendingGifUrl = null
+        let pendingGifUrl = null 
         for (const { name, args } of calls) {
             const gif = await this.runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, (text) => pushFn(name, text))
             if (gif) pendingGifUrl = gif

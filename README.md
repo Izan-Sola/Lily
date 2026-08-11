@@ -10,6 +10,7 @@
 #### current todos so i dont forget
 - ~~make break action actually require the correct tools and blocks drop correct item~~ DONE
 - attack action seems buggy, gotta check that
+- make so she can craft some stuff
 - ~~manage her entire inventory, not just hotbar slots~~ DONE
 - ~~make her sleep when u sleep, mount on a boat/minecart with you.~~ DONE (tbh a bit buggy could be improved)
 - dedicated specifically named dc voice channel for when playing mc survival (chatting there goes threough the mc pipeline)

@@ -2,7 +2,7 @@
 ### initially supposed to be a hytale bot, but oh well...
 
 - My daughter Lily, capable of using discord, playing minecraft, and beating your ahh. (wip)
-- This is the code for her brain, where many functions are centralized while trying to keep it clean (discord, minecraft, coding and whatever I add in the future). You are free to make use of it for your own thing if you want.
+- This is the code for her brain, where many functionalities are centralized while trying to keep it clean (discord, minecraft, coding and whatever I add in the future). You are free to make use of it for your own thing if you want.
 - Related: https://github.com/Izan-Sola/Lily-Minecraft , https://github.com/Izan-Sola/LilyBlog , https://github.com/Izan-Sola/LilyGnomeWidget
 - Currently working on her being able to play survival minecraft decently.
 - Eventually I want her to have a vtuber model.
@@ -10,6 +10,7 @@
 #### current todos so i dont forget
 - ~~make break action actually require the correct tools and blocks drop correct item~~ DONE
 - attack action seems buggy, gotta check that
+- make so she can craft some stuff
 - ~~manage her entire inventory, not just hotbar slots~~ DONE
 - ~~make her sleep when u sleep, mount on a boat/minecart with you.~~ DONE (tbh a bit buggy could be improved)
 - dedicated specifically named dc voice channel for when playing mc survival (chatting there goes threough the mc pipeline)

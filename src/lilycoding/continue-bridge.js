@@ -294,10 +294,10 @@ app.post("/v1/chat/completions", async (req, res) => {
             warnIfApplyLooksShrunk(messages, result?.text)
         }
 
-        console.log(
-            "[BRIDGE] reply:", result?.text?.slice(0, 200),
-            "| tool_calls:", result?.tool_calls?.map(tc => tc.function?.name)
-        )
+        // console.log(
+        //     "[BRIDGE] reply:", result?.text?.slice(0, 200),
+        //     "| tool_calls:", result?.tool_calls?.map(tc => tc.function?.name)
+        // )
 
         formatResponse(res, { model, stream, text: result?.text, tool_calls: result?.tool_calls })
     } catch (err) {

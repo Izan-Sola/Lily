@@ -29,7 +29,6 @@ const DEFAULT_OPTIONS = {
     episodicQueryMinScore: 0.40,
     episodicRemoveMinScore: 0.80,
     episodicRemoveK: 3,
-
     summarizeEvery: 20,
     summarizeLastN: 20,
     observeEvery: 20,

@@ -56,7 +56,6 @@ class ToolExecutor {
 
     resetTurn() {
         this.turnUsage = { memoryWrite: 0, media: 0, memoryQuery: 0, webSearch: 0, total: 0 }
-        this.turnHasQueriedMemory = false
         this.turnHardStop = false
         this.turnNarrationCount = 0
         this.turnBadArgs = 0
@@ -196,7 +195,6 @@ class ToolExecutor {
         }
 
         this.turnUsage.memoryQuery++
-        this.turnHasQueriedMemory = true
 
         const finish = (resultsText) => JSON.stringify({
             status: "ok",
@@ -279,8 +277,6 @@ class ToolExecutor {
     async memoryUpdate(searchQuery, updatedText) {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr
-
-        // (removed the turnHasQueriedMemory gate — update can be called directly)
 
         const argErr = this._requireQuery(searchQuery, 2, "shinyshadow_ favorite color") || this._requireQuery(updatedText, 2, "ShinyShadow_'s favorite color is now teal")
         if (argErr) return argErr

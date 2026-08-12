@@ -227,7 +227,7 @@ function sanitizeInput(text) {
         .replace(/[:;=8][\-o\*\']?[\)\]\(\[dDpP\/\:\}\{@\|\\]/gi, "")
         .replace(/[\)\]\(\[dDpP\/\:\}\{@\|\\][\-o\*\']?[:;=8]/gi, "")
         .replace(/[(\[{╰╯][\s\S]{0,20}?[)\]}]/g, "")
-        .replace(/[✿♡♥❤★☆♪♫•·°~∿≈]/g, "")
+        .replace(/[✿♡♥❤★☆♪♫•·°∿≈]/g, "")
         .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
         .replace(/[\u{2600}-\u{27BF}]/gu, "")
         .replace(/[\u{FE00}-\u{FEFF}]/gu, "")

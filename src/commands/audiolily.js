@@ -1,4 +1,5 @@
 import { SlashCommandBuilder } from "discord.js"
+import { speakedge } from "../bot.js"
 import { speak } from "../bot.js"
 import { Lily } from "../ai/Lily.js"
 import { config } from "../utils/config.js"

@@ -631,7 +631,7 @@ export async function createBot() {
                     const { text } = parseReply(reply)
                     const cleanReply = stripLeadingSlashCommand(text)
 
-                    const oggPath = await speak(cleanReply)
+                    const oggPath = await speakedge(cleanReply)
                     await message.reply({
                         content: `💬 *"${cleanReply}"*`,
                         files: [{ attachment: oggPath, name: "lily_response.ogg" }]

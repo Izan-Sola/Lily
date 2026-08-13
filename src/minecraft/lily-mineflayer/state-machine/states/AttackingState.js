@@ -1,5 +1,8 @@
 import { Logger } from "../../../../utils/Logger.js"
 
+const ATTACK_RANGE = 2.5
+const ATTACK_INTERVAL_MS = 650 // ~ vanilla sword cooldown; original used 1100ms for a slower PK weapon swing
+
 export class AttackingState {
   constructor(ctx) {
     this.ctx = ctx
@@ -14,42 +17,33 @@ export class AttackingState {
     if (this.attackInterval) clearInterval(this.attackInterval)
     this.attackInterval = setInterval(() => {
       if (this.ctx.currentStateName !== 'ATTACKING') return
-      // Swing at whatever she's currently facing, but only if there's still
-      // something to actually be fighting — locked target still alive/in range,
-      // or (autonomous mode) a hostile still exists at all.
       const stillFighting = this.targetId != null
         ? this.ctx.findEntityById(this.targetId)
         : this.ctx.nearestHostile()
-      if (stillFighting) this.ctx.mcSend('attack', { mode: 'once' })
-    }, 1100)
+      if (stillFighting && this.ctx._dist(this.ctx.lilyPos, stillFighting) <= ATTACK_RANGE) {
+        this.ctx.bot.attack(stillFighting)
+      }
+    }, ATTACK_INTERVAL_MS)
   }
 
   onTick() {
-    const nearest = this.ctx.nearestHostileWithin(2.5)
-
     if (this.targetId != null) {
       const locked = this.ctx.findEntityById(this.targetId)
       if (!locked) { this.ctx.transitionTo('IDLE'); return }
 
-      if (nearest && nearest.id !== locked.id) {
-        this.ctx.mcSend('look_at', { x: nearest.x, y: nearest.y + 1, z: nearest.z })
-        this.ctx.move.stop()
-        return
-      }
-
-      this.ctx.mcSend('look_at', { x: locked.x, y: locked.y + 1, z: locked.z })
-      const dist = this.ctx._dist(this.ctx.lilyPos, locked)
-      if (dist > 2.5) this.ctx.move.moveToward(this.ctx.lilyPos, locked)
+      this.ctx.bot.lookAt(locked.position.offset(0, locked.height ?? 1, 0), true)
+      const dist = this.ctx._dist(this.ctx.lilyPos, locked.position)
+      if (dist > ATTACK_RANGE) this.ctx.move.moveToward(this.ctx.lilyPos, locked.position, ATTACK_RANGE - 0.5)
       else this.ctx.move.stop()
       return
     }
 
-    // Autonomous — original behavior, now using the shared attackRange-bound nearestHostile()
+    // Autonomous — pick whatever's nearest within attackRange every tick
     const hostile = this.ctx.nearestHostile()
     if (!hostile) { this.ctx.transitionTo('IDLE'); return }
-    this.ctx.mcSend('look_at', { x: hostile.x, y: hostile.y + 1, z: hostile.z })
-    if (this.ctx._dist(this.ctx.lilyPos, hostile) > 2.5) {
-      this.ctx.move.moveToward(this.ctx.lilyPos, hostile)
+    this.ctx.bot.lookAt(hostile.position.offset(0, hostile.height ?? 1, 0), true)
+    if (this.ctx._dist(this.ctx.lilyPos, hostile.position) > ATTACK_RANGE) {
+      this.ctx.move.moveToward(this.ctx.lilyPos, hostile.position, ATTACK_RANGE - 0.5)
     } else {
       this.ctx.move.stop()
     }

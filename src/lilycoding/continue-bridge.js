@@ -21,7 +21,7 @@ const CODE_CHANNEL_ID = "vscode-continue-code"
 // further down CANNOT block a bad apply response the way it blocks a bad
 // edit_existing_file/single_find_and_replace call. These rules are the
 // only line of defense for this path; treat them as load-bearing.
-const CODE_SYSTEM_PROMPT = ``
+const CODE_SYSTEM_PROMPT = `You are a code-merging engine. You will be given a file's original content and a set of proposed changes. Output ONLY the complete final file content with the changes correctly applied — nothing else. No explanations, no commentary, no markdown code fences, no "Here's the updated file" preamble. Every line of code not part of the change must be preserved exactly as-is.`
 
 // Suffix appended to Lily's normal persona ONLY for the chat/agent model
 // (the one with tool_use). Never used on the apply-role model above.
@@ -226,7 +226,7 @@ app.post("/v1/chat/completions", async (req, res) => {
     const hasTools = Array.isArray(tools) && tools.length > 0
     const channelId = isCodeRequest ? CODE_CHANNEL_ID : CHAT_CHANNEL_ID
 
-    console.log("[BRIDGE] model:", model, "| continueTools:", hasTools ? tools.map(t => t.function?.name) : "none")
+    Logger.info("[BRIDGE] model:", model, "| continueTools:", hasTools ? tools.map(t => t.function?.name) : "none")
 
     try {
         const continueSystemMsgs = messages.filter(m => m.role === "system").map(m => m.content)
@@ -246,7 +246,7 @@ app.post("/v1/chat/completions", async (req, res) => {
             // NOT a replacement. This is what keeps her in character while
             // she has tool access.
             const editTool = tools.find(t => t.function?.name === "edit_existing_file")
-            if (editTool) console.log("[BRIDGE] edit_existing_file schema:", JSON.stringify(editTool.function.parameters, null, 2))
+            if (editTool) Logger.info("[BRIDGE] edit_existing_file schema:", JSON.stringify(editTool.function.parameters, null, 2))
 
             systemOverride = ai.buildSystemPrompt([continueExtra, AGENT_SUFFIX].filter(Boolean).join("\n\n"))
         }
@@ -266,7 +266,7 @@ app.post("/v1/chat/completions", async (req, res) => {
 
         let result
         if (toolResults.length) {
-            console.log("[BRIDGE] resuming after tool result(s):", toolResults.map(t => ({
+            Logger.info("[BRIDGE] resuming after tool result(s):", toolResults.map(t => ({
                 id: t.tool_call_id,
                 content: t.content?.slice(0, 300)
             })))
@@ -294,16 +294,16 @@ app.post("/v1/chat/completions", async (req, res) => {
             warnIfApplyLooksShrunk(messages, result?.text)
         }
 
-        // console.log(
-        //     "[BRIDGE] reply:", result?.text?.slice(0, 200),
-        //     "| tool_calls:", result?.tool_calls?.map(tc => tc.function?.name)
-        // )
+        Logger.info(
+            "[BRIDGE] reply:", result?.text?.slice(0, 200),
+            "| tool_calls:", result?.tool_calls?.map(tc => tc.function?.name)
+        )
 
         formatResponse(res, { model, stream, text: result?.text, tool_calls: result?.tool_calls })
     } catch (err) {
-        console.error("[BRIDGE] error:", err.response?.data ?? err.message)
+        Logger.error("[BRIDGE] error:", err.response?.data ?? err.message)
         res.status(500).json({ error: err.message })
     }
 })
 
-app.listen(PORT, () => console.log(`🧠 Lily bridge on http://localhost:${PORT}/v1`))
+app.listen(PORT, () => Logger.info(`🧠 Lily bridge on http://localhost:${PORT}/v1`))

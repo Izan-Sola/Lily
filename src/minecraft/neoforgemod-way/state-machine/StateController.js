@@ -59,7 +59,7 @@ export class StateController {
             [State.DUELING]: new DuelingState(this),
             [State.MINING]: new MiningState(this)
         }
-
+        this._pendingCrafts = new Map()
         this.currentStateName = State.IDLE
         this.currentState = this.states[State.IDLE]
         this.tickInterval = null
@@ -80,7 +80,27 @@ export class StateController {
         this.transitionTo(State.IDLE)
         Logger.info('Controller stopped', "STATE")
     }
+    craftItem(item, amount) {
+        return new Promise((resolve) => {
+            const requestId = `craft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            const timeout = setTimeout(() => {
+                this._pendingCrafts.delete(requestId)
+                resolve({ ok: false, message: 'Crafting timed out — no response from the game.' })
+            }, 20000) // generous: may include a walk to a crafting table
 
+            this._pendingCrafts.set(requestId, { resolve, timeout })
+            this.mcSend('craft', { requestId, item, amount })
+        })
+    }
+
+    // Called by the WS message dispatcher when a 'craft_result' message arrives.
+    handleCraftResult(msg) {
+        const pending = this._pendingCrafts.get(msg.requestId)
+        if (!pending) return // stale/unknown/duplicate — ignore
+        clearTimeout(pending.timeout)
+        this._pendingCrafts.delete(msg.requestId)
+        pending.resolve({ ok: msg.status === 'ok', message: msg.message })
+    }
     transitionTo(stateName, payload = {}) {
         if (this.currentStateName === stateName) {
             // Already in this state — let it re-enter with fresh payload instead

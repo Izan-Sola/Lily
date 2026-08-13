@@ -343,7 +343,23 @@ class ToolExecutor {
             return this._err("Failed to store episodic memory.")
         }
     }
+    async minecraftActionCraft(args = {}) {
+        const { item, quantity } = args
+        if (typeof item !== "string" || !item.trim()) {
+            return this._err("item required, in item_name format (e.g. 'iron_sword').")
+        }
+        const itemId = item.trim().toLowerCase().replace(/^minecraft:/, '')
+        const amount = Number.isInteger(quantity) && quantity > 0 ? Math.min(quantity, 64) : 1
 
+        Logger.info(`Lily is crafting ${itemId} x${amount}`, "MINECRAFT")
+        const stateController = this.getStateController?.()
+        if (!stateController) return this._noController()
+
+        const result = await stateController.craftItem(itemId, amount)
+        return result.ok
+            ? this._ok(result.message ?? `Crafted ${amount}x ${itemId}.`)
+            : this._err(result.message ?? "Crafting failed.")
+    }
     async searchGif(query) {
         const limitErr = this._checkLimit('media', LIMITS.media, 'sending a gif or meme — they share one slot')
         if (limitErr) return limitErr
@@ -574,6 +590,7 @@ class ToolExecutor {
                 case "minecraft_action_retreat": return this.minecraftActionRetreat(args)
                 case "minecraft_action_stop": return this.minecraftActionStop()
                 case "minecraft_action_break": return this.minecraftActionBreak(args)
+                case "minecraft_action_craft": return this.minecraftActionCraft(args)
                 default:
                     Logger.warning(`Unknown: ${name}`, "TOOL")
                     return `Unknown tool: ${name}`
@@ -792,7 +809,22 @@ const TOOLS = [
                 required: []
             }
         }
-    }
+    },
+    {
+        type: "function",
+        function: {
+            name: "minecraft_action_craft",
+            description: "Craft an item at (or near) a crafting table if needed. item is REQUIRED and MUST be the plain Minecraft item id in item_name format — lowercase, underscores, NO 'minecraft:' prefix (that gets added automatically on the Java side). Examples: to craft an iron sword pass item: \"iron_sword\"; iron chestplate → item: \"iron_chestplate\"; sticks → item: \"stick\"; a crafting table itself → item: \"crafting_table\". quantity is optional (default 1) and means how many of the FINISHED item to craft, not ingredient count. This call waits for the actual result — if it succeeds you'll be told what was made, if it fails you'll be told exactly why (missing ingredients, not enough of an ingredient, no crafting table nearby, etc) so you can tell the player what's wrong. Reply naturally after; never mention the tool.",
+            parameters: {
+                type: "object",
+                properties: {
+                    item: { type: "string", description: "Item id in item_name format, e.g. 'iron_sword', 'iron_chestplate', 'stick', 'crafting_table'. Required, never empty, never prefixed with 'minecraft:'." },
+                    quantity: { type: "number", minimum: 1, maximum: 64, description: "How many of the finished item to craft. Default 1 if unspecified." }
+                },
+                required: ["item"]
+            }
+        }
+    },
 ]
 
 const TOOL_NAMES = new Set(TOOLS.map(t => t.function.name))

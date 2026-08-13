@@ -403,6 +403,7 @@ async function _handleEvent(event) {
             stateController.transitionTo('MINING', { blocks: [target] })
             break
         }
+        case 'craft_result': stateController.handleCraftResult(event); break
         case "source_block": {
             stateController?.handleSourceBlock(event);
             break;

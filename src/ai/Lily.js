@@ -5,6 +5,7 @@ import { ConversationHistory, RawBuffer } from './history.js'
 import { SYSTEM_PROMPT, SUMMARIZE_PROMPT } from './prompts.js'
 import { ToolExecutor, TOOLS, TOOL_NAMES } from './tools.js'
 import { Logger } from '../../src/utils/Logger.js'
+import { saveFlawlessTurn } from './saveFlawlessTurns.js'
 // Channel id used for the Minecraft bridge — see getToolsForChannel().
 const MINECRAFT_CHANNEL_ID = "minecraft"
 
@@ -12,17 +13,17 @@ const DEFAULT_OPTIONS = {
     model: "Lily",
     temperature: 0.65,
     top_p: 0.9,
-    top_k: 75,
+    top_k: 50,
     min_p: 0.08,
-    // repeat_penalty: 1.15,
-    // repeat_last_n: 400,
-    max_tokens: 4096,
+    presence_penalty: 1.2,
+    repeat_last_n: 400,
+    max_tokens: 8192,
     maxConvoMessages: 12,
     maxMinecraftConvoMessages: 14,
     maxRawMessages: 30,
-    maxToolLoops: 5,
-    maxToolRepeats: 3,
-    maxUsesPerTool: 8, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
+    maxToolLoops: 15,
+    maxToolRepeats: 1,
+    maxUsesPerTool: 1, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
     memoryQueryMinScore: 0.3,
     memoryRemoveMinScore: 0.70,
     memoryRemoveK: 2,
@@ -288,6 +289,7 @@ export class Lily {
                 temperature: overrides.temperature ?? this.opts.temperature,
                 top_p: this.opts.top_p,
                 top_k: this.opts.top_k,
+                presence_penalty: overrides.presence_penalty ?? this.opts.presence_penalty,
                 min_p: this.opts.min_p,
                 repeat_penalty: overrides.repeat_penalty ?? this.opts.repeat_penalty,
                 repeat_last_n: this.opts.repeat_last_n,
@@ -357,6 +359,7 @@ export class Lily {
 
         if (usesSoFar >= cap) {
             Logger.warning(`${name} already used ${usesSoFar}x this turn (cap: ${cap})`, "BLOCKED")
+            this.tools.markFlawed('tool_cap_exceeded')
             pushFn(isMinecraftActionTool(name)
                 ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
                 : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
@@ -366,6 +369,7 @@ export class Lily {
         if (!isMinecraftActionTool(name)) {
             const repeatBlock = tracker.check(name, args)
             if (repeatBlock) {
+                this.tools.markFlawed('tool_repeat_blocked')
                 pushFn(repeatBlock)
                 return null
             }
@@ -414,6 +418,36 @@ export class Lily {
         })
     }
 
+    // NEW — shared by the two success paths (runToolLoop and finishWithoutTools).
+    // Rebuilds the exact input the model was prompted with, appends the
+    // scratch tool-loop messages and the final reply, and hands the full
+    // conversation off to saveFlawlessTurns.js — but only if nothing marked
+    // this turn as flawed along the way.
+    //
+    // TODO: this.tools is a single ToolExecutor shared across ALL channels,
+    // but channelLocks only serializes messages WITHIN a channel. If two
+    // different channels (e.g. Discord and Minecraft) produce a turn at
+    // close to the same time, one channel's resetTurn() can stomp the
+    // other's in-flight turnFlawless/turnUsage state. Low risk if channels
+    // rarely overlap in practice, but worth turning this.tools' turn state
+    // into a Map<channelId, state> (like convoHistories already is) if you
+    // ever see flawless-saves that look wrong, or good turns going missing.
+    async maybeSaveFlawlessTurn(channelId, systemPromptOverride, opts, scratch, finalReplyText) {
+        if (!this.tools.turnFlawless) return
+        if (!finalReplyText || finalReplyText.toLowerCase() === "none") return
+
+        try {
+            const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
+            const fullConversation = [...baseMessages, ...scratch, { role: "assistant", content: finalReplyText }]
+            // Not awaited on purpose — this shouldn't add latency to the user-facing reply.
+            saveFlawlessTurn({ channelId, messages: fullConversation }).catch(err => {
+                Logger.error(err.message, "FLAWLESS SAVE")
+            })
+        } catch (err) {
+            Logger.error(err.message, "FLAWLESS SAVE")
+        }
+    }
+
     // Final fallback used both when the tool-loop budget (maxToolLoops) runs out,
     // AND (new) immediately after a minecraft_action tool has been dispatched —
     // see didMinecraftAction in runToolLoop. Forces one last completion with
@@ -431,13 +465,14 @@ export class Lily {
         // recent tool-call spam that it's prone to imitating.
         const overrides = {
             stop: ["</answer>", "<|user|>", "<|endoftext|>", "<tool_call>"],
-            repeat_penalty: Math.max(this.opts.repeat_penalty, 1.3),
+            repeat_penalty: 1.3,
         }
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             const messages = [...baseMessages, ...attemptScratch]
 
             if (attempt > 0) {
+                this.tools.markFlawed('budget_fallback_retry')
                 messages.push({
                     role: "user",
                     content: `[System: You cannot tool call more in this turn. Stop attempting to call tools this turn, and naturally reply to the user with a text reply addressing his message.]`
@@ -449,6 +484,7 @@ export class Lily {
             const content = raw.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim()
 
             if (content && content.toLowerCase() !== "none") {
+                this.maybeSaveFlawlessTurn(channelId, systemPromptOverride, opts, attemptScratch, content)
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY - BUDGET EXHAUSTED")
                 return { text: content, gifUrl: pendingGifUrl }
@@ -468,7 +504,7 @@ export class Lily {
     // marker if applicable, and pushes the result via the caller's pushFn
     // (which differs between the two formats: role:"tool" vs role:"user").
     async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
-        let pendingGifUrl = null 
+        let pendingGifUrl = null
         for (const { name, args } of calls) {
             const gif = await this.runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, (text) => pushFn(name, text))
             if (gif) pendingGifUrl = gif
@@ -543,11 +579,11 @@ export class Lily {
                     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
                 }
 
-                const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
-                if (didMinecraftAction) {
-                    Logger.info(`Ending turn, no further tool offers this turn`, "ACTION DISPATCHED")
-                    return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
-                }
+                // const didMinecraftAction = calls.some(c => isMinecraftActionTool(c.name))
+                // if (didMinecraftAction) {
+                //     Logger.info(`Ending turn, no further tool offers this turn`, "ACTION DISPATCHED")
+                //     return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
+                // }
 
                 continue
             }
@@ -578,6 +614,7 @@ export class Lily {
                 }
 
                 Logger.warning(`${content.slice(0, 200)}`, "MALFORMED")
+                this.tools.markFlawed('malformed_tool_call')
                 scratch.push({ role: "assistant", content })
                 scratch.push({
                     role: "user",
@@ -603,6 +640,7 @@ export class Lily {
             }
 
             if (content && content.toLowerCase() !== "none") {
+                this.maybeSaveFlawlessTurn(channelId, systemPromptOverride, opts, scratch, content)
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY")
                 return { text: content, gifUrl: pendingGifUrl }
@@ -613,6 +651,7 @@ export class Lily {
         }
 
         Logger.warning(`Forcing final no-tools reply`, "LOOP BUDGET EXHAUSTED")
+        this.tools.markFlawed('tool_loop_budget_exhausted')
         return this.finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl)
     }
 

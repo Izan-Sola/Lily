@@ -45,6 +45,17 @@ const DONE_NOTE = "Tool succeeded — you have what you need. Do not call this o
 //   3. When the model narrates a tool call in prose instead of emitting a
 //      real one, call recordNarration() and check its return value the
 //      same way — true means force a tool-free final generation.
+//
+// Flawless-turn tracking (for the auto-dataset-save pipeline):
+//   turnFlawless starts true on every resetTurn() and is flipped to false
+//   the first time markFlawed() is called anywhere below. lily.js checks
+//   this.tools.turnFlawless right before saving a completed turn to the
+//   training-data queue — see maybeSaveFlawlessTurn() in lily.js. Every
+//   branch that already represents "something went wrong" (error, block,
+//   bad args, narration, malformed tool call, retry, budget exhaustion)
+//   should call markFlawed() with a short reason string. markFlawed() is
+//   idempotent — only the first reason of a turn sticks — so it's safe to
+//   call from multiple places without worrying about overwriting context.
 class ToolExecutor {
     constructor(opts, mcSend = null, getStateController = null) {
         this.opts = opts
@@ -59,11 +70,25 @@ class ToolExecutor {
         this.turnHardStop = false
         this.turnNarrationCount = 0
         this.turnBadArgs = 0
+        this.turnFlawless = true
+        this._flawReason = null
     }
 
     // Loop code checks this after every tool execution.
     shouldHardStop() {
         return this.turnHardStop
+    }
+
+    // Marks the current turn as no longer a clean training candidate.
+    // Idempotent — only the first reason recorded per turn is kept, which
+    // makes debugging "why wasn't this saved" straightforward (check
+    // _flawReason) without needing to track every disqualifying event.
+    markFlawed(reason) {
+        if (this.turnFlawless) {
+            this.turnFlawless = false
+            this._flawReason = reason
+            Logger.info(`Turn disqualified from flawless-save: ${reason}`, "FLAWLESS CHECK")
+        }
     }
 
     // Loop code calls this when the model describes/announces a tool call
@@ -72,6 +97,7 @@ class ToolExecutor {
     // final generation instead of retrying.
     recordNarration() {
         this.turnNarrationCount++
+        this.markFlawed('narrated_tool')
         if (this.turnNarrationCount > LIMITS.narration) {
             this.turnHardStop = true
             return true
@@ -82,12 +108,14 @@ class ToolExecutor {
     // ─── Shared helpers ──────────────────────────────────────────────────
     _blocked(message) {
         this.turnHardStop = true
+        this.markFlawed('blocked')
         return JSON.stringify({ status: "blocked", stop: true, message })
     }
 
     _err(message) {
         // Errors don't get DONE_NOTE — a failed call is legitimately
         // retryable (different query, etc.), unlike a success.
+        this.markFlawed('tool_error')
         return JSON.stringify({ status: "error", message })
     }
 
@@ -152,6 +180,7 @@ class ToolExecutor {
         const trimmed = (query ?? "").trim()
         if (!trimmed || trimmed.split(/\s+/).length < minWords) {
             this.turnBadArgs++
+            this.markFlawed('bad_args')
             if (this.turnBadArgs > LIMITS.badArgs) {
                 return this._blocked(
                     `STOP. You've now called a tool with a missing/empty/too-short argument ${this.turnBadArgs} time(s) this turn. ` +
@@ -281,7 +310,12 @@ class ToolExecutor {
         const argErr = this._requireQuery(searchQuery, 2, "shinyshadow_ favorite color") || this._requireQuery(updatedText, 2, "ShinyShadow_'s favorite color is now teal")
         if (argErr) return argErr
         // Reject no-op calls: same text passed as both the lookup query and the replacement.
+        // Treated as flaw-worthy — the model acted on a correction that wasn't
+        // actually a correction, which isn't a clean example to train on.
+        // Judgment call, not a hard bug — rip this markFlawed() out if it
+        // ends up excluding turns you'd actually be fine keeping.
         if (searchQuery.trim().toLowerCase() === updatedText.trim().toLowerCase()) {
+            this.markFlawed('memory_update_noop')
             return JSON.stringify({
                 status: "noop",
                 message: "The old and new text are identical — there's nothing to update. If you don't actually know the current value, don't call this tool at all. Write your reply now."
@@ -315,7 +349,10 @@ class ToolExecutor {
             if (data?.status !== "ok" || !data?.removed?.length) {
                 // Not found is still a *resolved* outcome, not a reason to retry —
                 // give it the same stop instruction so the model doesn't hammer
-                // this with rephrased queries.
+                // this with rephrased queries. Also treated as a flaw for the
+                // same reason as the memoryUpdate no-op above: it's evidence
+                // the model acted on a fact that wasn't actually there.
+                this.markFlawed('memory_remove_not_found')
                 return JSON.stringify({
                     status: "not_found",
                     message: "No matching memories found.",
@@ -374,10 +411,16 @@ class ToolExecutor {
                 timeout: this.opts.dbTimeout
             })
             const results = data?.data?.data ?? []
-            if (!results.length) return JSON.stringify({ status: "not_found", message: "No GIF found — don't retry with a near-identical query, just reply without a gif." })
+            if (!results.length) {
+                this.markFlawed('gif_not_found')
+                return JSON.stringify({ status: "not_found", message: "No GIF found — don't retry with a near-identical query, just reply without a gif." })
+            }
             const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
-            if (!url) return JSON.stringify({ status: "not_found", message: "No GIF URL — don't retry, just reply without a gif." })
+            if (!url) {
+                this.markFlawed('gif_no_url')
+                return JSON.stringify({ status: "not_found", message: "No GIF URL — don't retry, just reply without a gif." })
+            }
             Logger.success(`Gif found, URL: ${url}`, "GIF")
             return this._ok("Gif found and already queued to send — do NOT put the url in your text, just reply naturally to the user.", { url })
         } catch (err) {
@@ -401,11 +444,17 @@ class ToolExecutor {
             })
 
             const results = data?.data?.data ?? []
-            if (!results.length) return JSON.stringify({ status: "not_found", message: "No meme found — don't retry with a near-identical query, just reply without a meme." })
+            if (!results.length) {
+                this.markFlawed('meme_not_found')
+                return JSON.stringify({ status: "not_found", message: "No meme found — don't retry with a near-identical query, just reply without a meme." })
+            }
 
             const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
-            if (!url) return JSON.stringify({ status: "not_found", message: "No meme URL — don't retry, just reply without a meme." })
+            if (!url) {
+                this.markFlawed('meme_no_url')
+                return JSON.stringify({ status: "not_found", message: "No meme URL — don't retry, just reply without a meme." })
+            }
 
             Logger.success(`Meme found, URL: ${url}`, "MEME")
             return this._ok("Meme found and already queued to send — do NOT put the url in your text, just reply to the user message naturally.", { url })
@@ -558,6 +607,7 @@ class ToolExecutor {
 
         const now = Date.now()
         if (now - this.lastMineTime < 9000) {
+            this.markFlawed('mine_cooldown')
             return JSON.stringify({ status: "cooldown", message: "Mining too fast! Wait a moment." })
         }
         this.lastMineTime = now
@@ -593,6 +643,7 @@ class ToolExecutor {
                 case "minecraft_action_craft": return this.minecraftActionCraft(args)
                 default:
                     Logger.warning(`Unknown: ${name}`, "TOOL")
+                    this.markFlawed('unknown_tool')
                     return `Unknown tool: ${name}`
             }
         }
@@ -616,6 +667,7 @@ class ToolExecutor {
             case "send_gif": return this.searchGif(args?.query ?? "")
             default:
                 Logger.warning(`Unknown: ${name}`, "TOOL")
+                this.markFlawed('unknown_tool')
                 return `Unknown tool: ${name}`
         }
     }
@@ -814,7 +866,7 @@ const TOOLS = [
         type: "function",
         function: {
             name: "minecraft_action_craft",
-            description: "Craft an item at (or near) a crafting table if needed. item is REQUIRED and MUST be the plain Minecraft item id in item_name format — lowercase, underscores, NO 'minecraft:' prefix (that gets added automatically on the Java side). Examples: to craft an iron sword pass item: \"iron_sword\"; iron chestplate → item: \"iron_chestplate\"; sticks → item: \"stick\"; a crafting table itself → item: \"crafting_table\". quantity is optional (default 1) and means how many of the FINISHED item to craft, not ingredient count. This call waits for the actual result — if it succeeds you'll be told what was made, if it fails you'll be told exactly why (missing ingredients, not enough of an ingredient, no crafting table nearby, etc) so you can tell the player what's wrong. Reply naturally after; never mention the tool.",
+            description: "Craft an item. item is REQUIRED and MUST be the plain Minecraft item id in item_name format — lowercase, underscores, NO 'minecraft:' prefix (that gets added automatically on the Java side). Examples: to craft an iron sword pass item: \"iron_sword\"; iron chestplate → item: \"iron_chestplate\"; sticks → item: \"stick\"; a crafting table itself → item: \"crafting_table\". quantity is optional (default 1) and means how many of the FINISHED item to craft, not ingredient count. This call waits for the actual result — if it succeeds you'll be told what was made, if it fails you'll be told exactly why (missing ingredients, not enough of an ingredient, no crafting table nearby, etc) so you can tell the player what's wrong. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
                 properties: {

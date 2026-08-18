@@ -1,4 +1,4 @@
-import { Client, Collection, GatewayIntentBits } from "discord.js"
+import { Client, Collection, GatewayIntentBits, Partials } from "discord.js"
 import {
     createAudioPlayer,
     createAudioResource,
@@ -297,7 +297,7 @@ async function sendReply(message, reply) {
         content: clean || undefined,
         files: gifUrl ? [{ attachment: gifUrl, name: "lily.gif" }] : []
     })
-    if (guildPlayers.has(message.guild.id) && clean) {
+    if (message.guild && guildPlayers.has(message.guild.id) && clean) {
         await playInGuild(message.guild.id, clean)
     }
 }
@@ -311,7 +311,7 @@ async function sendNoReply(message, reply) {
         content: clean || undefined,
         files: gifUrl ? [{ attachment: gifUrl, name: "lily.gif" }] : []
     })
-    if (guildPlayers.has(message.guild.id) && clean) {
+    if (message.guild && guildPlayers.has(message.guild.id) && clean) {
         await playInGuild(message.guild.id, clean)
     }
 }
@@ -496,9 +496,13 @@ export async function createBot() {
         intents: [
             GatewayIntentBits.Guilds,
             GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.DirectMessages,
             GatewayIntentBits.MessageContent,
             GatewayIntentBits.GuildVoiceStates,
         ],
+        // Needed so DM channel/message events reliably fire even when the
+        // DM channel isn't already in the client's cache.
+        partials: [Partials.Channel],
     })
 
     client.once("clientReady", async () => {
@@ -529,6 +533,9 @@ export async function createBot() {
     client.on("messageCreate", async message => {
         let authorName = ""
 
+        // Whether this message came in over DM rather than a guild channel.
+        const isDM = !message.guild
+
         if (message.author.bot) {
             if (message.author.displayName === "Coolade") {
                 if (config.bannedUsers.some(user => message.content.includes(user))) return
@@ -536,13 +543,17 @@ export async function createBot() {
                 if (match?.[1]) authorName = sanitizeInput(match[1].trim())
             } else return
         } else {
-            authorName = sanitizeInput(message.member.username || message.author.username)
+            // message.member is only populated for guild messages — fall back
+            // to message.author.username in DMs.
+            authorName = sanitizeInput(message.member?.username || message.author.username)
         }
         const bannedUsers = config.bannedUsers
         if (!authorName || bannedUsers.includes(authorName) || bannedUsers.includes(message.author.displayName)) return
 
         const channelId = message.channel.id
-        const isMentioned = message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")
+        // In DMs there's no one to @-mention, so treat every DM as if it
+        // were a direct ping — Lily always responds, no wake-word needed.
+        const isMentioned = isDM || message.mentions.has(client.user) || message.content.includes("<@&1473317878785773684>")
         const isReplyToBot = message.reference?.messageId
             ? (await message.channel.messages.fetch(message.reference.messageId).catch(() => null))?.author?.id === client.user.id
             : false
@@ -556,6 +567,8 @@ export async function createBot() {
         if (userInput) ai.pushRawMessage(channelId, authorName, userInput)
 
         // ─── Spontaneous butt-in ──────────────────────────────────────────────
+        // isMentioned is always true for DMs, so this branch (and its random
+        // chance of ignoring the message) is never reached there.
         if (!isMentioned && !isReplyToBot) {
             ai.observe(channelId, `${authorName} said ${userInput}`)
 
@@ -638,7 +651,7 @@ export async function createBot() {
                     })
                     fs.unlink(oggPath, () => { })
 
-                    if (guildPlayers.has(message.guild.id)) {
+                    if (message.guild && guildPlayers.has(message.guild.id)) {
                         await playInGuild(message.guild.id, cleanReply)
                     }
                 } catch (err) {

@@ -23,7 +23,7 @@ function toShareGptRole(role) {
         case "system": return "system"
         case "user": return "human"
         case "assistant": return "gpt"
-        case "tool": return "function_response"
+        case "tool": return "tool"
         default: return role
     }
 }

@@ -3,7 +3,7 @@ import { Logger } from '../../src/utils/Logger.js'
 import { tavily } from "@tavily/core"
 
 // ─── Turn budget limits ─────────────────────────────────────────────────
-// Single source of truth for every per-turn cap. Update here, nowhere else.
+//pending to trash
 const LIMITS = {
     memoryQuery: 30,   // query_memory_database
     memoryWrite: 30,   // addto / update / remove_memory_database — shared slot

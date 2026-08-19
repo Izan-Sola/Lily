@@ -21,9 +21,9 @@ const DEFAULT_OPTIONS = {
     maxConvoMessages: 12,
     maxMinecraftConvoMessages: 14,
     maxRawMessages: 30,
-    maxToolLoops: 15,
-    maxToolRepeats: 1,
-    maxUsesPerTool: 1, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
+    maxToolLoops: 10,
+    maxToolRepeats: 2,
+    maxUsesPerTool: 2, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
     memoryQueryMinScore: 0.3,
     memoryRemoveMinScore: 0.70,
     memoryRemoveK: 2,

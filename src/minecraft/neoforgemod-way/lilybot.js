@@ -91,8 +91,8 @@ export function startMinecraftBot({ port, ai }) {
         loadCombos()
         loadStaticAbilityData()
     }
-    const resolvedPort = port ?? (getMode() === 'survival' ? 8766 : 8765)
-    _connect(resolvedPort)
+    //const resolvedPort = port ?? (getMode() === 'survival' ? 8766 : 8765)
+    _connect("8766")
 }
 
 function _connect(port) {

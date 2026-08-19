@@ -79,10 +79,10 @@ export async function saveFlawlessTurn({ channelId, messages }) {
 
     const record = {
         ...sample,
-        _meta: {
-            channelId,
-            savedAt: new Date().toISOString(),
-        }
+        // _meta: {
+        //     channelId,
+        //     savedAt: new Date().toISOString(),
+        // }
     }
 
     writeQueue = writeQueue.then(async () => {

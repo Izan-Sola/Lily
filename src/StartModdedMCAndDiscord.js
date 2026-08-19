@@ -7,7 +7,7 @@ import { config } from "./utils/config.js"
 import { startMinecraftBot } from "./minecraft/neoforgemod-way/lilybot.js"
 import { Logger } from "./utils/Logger.js";
 const client = await createBot()
-let currentMode = process.env.MODE ?? 'bendcraft'
+let currentMode = process.env.MODE ?? 'bending'
 let survivalLoopStarted = false
 
 export const getMode = () => currentMode

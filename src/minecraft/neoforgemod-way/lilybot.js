@@ -15,7 +15,7 @@ export function requestDuelData(opponentName) {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 let triggerSurvivalTick = null
-let currentMode = process.env.MODE ?? 'bendcraft'
+let currentMode = process.env.MODE ?? 'bending'
 let survivalLoopStarted = false
 
 export const getMode = () => currentMode
@@ -87,7 +87,7 @@ function requestAbilityData() {
 
 export function startMinecraftBot({ port, ai }) {
     aiInstance = ai
-    if (getMode() === 'bendcraft') {
+    if (getMode() === 'bending') {
         loadCombos()
         loadStaticAbilityData()
     }
@@ -113,11 +113,11 @@ function _connect(port) {
                 tickMs: 25,
                 ai: aiInstance
             })
-            if (getMode() === 'bendcraft') stateController.updateAbilityStats(staticAbilities)
+            if (getMode() === 'bending') stateController.updateAbilityStats(staticAbilities)
         }
         stateController.start()
 
-        if (getMode() === 'bendcraft') requestAbilityData()
+        if (getMode() === 'bending') requestAbilityData()
         if (getMode() === 'survival' && !survivalLoopStarted) {
             const { triggerTick } = startSurvivalLoop(stateController, mcSend, mcChat)
             triggerSurvivalTick = triggerTick
@@ -366,7 +366,7 @@ async function _handleEvent(event) {
             currentMode = event.mode
             Logger.info(`Mode switched to ${currentMode}`, "MC")
 
-            if (currentMode === 'bendcraft') {
+            if (currentMode === 'bending') {
                 loadCombos()
                 loadStaticAbilityData()
                 if (stateController) {

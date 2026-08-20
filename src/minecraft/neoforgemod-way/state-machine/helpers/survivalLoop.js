@@ -1,7 +1,7 @@
 import { buildSurvivalPrompt } from '../prompt-builders/survivalPromptBuilder.js'
 import { ToolExecutor, TOOLS } from '../../../../ai/tools.js'
 import { Logger } from '../../../../utils/Logger.js'
-const ACTIONS_INTERVAL_MS = 30000
+const ACTIONS_INTERVAL_MS = 300000000
 const MSG_MIN_MS = 2 * 60 * 1000
 const MSG_MAX_MS = 6 * 60 * 1000
 const HISTORY_MAX_TURNS = 8 // keep last N exchanges threaded into the call

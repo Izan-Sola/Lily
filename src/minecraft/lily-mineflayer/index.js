@@ -73,7 +73,7 @@ export function startMinecraftBot({ host, port = 25565, username = 'Lily', follo
         if (!survivalLoopStarted) {
             const toolExecutor = { execute: (name, args) => _executeMinecraftTool(name, args) }
             const survivalTools = buildSurvivalToolDefs()
-            const { triggerTick } = startSurvivalLoop(stateController, toolExecutor, survivalTools)
+           // const { triggerTick } = startSurvivalLoop(stateController, toolExecutor, survivalTools)
             triggerSurvivalTick = triggerTick
             survivalLoopStarted = true
         }

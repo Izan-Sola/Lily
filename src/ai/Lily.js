@@ -6,39 +6,9 @@ import { SYSTEM_PROMPT, SUMMARIZE_PROMPT } from './prompts.js'
 import { ToolExecutor, TOOLS, TOOL_NAMES } from './tools.js'
 import { Logger } from '../../src/utils/Logger.js'
 import { saveFlawlessTurn } from './saveFlawlessTurns.js'
+import { getConfig } from './config.js'
 // Channel id used for the Minecraft bridge — see getToolsForChannel().
 const MINECRAFT_CHANNEL_ID = "minecraft"
-
-const DEFAULT_OPTIONS = {
-    model: "Lily",
-    temperature: 0.65,
-    top_p: 0.9,
-    top_k: 50,
-    min_p: 0.08,
-    presence_penalty: 1.2,
-    repeat_last_n: 400,
-    max_tokens: 8192,
-    maxConvoMessages: 12,
-    maxMinecraftConvoMessages: 14,
-    maxRawMessages: 30,
-    maxToolLoops: 10,
-    maxToolRepeats: 2,
-    maxUsesPerTool: 2, // generic per-tool-name cap per turn (minecraft_action tools use their own cap, see runOneToolCall)
-    memoryQueryMinScore: 0.3,
-    memoryRemoveMinScore: 0.70,
-    memoryRemoveK: 2,
-    episodicQueryMinScore: 0.40,
-    episodicRemoveMinScore: 0.80,
-    episodicRemoveK: 3,
-    summarizeEvery: 20,
-    summarizeLastN: 20,
-    observeEvery: 20,
-    ollamaUrl: "http://localhost:11435",
-    memoryDbUrl: "http://localhost:8002",   // single unified DB, replaces knowledgeDbUrl + episodicDbUrl
-    blogUrl: "http://localhost:1234",
-    ollamaTimeout: 120000,
-    dbTimeout: 30000,
-}
 
 function isMinecraftActionTool(name) {
     return name === "minecraft_action" || name.startsWith("minecraft_action")
@@ -56,7 +26,14 @@ export class Lily {
      *   Lily to do something via chat.
      */
     constructor(options = {}, mcSend = null) {
-        this.opts = { ...DEFAULT_OPTIONS, ...options }
+        // this.opts is a getter (defined below) that re-reads config.json
+        // fresh on every access — there's no snapshot to go stale, so
+        // editing and saving the file takes effect on the very next opts
+        // access, no restart needed. `options` passed here become a
+        // permanent per-instance override (Object.assign'd on top of the
+        // live file values) for whichever keys it sets — use it for
+        // one-off/test wiring, not values you plan to keep tuning live.
+        this._optsOverride = options
         this.convoHistories = new Map()
         this.rawBuffers = new Map()
         this.channelLocks = new Map()
@@ -64,12 +41,38 @@ export class Lily {
         this.observeBuffers = new Map()         // channelId -> string[]
         this.observeParticipants = new Map()    // channelId -> Set<string>
         this.mcSend = mcSend
-        this.tools = new ToolExecutor(this.opts, mcSend, getStateController)
+        // ToolExecutor reads config.json live on its own (see its own opts
+        // getter in tools.js) — nothing to hand it here anymore.
+        this.tools = new ToolExecutor(null, mcSend, getStateController)
         this._resumedIds = new Map()
         this._replayCounts = new Map()
+        // channelId -> { role: "user", content } — the single user message that
+        // STARTED the current turn. Deliberately separate from convoHistories
+        // (which keeps accumulating prior turns): this is what
+        // maybeSaveFlawlessTurn reads so a saved training sample is scoped to
+        // real turn boundaries, not the whole growing conversation.
+        this.turnStartMessages = new Map()
+        // channelId -> array of completed FLAWLESS turns, each entry being
+        // that turn's own flat message array: [userMsg, ...scratch,
+        // finalAssistantReply]. Used by maybeSaveFlawlessTurn to build
+        // multi-turn samples when opts.trainingTurnWindow > 1 — see there.
+        // Cleared for a channel whenever a turn comes back flawed, so a
+        // multi-turn bundle never silently skips over an untrustworthy turn.
+        this.turnLog = new Map()
         // Non-minecraft tool list is static, so compute it once instead of
         // filtering on every single loop iteration.
         this._nonMinecraftTools = TOOLS.filter(t => !isMinecraftActionTool(t.function?.name ?? ""))
+    }
+
+    // Reads config.json fresh (via getConfig()) on every access and layers
+    // this instance's constructor-time overrides on top. NOTE: maxConvoMessages
+    // / maxMinecraftConvoMessages are read once per channel, at the moment
+    // that channel's ConversationHistory is first created (see getHistory
+    // below) — a live edit to either value takes effect for any NEW channel,
+    // but won't resize a history object a currently-active channel is
+    // already using.
+    get opts() {
+        return Object.assign(getConfig(), this._optsOverride)
     }
 
     getObserveBuffer(channelId) {
@@ -410,6 +413,16 @@ export class Lily {
                 this.pushToConvoHistory(channelId, { role: "tool", tool_call_id: tr.tool_call_id, content })
             }
 
+            // NOTE: runToolLoop below starts a fresh `scratch = []`, so a turn
+            // that got paused for a foreign tool handoff (see foreignCalls in
+            // runToolLoop) and is now resuming here will save WITHOUT the
+            // pre-pause assistant tool_calls message / foreign tool result in
+            // its flawless-turn scratch — that portion only lives in
+            // convoHistories, not in what maybeSaveFlawlessTurn reads. Was
+            // already the case before the single/multi-turn rework; flagging
+            // it here since it's easy to miss. Only matters for channels that
+            // actually use foreign tool handoff (e.g. the VS Code/Continue
+            // bridge), not plain Discord/Minecraft chat.
             const result = await this.runToolLoop(channelId, systemPromptOverride, opts, images)
             for (const tr of toolResults) this._resumedIds.set(tr.tool_call_id, result)
 
@@ -418,27 +431,64 @@ export class Lily {
         })
     }
 
-    // NEW — shared by the two success paths (runToolLoop and finishWithoutTools).
-    // Rebuilds the exact input the model was prompted with, appends the
-    // scratch tool-loop messages and the final reply, and hands the full
-    // conversation off to saveFlawlessTurns.js — but only if nothing marked
-    // this turn as flawed along the way.
+    // Shared by the two success paths (runToolLoop and finishWithoutTools).
+    // Builds a training sample scoped by opts.trainingTurnWindow:
     //
-    // TODO: this.tools is a single ToolExecutor shared across ALL channels,
-    // but channelLocks only serializes messages WITHIN a channel. If two
-    // different channels (e.g. Discord and Minecraft) produce a turn at
-    // close to the same time, one channel's resetTurn() can stomp the
-    // other's in-flight turnFlawless/turnUsage state. Low risk if channels
-    // rarely overlap in practice, but worth turning this.tools' turn state
-    // into a Map<channelId, state> (like convoHistories already is) if you
-    // ever see flawless-saves that look wrong, or good turns going missing.
-    async maybeSaveFlawlessTurn(channelId, systemPromptOverride, opts, scratch, finalReplyText) {
-        if (!this.tools.turnFlawless) return
-        if (!finalReplyText || finalReplyText.toLowerCase() === "none") return
+    //   trainingTurnWindow === 1 (default): single-turn sample, saved every
+    //   turn — system prompt -> this turn's user message -> this turn's
+    //   tool-call/tool-result scratch -> this turn's final reply.
+    //
+    //   trainingTurnWindow === N > 1: BATCH-AND-FLUSH, not a sliding window.
+    //   Turns accumulate in turnLog un-saved until exactly N consecutive
+    //   flawless turns have piled up; only then is ONE sample written
+    //   (system + turn[1] + turn[2] + ... + turn[N]) and the log cleared to
+    //   start the next batch from zero. This deliberately does NOT save at
+    //   turn 1, then again at 1+2, then again at 1+2+3 — that was the
+    //   earlier (buggy) sliding-window version and produced heavily
+    //   overlapping near-duplicate samples, which is exactly the kind of
+    //   redundant-save problem this whole rework exists to avoid. With N=3
+    //   you get one save on turn 3 (containing turns 1-3), one save on turn
+    //   6 (containing turns 4-6), etc. — no turn ever appears in more than
+    //   one saved sample.
+    //
+    //   A flawed/empty-reply turn clears the in-progress batch entirely
+    //   (partial progress is discarded, not flushed early) so a batch never
+    //   stitches across a turn whose content isn't trustworthy training
+    //   data.
+    //
+    // Deliberately does NOT call buildMessagesForOllama / getConvoHistory in
+    // either mode — those pull the whole accumulated conversation, which is
+    // what caused near-duplicate samples in the original version (the same
+    // growing history re-saved on every single message, differing only in
+    // the newest turn).
+    async maybeSaveFlawlessTurn(channelId, systemPromptOverride, scratch, finalReplyText) {
+        if (!this.tools.turnFlawless) {
+            this.turnLog.delete(channelId)
+            return
+        }
+        if (!finalReplyText || finalReplyText.toLowerCase() === "none") {
+            this.turnLog.delete(channelId)
+            return
+        }
+
+        const turnUserMessage = this.turnStartMessages.get(channelId)
+        if (!turnUserMessage) return
+
+        const turnMessages = [turnUserMessage, ...scratch, { role: "assistant", content: finalReplyText }]
+
+        const windowSize = Math.max(1, this.opts.trainingTurnWindow)
+        const log = this.turnLog.get(channelId) ?? []
+        log.push(turnMessages)
+
+        // Batch isn't full yet — buffer it and wait, don't save anything.
+        if (log.length < windowSize) {
+            this.turnLog.set(channelId, log)
+            return
+        }
 
         try {
-            const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, opts)
-            const fullConversation = [...baseMessages, ...scratch, { role: "assistant", content: finalReplyText }]
+            const baseMessages = [{ role: "system", content: systemPromptOverride ?? SYSTEM_PROMPT }]
+            const fullConversation = [...baseMessages, ...log.flat()]
             // Not awaited on purpose — this shouldn't add latency to the user-facing reply.
             saveFlawlessTurn({ channelId, messages: fullConversation }).catch(err => {
                 Logger.error(err.message, "FLAWLESS SAVE")
@@ -446,6 +496,9 @@ export class Lily {
         } catch (err) {
             Logger.error(err.message, "FLAWLESS SAVE")
         }
+
+        // Batch flushed — start the next one from scratch.
+        this.turnLog.delete(channelId)
     }
 
     // Final fallback used both when the tool-loop budget (maxToolLoops) runs out,
@@ -484,7 +537,7 @@ export class Lily {
             const content = raw.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim()
 
             if (content && content.toLowerCase() !== "none") {
-                this.maybeSaveFlawlessTurn(channelId, systemPromptOverride, opts, attemptScratch, content)
+                this.maybeSaveFlawlessTurn(channelId, systemPromptOverride, attemptScratch, content)
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY - BUDGET EXHAUSTED")
                 return { text: content, gifUrl: pendingGifUrl }
@@ -640,7 +693,7 @@ export class Lily {
             }
 
             if (content && content.toLowerCase() !== "none") {
-                this.maybeSaveFlawlessTurn(channelId, systemPromptOverride, opts, scratch, content)
+                this.maybeSaveFlawlessTurn(channelId, systemPromptOverride, scratch, content)
                 this.pushToConvoHistory(channelId, { role: "assistant", content })
                 Logger.success(`${content}${pendingGifUrl ? ` + GIF` : ""}`, "LILY REPLY")
                 return { text: content, gifUrl: pendingGifUrl }
@@ -682,8 +735,12 @@ export class Lily {
         Logger.info(`${clean.slice(0, 200)}${images.length ? ` + ${images.length} image(s)` : ""}`, logPrefix)
 
         const { skipped, result } = await this.tryChannelLock(channelId, async () => {
-            this.pushToConvoHistory(channelId, { role: "user", content: clean || "[sent an image]" })
-
+            const userMessage = { role: "user", content: clean || "[sent an image]" }
+            this.pushToConvoHistory(channelId, userMessage)
+            // Snapshot of just this turn's triggering user message — see
+            // maybeSaveFlawlessTurn for why this is kept separate from the
+            // full convoHistories.
+            this.turnStartMessages.set(channelId, userMessage)
 
             this.tools.resetTurn()
 

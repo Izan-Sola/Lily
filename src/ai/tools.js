@@ -1,6 +1,7 @@
 import axios from "axios"
 import { Logger } from '../../src/utils/Logger.js'
 import { tavily } from "@tavily/core"
+import { getConfig } from './config.js'
 
 // ─── Turn budget limits ─────────────────────────────────────────────────
 //pending to trash
@@ -57,12 +58,21 @@ const DONE_NOTE = "Tool succeeded — you have what you need. Do not call this o
 //   idempotent — only the first reason of a turn sticks — so it's safe to
 //   call from multiple places without worrying about overwriting context.
 class ToolExecutor {
-    constructor(opts, mcSend = null, getStateController = null) {
-        this.opts = opts
+    // First param kept for call-site backward compatibility (Lily used to
+    // hand this its own opts snapshot) but is otherwise IGNORED now — see
+    // the opts getter below, which reads config.json live on every access
+    // instead of relying on whatever was passed in at construction time.
+    constructor(_legacyOpts = null, mcSend = null, getStateController = null) {
         this.mcSend = mcSend
         this.getStateController = getStateController
         this.lastMineTime = 0
         this.resetTurn()
+    }
+
+    // Reads config.json fresh on every access — no snapshot, nothing to go
+    // stale, edits take effect on the next call that touches this.opts.
+    get opts() {
+        return getConfig()
     }
 
     resetTurn() {
@@ -396,6 +406,9 @@ class ToolExecutor {
         return result.ok
             ? this._ok(result.message ?? `Crafted ${amount}x ${itemId}.`)
             : this._err(result.message ?? "Crafting failed.")
+        if (!result.ok) {
+            Logger.error(result.message ?? "Crafting failed.", "MINECRAFT")
+        } 
     }
     async searchGif(query) {
         const limitErr = this._checkLimit('media', LIMITS.media, 'sending a gif or meme — they share one slot')

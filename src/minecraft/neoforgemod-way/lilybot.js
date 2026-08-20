@@ -118,7 +118,7 @@ function _connect(port) {
         stateController.start()
 
         if (getMode() === 'bending') requestAbilityData()
-        if (getMode() === 'survival' && !survivalLoopStarted) {
+        if (!survivalLoopStarted) {
             const { triggerTick } = startSurvivalLoop(stateController, mcSend, mcChat)
             triggerSurvivalTick = triggerTick
             survivalLoopStarted = true

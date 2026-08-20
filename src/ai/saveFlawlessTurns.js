@@ -12,12 +12,11 @@ let writeQueue = Promise.resolve()
 
 // ─── Role mapping ───────────────────────────────────────────────────────
 // Matches the sharegpt-style {"conversations": [{"from": ..., "value": ...}]}
-// format your existing dataset uses (system/human/gpt). tool-role messages
-// map to a new "function_response" from-role, which is NOT in your sample
-// dataset (that one had no tool calls). Verify this round-trips correctly
-// through your training pipeline's dataset loader on a real tool-call
-// sample before trusting it at scale — this mapping is a reasonable
-// default, not a confirmed spec.
+// format: system/human/gpt, plus "tool" for actual tool RESULTS. A model
+// tool CALL is not its own from-role — it's rendered as a "gpt" turn whose
+// value contains an embedded <tool_call>{...}</tool_call> block, same as
+// what the model actually emits at inference time in the embedded-tool-call
+// path. See messageToConversationEntries below for where that happens.
 function toShareGptRole(role) {
     switch (role) {
         case "system": return "system"
@@ -28,18 +27,29 @@ function toShareGptRole(role) {
     }
 }
 
-// Native tool_calls (OpenAI-style) get flattened into a readable
-// function_call turn. If your inference-time chat template renders tool
-// calls differently (e.g. the embedded <tool_call> tag path also present
-// in runToolLoop), this should mirror THAT format instead — training
-// format should match serving format, not necessarily the OpenAI native
-// shape.
+// Native tool_calls (OpenAI-style, msg.tool_calls array with JSON-string
+// arguments) get flattened into a "gpt" turn containing a plain-text
+// <tool_call>{"name":..., "arguments": {...}}</tool_call> block — this is
+// what your chat template actually renders for the model to produce, so
+// training format matches serving format. arguments is parsed back into a
+// real object (not left as a JSON string) so it prints the same shape as
+// the embedded-tool-call path already used elsewhere in the pipeline.
+//
+// The embedded-<tool_call> path (non-native — scratch already pushes
+// { role: "assistant", content } where content is the raw text containing
+// the tag) needs no special-casing here: it falls through to the default
+// branch below and comes out as a normal "gpt" turn, tag and all, which is
+// already the desired shape.
 function messageToConversationEntries(msg) {
     if (msg.role === "assistant" && msg.tool_calls?.length) {
-        return msg.tool_calls.map(tc => ({
-            from: "tool",
-            value: JSON.stringify({ name: tc.function.name, arguments: tc.function.arguments })
-        }))
+        return msg.tool_calls.map(tc => {
+            let args
+            try { args = JSON.parse(tc.function.arguments ?? "{}") } catch { args = tc.function.arguments }
+            return {
+                from: "gpt",
+                value: `<tool_call>\n${JSON.stringify({ name: tc.function.name, arguments: args })}\n</tool_call>`
+            }
+        })
     }
     return [{
         from: toShareGptRole(msg.role),
@@ -63,9 +73,13 @@ function toShareGptSample(messages) {
  *
  * @param {object} params
  * @param {string} params.channelId
- * @param {Array}  params.messages - full conversation for this turn, in
- *        OpenAI-message-array form (system/user/assistant/tool, with
- *        tool_calls where applicable), ending in the final assistant reply.
+ * @param {Array}  params.messages - the messages for THIS TURN ONLY, in
+ *        OpenAI-message-array form: system, the single user message that
+ *        started the turn, any tool-call/tool-result scratch messages from
+ *        this turn's loop (assistant with tool_calls, or role:"tool"/
+ *        embedded <tool_call> pairs), ending in the final assistant reply.
+ *        Callers must NOT pass the full accumulated conversation history —
+ *        see maybeSaveFlawlessTurn in lily.js, which is the only caller.
  */
 export async function saveFlawlessTurn({ channelId, messages }) {
     let sample

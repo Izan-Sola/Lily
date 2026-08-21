@@ -299,14 +299,27 @@ class ToolExecutor {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr
         const argErr = this._requireQuery(factText, 2, "ShinyShadow_ said their favorite color is teal")
-        if (argErr) return argErr
+        // if (argErr) return argErr
         this.turnUsage.memoryWrite++
 
         Logger.info(` Added memory: "${factText}"`, "MEMORY ADD")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, { text: factText, source }, { timeout: this.opts.dbTimeout })
-            if (data.status !== "ok") return this._err(data.message ?? "Failed to store information.")
-            return this._ok(data.message ?? "Stored.")
+
+            // Only treat this as a real failure if the backend explicitly said so.
+            // Anything else (missing status field, "success", true, etc.) is treated
+            // as success instead of silently flagging a working call as an error.
+            const failed = data?.status === "error" || data?.ok === false
+            if (failed) {
+                Logger.error(`add_fact returned failure: ${JSON.stringify(data)}`, "MEMORY ADD")
+                return this._err(data.message ?? "Failed to store information.")
+            }
+            if (data?.status !== "ok") {
+                // Unexpected-but-not-explicitly-failed shape — log it so we can see
+                // exactly what the backend actually returns, but don't fail the turn.
+                Logger.warning(`Unexpected add_fact response shape: ${JSON.stringify(data)}`, "MEMORY ADD")
+            }
+            return this._ok(data?.message ?? "Stored.")
         } catch (err) {
             Logger.error(err.message, "MEMORY ADD")
             return this._err("Failed to store information.")
@@ -319,11 +332,6 @@ class ToolExecutor {
 
         const argErr = this._requireQuery(searchQuery, 2, "shinyshadow_ favorite color") || this._requireQuery(updatedText, 2, "ShinyShadow_'s favorite color is now teal")
         if (argErr) return argErr
-        // Reject no-op calls: same text passed as both the lookup query and the replacement.
-        // Treated as flaw-worthy — the model acted on a correction that wasn't
-        // actually a correction, which isn't a clean example to train on.
-        // Judgment call, not a hard bug — rip this markFlawed() out if it
-        // ends up excluding turns you'd actually be fine keeping.
         if (searchQuery.trim().toLowerCase() === updatedText.trim().toLowerCase()) {
             this.markFlawed('memory_update_noop')
             return JSON.stringify({
@@ -408,7 +416,7 @@ class ToolExecutor {
             : this._err(result.message ?? "Crafting failed.")
         if (!result.ok) {
             Logger.error(result.message ?? "Crafting failed.", "MINECRAFT")
-        } 
+        }
     }
     async searchGif(query) {
         const limitErr = this._checkLimit('media', LIMITS.media, 'sending a gif or meme — they share one slot')
@@ -607,16 +615,9 @@ class ToolExecutor {
     }
 
     async minecraftActionBreak(args = {}) {
-        const { x, y, z, block, radius } = args
-        const hasCoords = x !== undefined && y !== undefined && z !== undefined
-        const hasBlock = typeof block === "string" && block.trim().length > 0
-
-        if (!hasCoords && !hasBlock) {
-            return this._err("Either x/y/z (from Blocks of Interest) or a block name is required.")
-        }
-
-        const MAX_AMOUNT = 32
-        const amount = Number.isInteger(args.amount) && args.amount > 0 ? Math.min(args.amount, MAX_AMOUNT) : 1
+        const requests = Array.isArray(args.blocks) && args.blocks.length > 0
+            ? args.blocks
+            : [args]
 
         const now = Date.now()
         if (now - this.lastMineTime < 9000) {
@@ -625,18 +626,42 @@ class ToolExecutor {
         }
         this.lastMineTime = now
 
-        Logger.info(`Lily is breaking the block at ${hasCoords ? `(${x}, ${y}, ${z})` : `"${block}"${radius ? ` radius:${radius}` : ''}`} x${amount}`, "MINECRAFT")
-
         const stateController = this.getStateController?.()
         if (!stateController) return this._noController()
 
-        const payload = hasCoords ? { x, y, z, amount } : { block, radius, amount }
-        const result = stateController.dispatchAction('break', payload)
-        await new Promise(resolve => setTimeout(resolve, 1500))
+        const MAX_AMOUNT = 32
+        const summaries = []
 
-        return result.ok
-            ? this._ok(amount > 1 ? `Started mining ${amount}x.` : "Started mining.")
-            : this._err(result.message ?? "Break failed.")
+        for (const req of requests) {
+            const { x, y, z, block, radius } = req
+            const hasCoords = x !== undefined && y !== undefined && z !== undefined
+            const hasBlock = typeof block === "string" && block.trim().length > 0
+
+            if (!hasCoords && !hasBlock) {
+                summaries.push("skipped one entry — no x/y/z or block name given")
+                continue
+            }
+
+            const amount = Number.isInteger(req.amount) && req.amount > 0
+                ? Math.min(req.amount, MAX_AMOUNT)
+                : 1
+
+            const label = hasCoords ? `(${x}, ${y}, ${z})` : `"${block}"${radius ? ` radius:${radius}` : ''}`
+            Logger.info(`Lily is breaking the block at ${label} x${amount}`, "MINECRAFT")
+
+            const payload = hasCoords ? { x, y, z, amount } : { block, radius, amount }
+            const result = stateController.dispatchAction('break', payload)
+
+            summaries.push(result.ok
+                ? `${amount > 1 ? `${amount}x ` : ''}${block ?? label}`
+                : `${block ?? label} failed: ${result.message ?? 'unknown error'}`)
+
+            if (requests.indexOf(req) < requests.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1500))
+            }
+        }
+
+        return this._ok(`Started mining: ${summaries.join(', ')}.`)
     }
 
     // ─── Generic Execute ─────────────────────────────────────────────────
@@ -858,18 +883,33 @@ const TOOLS = [
             parameters: { type: "object", properties: {}, required: [] }
         }
     },
+    // Schema change — accept either the old flat args OR a `blocks` array
     {
         type: "function",
         function: {
             name: "minecraft_action_break",
-            description: "Mine block(s). Check Blocks of Interest first (one entry per type, closest match, with x/y/z); amount (max 32) breaks several of that type in one call — it auto-retargets the next closest match after each one, so this call is not repeated per block. Runs on its own after one call; only call again for a genuinely new/different request or a clearly failed attempt. Reply naturally after; never mention the tool.",
+            description: "Mine block(s). For a SINGLE block type, pass x/y/z (or block) + amount directly. For MULTIPLE distinct block types in one request (e.g. 'acacia AND oak logs'), pass a `blocks` array instead — one entry per type — so it's ONE call, not one per type. Runs on its own after calling; don't call again for the same request. Reply naturally after; never mention the tool.",
             parameters: {
                 type: "object",
                 properties: {
-                    x: { type: "number", description: "X coordinate, copied exactly from a Blocks of Interest entry. Omit if using block instead." },
-                    y: { type: "number", description: "Y coordinate, copied exactly from a Blocks of Interest entry." },
-                    z: { type: "number", description: "Z coordinate, copied exactly from a Blocks of Interest entry." },
-                    amount: { type: "number", minimum: 1, maximum: 32, description: "How many blocks of this type to break total. Defaults to 1." }
+                    x: { type: "number", description: "X coordinate. Omit if using `blocks` or `block`." },
+                    y: { type: "number" },
+                    z: { type: "number" },
+                    block: { type: "string", description: "Block name, alternative to x/y/z." },
+                    radius: { type: "number" },
+                    amount: { type: "number", minimum: 1, maximum: 32 },
+                    blocks: {
+                        type: "array",
+                        description: "Use for multiple distinct block types in one request. Each entry is the same shape as the flat args (x/y/z or block, plus amount).",
+                        items: {
+                            type: "object",
+                            properties: {
+                                x: { type: "number" }, y: { type: "number" }, z: { type: "number" },
+                                block: { type: "string" }, radius: { type: "number" },
+                                amount: { type: "number", minimum: 1, maximum: 32 }
+                            }
+                        }
+                    }
                 },
                 required: []
             }

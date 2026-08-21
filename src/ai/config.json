@@ -13,6 +13,7 @@
     "maxToolLoops": 10,
     "maxToolRepeats": 2,
     "maxUsesPerTool": 2,
+    "maxUsesPerMinecraftAction": 3,
     "memoryQueryMinScore": 0.3,
     "memoryRemoveMinScore": 0.70,
     "memoryRemoveK": 2,
@@ -27,5 +28,5 @@
     "blogUrl": "http://localhost:1234",
     "ollamaTimeout": 120000,
     "dbTimeout": 30000,
-    "trainingTurnWindow": 2
+    "trainingTurnWindow": 1
 }

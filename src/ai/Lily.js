@@ -356,43 +356,45 @@ export class Lily {
     // stops those later rounds from happening at all; this cap is just a
     // backstop in case a single model response tries to call the same
     // minecraft action tool twice.
-    async runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, pushFn) {
-        const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
-        const cap = isMinecraftActionTool(name) ? 1 : this.opts.maxUsesPerTool
+    // async runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, pushFn) {
+    //     const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
+    //     const cap = isMinecraftActionTool(name)
+    //         ? this.opts.maxUsesPerMinecraftAction
+    //         : this.opts.maxUsesPerTool
 
-        if (usesSoFar >= cap) {
-            Logger.warning(`${name} already used ${usesSoFar}x this turn (cap: ${cap})`, "BLOCKED")
-            this.tools.markFlawed('tool_cap_exceeded')
-            pushFn(isMinecraftActionTool(name)
-                ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
-                : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
-            return null
-        }
+    //     if (usesSoFar >= cap) {
+    //         Logger.warning(`${name} already used ${usesSoFar}x this turn (cap: ${cap})`, "BLOCKED")
+    //         this.tools.markFlawed('tool_cap_exceeded')
+    //         pushFn(isMinecraftActionTool(name)
+    //             ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
+    //             : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
+    //         return null
+    //     }
 
-        if (!isMinecraftActionTool(name)) {
-            const repeatBlock = tracker.check(name, args)
-            if (repeatBlock) {
-                this.tools.markFlawed('tool_repeat_blocked')
-                pushFn(repeatBlock)
-                return null
-            }
-        }
+    //     if (!isMinecraftActionTool(name)) {
+    //         const repeatBlock = tracker.check(name, args)
+    //         if (repeatBlock) {
+    //             this.tools.markFlawed('tool_repeat_blocked')
+    //             pushFn(repeatBlock)
+    //             return null
+    //         }
+    //     }
 
-        toolsUsedThisTurn.set(name, usesSoFar + 1)
+    //     toolsUsedThisTurn.set(name, usesSoFar + 1)
 
-        const result = await this.tools.execute(name, args)
+    //     const result = await this.tools.execute(name, args)
 
-        let gifUrl = null
-        if (GIF_TOOLS.has(name)) {
-            try {
-                const parsed = JSON.parse(result)
-                if (parsed.status === "ok") gifUrl = parsed.url
-            } catch { }
-        }
+    //     let gifUrl = null
+    //     if (GIF_TOOLS.has(name)) {
+    //         try {
+    //             const parsed = JSON.parse(result)
+    //             if (parsed.status === "ok") gifUrl = parsed.url
+    //         } catch { }
+    //     }
 
-        pushFn(result)
-        return gifUrl
-    }
+    //     pushFn(result)
+    //     return gifUrl
+    // }
 
     async resumeToolLoop(channelId, toolResults, systemPromptOverride = null, opts = {}, images = []) {
         return this.withChannelLock(channelId, async () => {
@@ -556,15 +558,51 @@ export class Lily {
     // path below — runs each call, records it for the silent-effect history
     // marker if applicable, and pushes the result via the caller's pushFn
     // (which differs between the two formats: role:"tool" vs role:"user").
-    async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
-        let pendingGifUrl = null
-        for (const { name, args } of calls) {
-            const gif = await this.runOneToolCall(channelId, name, args, tracker, toolsUsedThisTurn, (text) => pushFn(name, text))
-            if (gif) pendingGifUrl = gif
+async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
+    let pendingGifUrl = null
+
+    for (const { name, args } of calls) {
+        const usesSoFar = toolsUsedThisTurn.get(name) ?? 0
+        const cap = isMinecraftActionTool(name)
+            ? this.opts.maxUsesPerMinecraftAction
+            : this.opts.maxUsesPerTool
+
+        if (usesSoFar >= cap) {
+            Logger.warning(`${name} already used ${usesSoFar}x this turn (cap: ${cap})`, "BLOCKED")
+            this.tools.markFlawed('tool_cap_exceeded')
+            pushFn(name, isMinecraftActionTool(name)
+                ? `You've already done that this turn — don't call another action tool unless the player just asked for something new. Reply in character now.`
+                : `You've already used ${name} ${usesSoFar} time(s) this turn — that's the limit. Move on and reply in character now.`)
             if (this.tools.shouldHardStop()) break
+            continue
         }
-        return pendingGifUrl
+
+        if (!isMinecraftActionTool(name)) {
+            const repeatBlock = tracker.check(name, args)
+            if (repeatBlock) {
+                this.tools.markFlawed('tool_repeat_blocked')
+                pushFn(name, repeatBlock)
+                if (this.tools.shouldHardStop()) break
+                continue
+            }
+        }
+
+        toolsUsedThisTurn.set(name, usesSoFar + 1)
+        const result = await this.tools.execute(name, args)
+
+        if (GIF_TOOLS.has(name)) {
+            try {
+                const parsed = JSON.parse(result)
+                if (parsed.status === "ok") pendingGifUrl = parsed.url
+            } catch { }
+        }
+
+        pushFn(name, result)
+        if (this.tools.shouldHardStop()) break
     }
+
+    return pendingGifUrl
+}
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
         const baseTools = this.getToolsForChannel(channelId)

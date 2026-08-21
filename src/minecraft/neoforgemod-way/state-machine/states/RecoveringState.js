@@ -30,7 +30,7 @@ export class RecoveringState {
       this.ctx.move.moveToward(this.ctx.lilyPos, target)
     } else {
       this.ctx.move.stop()
-      if (this.explicit) this.ctx.transitionTo('IDLE') // autonomous case waits for HP to recover instead
+      if (this.explicit) this.ctx.transitionTo('IDLE') 
     }
   }
 

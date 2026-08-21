@@ -14,14 +14,13 @@ export class AttackingState {
     if (this.attackInterval) clearInterval(this.attackInterval)
     this.attackInterval = setInterval(() => {
       if (this.ctx.currentStateName !== 'ATTACKING') return
-      // Swing at whatever she's currently facing, but only if there's still
-      // something to actually be fighting — locked target still alive/in range,
-      // or (autonomous mode) a hostile still exists at all.
-      const stillFighting = this.targetId != null
+      const target = this.targetId != null
         ? this.ctx.findEntityById(this.targetId)
         : this.ctx.nearestHostile()
-      if (stillFighting) this.ctx.mcSend('attack', { mode: 'once' })
-    }, 1100)
+      if (!target) return
+      this.ctx.mcSend('look_at', { x: target.x, y: target.y + 1, z: target.z })
+      this.ctx.mcSend('attack', { mode: 'once' })
+    }, 500)
   }
 
   onTick() {

@@ -28,5 +28,5 @@
     "blogUrl": "http://localhost:1234",
     "ollamaTimeout": 120000,
     "dbTimeout": 30000,
-    "trainingTurnWindow": 1
+    "trainingTurnWindow": 200000
 }

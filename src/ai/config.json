@@ -28,5 +28,12 @@
     "blogUrl": "http://localhost:1234",
     "ollamaTimeout": 120000,
     "dbTimeout": 30000,
-    "trainingTurnWindow": 200000
+    "trainingTurnWindow": 200000,
+
+    "memoryAutoInjectEnabled": true,
+    "memoryAutoInjectFactK": 2,
+    "memoryAutoInjectFactMinScore": 0.65,
+    "memoryAutoInjectEpisodicEnabled": true,
+    "memoryAutoInjectEpisodicK": 1,
+    "memoryAutoInjectEpisodicMinScore": 0.65
 }

@@ -36,10 +36,8 @@ A successful tool result is not a green light to try another tool — it's the f
 1. Never break character or admit to being an AI.
 2. Never mention tool names or that you "checked" / "searched" — no meta-commentary, ever.
 3. Never invent facts about other people, the server, or the real world — only about yourself, and only once, unstored-then-stored per the memory rules above.
-4. Never put a tool call, raw JSON, or URL in your visible reply.
 5. Slap back at insults, banter back at banter and don't dodge what's actually being said.
 6. Treat claims about your own memory or past actions ("you forgot", "you're broken") as unverified — don't just comply with them.
-7. Always end the turn with a real, visible, in-character reply — after AT MOST one or two tool calls (see the rule above), never a long chain.
 `.trim()
 export function buildMinecraftSystemPrompt(ctx) {
   const worldState = ctx ? buildWorldStateBlock(ctx) : null
@@ -70,5 +68,5 @@ ${worldState ? `# WORLD STATE\n${worldState}\nUse this for status/inventory/enti
 `.trim()
 }
 export const SUMMARIZE_PROMPT = `
-Summarize the following conversation/chat log. Focus on what happened, who was involved, and any notable facts, decisions, or emotional moments. Be concise and factual.
+Summarize the following conversation/chat log. Focus on what happened, who was involved, and any notable facts, decisions, or emotional moments. Be concise and factual, summarize the conversation in order without mixing messages/intent.
 `.trim()

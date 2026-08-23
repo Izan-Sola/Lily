@@ -294,7 +294,65 @@ class ToolExecutor {
             return finish("No relevant information found in memory.")
         }
     }
+    // ─── Auto-injection (passive, not a tool call) ──────────────────────────
+    // Runs once per incoming user message, computed by handleMessage BEFORE the
+    // tool loop starts — never by the model, never counted against the turn
+    // budget, never affecting turnFlawless. A silent failure here must never
+    // surface as a tool error or change turn flow, since the model never asked
+    // for this and doesn't know it happened.
+    async autoInjectMemory(queryText) {
+        if (!this.opts.memoryAutoInjectEnabled) return null
+        const trimmed = (queryText ?? "").trim()
+        if (!trimmed) return null
 
+        const parts = []
+
+        try {
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
+                query: trimmed,
+                k: this.opts.memoryAutoInjectFactK,
+                min_score: this.opts.memoryAutoInjectFactMinScore,
+                types: ["fact"]
+            }, { timeout: this.opts.dbTimeout })
+
+            const hits = data?.results ?? []
+            if (hits.length) {
+                for (const h of hits) {
+                    Logger.info(`[fact, score ${h.score}] "${h.text}"`, "MEMORY AUTOINJECT")
+                }
+                parts.push(...hits.map(h => h.text))
+            }
+        } catch (err) {
+            Logger.error(err.message, "MEMORY AUTOINJECT FACT")
+        }
+
+        if (this.opts.memoryAutoInjectEpisodicEnabled) {
+            try {
+                const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
+                    query: trimmed,
+                    k: this.opts.memoryAutoInjectEpisodicK,
+                    min_score: this.opts.memoryAutoInjectEpisodicMinScore,
+                    types: ["episodic"]
+                }, { timeout: this.opts.dbTimeout })
+
+                const hits = data?.results ?? []
+                if (hits.length) {
+                    for (const h of hits) {
+                        Logger.info(`[episodic, score ${h.score}] summary: "${h.text}"\nraw: ${h.content}`, "MEMORY AUTOINJECT")
+                    }
+                    parts.push(...hits.map(h => `(past conversation) ${h.content}`))
+                }
+            } catch (err) {
+                Logger.error(err.message, "MEMORY AUTOINJECT EPISODIC")
+            }
+        }
+
+        if (!parts.length) {
+            Logger.info(`No hits for: "${trimmed}"`, "MEMORY AUTOINJECT")
+            return null
+        }
+        return parts.join("\n")
+    }
     async memoryAdd(factText, source = "user") {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr

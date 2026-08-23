@@ -596,7 +596,7 @@ export async function createBot() {
         // ─── Fetch the 15 messages before this ping/reply and inject as context ──
         try {
             const fetched = await message.channel.messages.fetch({
-                limit: 15,
+                limit: 5,
                 before: message.id,
             })
             const prior = [...fetched.values()]

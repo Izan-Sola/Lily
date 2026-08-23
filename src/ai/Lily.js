@@ -62,6 +62,7 @@ export class Lily {
         // Non-minecraft tool list is static, so compute it once instead of
         // filtering on every single loop iteration.
         this._nonMinecraftTools = TOOLS.filter(t => !isMinecraftActionTool(t.function?.name ?? ""))
+        this.turnAutoMemoryBlocks = new Map()   // channelId -> string | undefined, recomputed each turn
     }
 
     // Reads config.json fresh (via getConfig()) on every access and layers
@@ -173,13 +174,21 @@ export class Lily {
         const history = skipHistory ? [] : [...this.getConvoHistory(channelId)]
 
         if (!skipRawContext) {
+            const autoMemory = this.turnAutoMemoryBlocks.get(channelId)
             const rawContext = this.getRawContext(channelId)
+
+            let block = ""
+            if (autoMemory) {
+                block += `[Memory — things you may already know, only relevant if they actually relate to the newest message. Ignore anything that doesn't.]\n${autoMemory}\n[End memory]\n`
+            }
             if (rawContext.length) {
                 const reminder = (channelId === MINECRAFT_CHANNEL_ID && !suppressActionReminder)
                     ? "\n[If the newest message asks you to do something physical, call the matching tool now — don't just reply in words.]\n"
                     : ""
-                const block = `[Recent chat]\n${rawContext.join("\n")}\n[End recent chat]\n${reminder}`
+                block += `[Recent chat]\n${rawContext.join("\n")}\n[End recent chat]\n${reminder}`
+            }
 
+            if (block) {
                 let injected = false
                 for (let i = history.length - 1; i >= 0; i--) {
                     if (history[i].role === "user" && typeof history[i].content === "string") {
@@ -781,6 +790,10 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
             this.turnStartMessages.set(channelId, userMessage)
 
             this.tools.resetTurn()
+            // passaive memory injection
+            const autoMemoryBlock = await this.tools.autoInjectMemory(clean)
+            if (autoMemoryBlock) this.turnAutoMemoryBlocks.set(channelId, autoMemoryBlock)
+            else this.turnAutoMemoryBlocks.delete(channelId)
 
             const count = (this.channelMessageCounts.get(channelId) ?? 0) + 1
             this.channelMessageCounts.set(channelId, count)

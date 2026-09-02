@@ -108,7 +108,8 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mo
 
         try {
             // ─── AI Request ──────────────────────────────────────────────
-            const response = await fetch(ollamaUrl, {
+            const endpoint = `${ollamaUrl.replace(/\/+$/, '')}/v1/chat/completions`
+            const response = await fetch(endpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

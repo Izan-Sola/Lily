@@ -9,12 +9,15 @@ const mode = getModeFromEnv()
 const hasVtube = hasVtubeSupport(mode)
 const isModded = isModdedMode(mode)
 const isMineflayer = isMineflayerMode(mode)
+const isNoDiscord = process.env.NO_DISCORD === 'true'
 
 Logger.info(`Starting with mode: ${mode}`, "STARTUP")
+Logger.info(`  • Discord: ${isNoDiscord ? '❌ Disabled' : '✅ Enabled'}`, "STARTUP")
 Logger.info(`  • VTube Studio: ${hasVtube ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Minecraft: ${isMineflayer ? 'Mineflayer' : isModded ? 'Modded (NeoForge)' : 'None'}`, "STARTUP")
 
 let vtsClient = null
+let survivalLoopHandle = null
 
 async function initializeVTS() {
     if (!hasVtube) return null
@@ -74,25 +77,34 @@ async function startSurvivalLoop(mcSend, mcChat, stateController) {
     )
 }
 
+async function initializeFeatures() {
+    vtsClient = await initializeVTS()
+
+    const mcBot = await startMinecraft()
+
+    if (mcBot) {
+        const { stateController, mcSend, mcChat } = mcBot
+        const survivalLoop = await startSurvivalLoop(mcSend, mcChat, stateController)
+
+        if (survivalLoop) {
+            survivalLoopHandle = survivalLoop
+            Logger.success('Survival loop started', "SURVIVAL")
+        }
+    }
+}
+
 async function setupDiscordBot() {
+    if (isNoDiscord) {
+        Logger.info('Skipping Discord login (NO_DISCORD)', "STARTUP")
+        await initializeFeatures()
+        return null
+    }
+
     const client = await createBot()
 
     client.once("clientReady", async () => {
         Logger.success(`Logged in as ${client.user.tag}`, "CLIENT")
-
-        vtsClient = await initializeVTS()
-
-        const mcBot = await startMinecraft()
-
-        if (mcBot) {
-            const { stateController, mcSend, mcChat } = mcBot
-            const survivalLoop = await startSurvivalLoop(mcSend, mcChat, stateController)
-
-            if (survivalLoop) {
-                client.survivalLoop = survivalLoop
-                Logger.success('Survival loop started', "SURVIVAL")
-            }
-        }
+        await initializeFeatures()
     })
 
     await client.login(config.token)
@@ -110,15 +122,17 @@ async function main() {
                 await vtsClient.disconnect().catch(() => { })
             }
 
-            if (client.survivalLoop?._interval) {
-                clearInterval(client.survivalLoop._interval)
+            if (survivalLoopHandle?._interval) {
+                clearInterval(survivalLoopHandle._interval)
             }
 
-            if (client.survivalLoop?.stop) {
-                client.survivalLoop.stop()
+            if (survivalLoopHandle?.stop) {
+                survivalLoopHandle.stop()
             }
 
-            await client.destroy()
+            if (client) {
+                await client.destroy()
+            }
             process.exit(0)
         }
 

@@ -52,15 +52,21 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 ### Modos de inicio:
 
-- `npm run start:modded:bending` - Ejecuta el bot con Minecraft moddeado (NeoForge), funcionalidades de Discord y habilidades de ProjectKorra bending.
-- `npm run start:modded:nobending` - Ejecuta el bot con Minecraft moddeado (NeoForge) y funcionalidades de Discord, pero sin habilidades de ProjectKorra bending.
-- `npm run start:modded:bending:vtube` - Ejecuta el bot con Minecraft moddeado (NeoForge), funcionalidades de Discord, ProjectKorra bending e integración con VTube Studio para activar expresiones/emotes.
-- `npm run start:modded:nobending:vtube` - Ejecuta el bot con Minecraft moddeado (NeoForge), funcionalidades de Discord, integración con VTube Studio, pero sin ProjectKorra bending.
-- `npm run start:mineflayer` - Ejecuta el bot solo con funcionalidad Mineflayer (servidor de Minecraft craqueado/basado en plugins).
-- `npm run start:mineflayer:vtube` - Ejecuta el bot con funcionalidad Mineflayer e integración con VTube Studio.
-- `npm run start:survival` - Ejecuta el bucle autónomo de supervivencia con Minecraft moddeado (NeoForge) y soporte para bending.
-- `npm run start:survival:vtube` - Ejecuta el bucle autónomo de supervivencia con Minecraft moddeado (NeoForge), soporte para bending e integración con VTube Studio.
+### Modos de inicio:
 
+- `npm run start:modded:bending` - Ejecuta el bot con Minecraft modded (NeoForge), funcionalidades de Discord, habilidades de bending de ProjectKorra y el bucle de supervivencia autónomo.
+- `npm run start:modded:bending:nodiscord` - Igual que el anterior, pero sin usar Discord en absoluto (no intenta iniciar sesión).
+- `npm run start:modded:bending:vtube` - Ejecuta el bot con Minecraft modded (NeoForge), funcionalidades de Discord, bending de ProjectKorra, el bucle de supervivencia autónomo e integración con VTube Studio para triggers de expresiones/emotes.
+- `npm run start:modded:bending:vtube:nodiscord` - Igual que el anterior, pero sin usar Discord en absoluto (no intenta iniciar sesión).
+- `npm run start:modded:nobending` - Ejecuta el bot con Minecraft modded (NeoForge), funcionalidades de Discord y el bucle de supervivencia autónomo, pero sin habilidades de bending de ProjectKorra.
+- `npm run start:modded:nobending:nodiscord` - Igual que el anterior, pero sin usar Discord en absoluto (no intenta iniciar sesión).
+- `npm run start:modded:nobending:vtube` - Ejecuta el bot con Minecraft modded (NeoForge), funcionalidades de Discord, el bucle de supervivencia autónomo e integración con VTube Studio, pero sin bending.
+- `npm run start:modded:nobending:vtube:nodiscord` - Igual que el anterior, pero sin usar Discord en absoluto (no intenta iniciar sesión).
+- `npm run start:mineflayer` - Ejecuta el bot con funcionalidad de Mineflayer (servidor de Minecraft cracked/basado en plugins) y el bucle de supervivencia autónomo.
+- `npm run start:mineflayer:nodiscord` - Igual que el anterior, pero sin usar Discord en absoluto (no intenta iniciar sesión).
+- `npm run start:mineflayer:vtube` - Ejecuta el bot con funcionalidad de Mineflayer, el bucle de supervivencia autónomo e integración con VTube Studio.
+- `npm run start:mineflayer:vtube:nodiscord` - Igual que el anterior, pero sin usar Discord en absoluto (no intenta iniciar sesión).
+- 
 Todos los modos están configurados a través de un archivo de inicio unificado (`src/start.js`) que carga automáticamente los componentes apropiados según el modo que elijas. El sistema está diseñado para ser modular - puedes mezclar y combinar características simplemente añadiendo las flags correspondientes a tu comando de inicio.
 
 > **Nota:** La funcionalidad de bending (ProjectKorra) solo funciona con el enfoque de Minecraft moddeado con NeoForge. El modo Mineflayer actualmente no soporta habilidades de bending.

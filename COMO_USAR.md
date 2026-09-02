@@ -52,21 +52,18 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 ### Modos de inicio:
 
-* `npm run start:nobending`: Corre el cerebro con las funcionalidades de minecraft modeado y discord, pero sin las cosas de ProjectKorra.
-* `npm run start:bending`: Corre el cerebro con las funcionalidades de minecraft modeado, discord y las cosas de ProjectKorra.
-* `npm run start:survival`: Corre el cerebro solo con las funcionalidades de minecraft modeado.
-* `npm run start:mineflayer`: Corre el cerebro solo con la funcionalidad de servidor cracked, basado en plugins, de minecraft.
+- `npm run start:modded:bending` - Ejecuta el bot con Minecraft moddeado (NeoForge), funcionalidades de Discord y habilidades de ProjectKorra bending.
+- `npm run start:modded:nobending` - Ejecuta el bot con Minecraft moddeado (NeoForge) y funcionalidades de Discord, pero sin habilidades de ProjectKorra bending.
+- `npm run start:modded:bending:vtube` - Ejecuta el bot con Minecraft moddeado (NeoForge), funcionalidades de Discord, ProjectKorra bending e integración con VTube Studio para activar expresiones/emotes.
+- `npm run start:modded:nobending:vtube` - Ejecuta el bot con Minecraft moddeado (NeoForge), funcionalidades de Discord, integración con VTube Studio, pero sin ProjectKorra bending.
+- `npm run start:mineflayer` - Ejecuta el bot solo con funcionalidad Mineflayer (servidor de Minecraft craqueado/basado en plugins).
+- `npm run start:mineflayer:vtube` - Ejecuta el bot con funcionalidad Mineflayer e integración con VTube Studio.
+- `npm run start:survival` - Ejecuta el bucle autónomo de supervivencia con Minecraft moddeado (NeoForge) y soporte para bending.
+- `npm run start:survival:vtube` - Ejecuta el bucle autónomo de supervivencia con Minecraft moddeado (NeoForge), soporte para bending e integración con VTube Studio.
 
-Puedes crear tus propios modos de inicio o mezclar funcionalidades. Si por ejemplo quisieras añadir funcionalidad de discord al modo mineflayer, necesitarías añadir:
-```js
-import { config } from "./utils/config.js"
-import { createBot } from "./bot.js"
-const client = await createBot()
-client.login(config.token)
-```
-a `StartMineflayer.js`
+Todos los modos están configurados a través de un archivo de inicio unificado (`src/start.js`) que carga automáticamente los componentes apropiados según el modo que elijas. El sistema está diseñado para ser modular - puedes mezclar y combinar características simplemente añadiendo las flags correspondientes a tu comando de inicio.
 
-- Ten en cuenta que para que el bending funcione necesitas hacerlo con el mod de neoforge. Todavía tengo que implementarlo para mineflayer.
+> **Nota:** La funcionalidad de bending (ProjectKorra) solo funciona con el enfoque de Minecraft moddeado con NeoForge. El modo Mineflayer actualmente no soporta habilidades de bending.
 
 ### Base de datos [RAG](https://aws.amazon.com/what-is/retrieval-augmented-generation):
 

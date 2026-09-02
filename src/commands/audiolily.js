@@ -33,7 +33,7 @@ export async function execute(interaction) {
         const cleanReply = typeof reply === "object" ? reply.text : reply
         const clean = cleanReply.replace(/\/\w+.*$/s, "").trim()
 
-        const oggPath = await speak(clean)
+        const oggPath = await speakedge(clean)
 
         await interaction.editReply({
             content: `💬 *In response to "${userMessage}"*`,

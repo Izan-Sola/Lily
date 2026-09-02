@@ -12,8 +12,8 @@
     "maxRawMessages": 30,
     "maxToolLoops": 10,
     "maxToolRepeats": 2,
-    "maxUsesPerTool": 2,
-    "maxUsesPerMinecraftAction": 3,
+    "maxUsesPerTool": 1,
+    "maxUsesPerMinecraftAction": 1,
     "memoryQueryMinScore": 0.3,
     "memoryRemoveMinScore": 0.70,
     "memoryRemoveK": 2,
@@ -29,7 +29,6 @@
     "ollamaTimeout": 120000,
     "dbTimeout": 30000,
     "trainingTurnWindow": 200000,
-
     "memoryAutoInjectEnabled": true,
     "memoryAutoInjectFactK": 2,
     "memoryAutoInjectFactMinScore": 0.65,

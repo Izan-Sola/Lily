@@ -68,5 +68,5 @@ ${worldState ? `# WORLD STATE\n${worldState}\nUse this for status/inventory/enti
 `.trim()
 }
 export const SUMMARIZE_PROMPT = `
-Summarize the following conversation/chat log. Focus on what happened, who was involved, and any notable facts, decisions, or emotional moments. Be concise and factual, summarize the conversation in order without mixing messages/intent.
+Summarize the following conversation/chat log in ONE short sentence (max ~15 words) — just the core topic and outcome, not a play-by-play. This summary is ONLY used to search for this memory later, not shown to anyone, so prioritize matching how someone would casually ask about it (e.g. "what does X think of Y", "argument about Z") over completeness. Do not mix in unrelated details from earlier or later in the log.
 `.trim()

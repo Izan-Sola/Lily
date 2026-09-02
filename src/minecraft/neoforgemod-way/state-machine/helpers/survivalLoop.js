@@ -1,119 +1,251 @@
 import { buildSurvivalPrompt } from '../prompt-builders/survivalPromptBuilder.js'
-import { ToolExecutor, TOOLS } from '../../../../ai/tools.js'
+import { ToolRouter, ALL_TOOL_NAMES } from '../../../../ai/tools/toolRouter.js'
 import { Logger } from '../../../../utils/Logger.js'
+import { getToolConfig, isSurvivalMode } from '../../../../startUtils.js'
+
 const ACTIONS_INTERVAL_MS = 20000
 const MSG_MIN_MS = 2 * 60 * 1000
 const MSG_MAX_MS = 6 * 60 * 1000
-const HISTORY_MAX_TURNS = 8 // keep last N exchanges threaded into the call
+const HISTORY_MAX_TURNS = 8
 
-// Survival loop only ever needs the minecraft_action_* tools — no memory/web/meme tools here.
-const SURVIVAL_TOOLS = TOOLS.filter(t => t.function.name.startsWith('minecraft_action_'))
+// ─── Tool Selection Based on Mode ────────────────────────────────────────────
+function getToolsForMode(router, mode) {
+    const config = getToolConfig(mode)
+    const tools = []
 
-function randomMsgDelay() {
-    return MSG_MIN_MS + Math.random() * (MSG_MAX_MS - MSG_MIN_MS)
+    // Add minecraft tools if enabled
+    if (config.includeMinecraft) {
+        const mcTools = router.tools.filter(t => router.isMinecraftTool(t.function.name))
+        tools.push(...mcTools)
+
+        // If bending is disabled, filter out bending-specific tools
+        if (!config.includeBending) {
+            // Assuming bending tools have 'bending' in their name or description
+            // Adjust this filter based on your actual tool naming
+            const filtered = tools.filter(t =>
+                !t.function.name.includes('bending') &&
+                !t.function.description?.toLowerCase().includes('bend')
+            )
+            tools.length = 0
+            tools.push(...filtered)
+        }
+    }
+
+    // Add vtube tools if enabled
+    if (config.includeVtube) {
+        const vtubeTools = router.tools.filter(t => router.isVtubeTool(t.function.name))
+        tools.push(...vtubeTools)
+    }
+
+    // Log what tools are available
+    Logger.info(`Survival tools: ${tools.map(t => t.function.name).join(', ')}`, "SURVIVAL")
+
+    return tools
 }
 
-export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl = "http://localhost:11435") {
+// ─── Delay Calculation ──────────────────────────────────────────────────────
+function randomMsgDelay() {
+    const min = parseInt(process.env.SURVIVAL_MSG_MIN_MS || MSG_MIN_MS)
+    const max = parseInt(process.env.SURVIVAL_MSG_MAX_MS || MSG_MAX_MS)
+    return min + Math.random() * (max - min)
+}
+
+// ─── Main Survival Loop ─────────────────────────────────────────────────────
+export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mode, vtsClient = null) {
+    // Validate mode
+    if (!isSurvivalMode(mode)) {
+        Logger.warning(`Survival loop started with non-survival mode: ${mode}`, "SURVIVAL")
+        // Still continue but log warning
+    }
+
     let nextMessageAt = Date.now() + randomMsgDelay()
-    const toolExecutor = new ToolExecutor({}, mcSend, () => stateController)
 
-    // history lives on stateController so it survives across ticks
-    if (!stateController.chatHistory) stateController.chatHistory = []
+    // Create router with all executors wired up
+    const toolRouter = new ToolRouter(mcSend, () => stateController, vtsClient)
+
+    // Get tools based on current mode
+    const survivalTools = getToolsForMode(toolRouter, mode)
+
+    if (survivalTools.length === 0) {
+        Logger.error('No tools available for survival loop!', "SURVIVAL")
+        return null
+    }
+
+    Logger.info(`Starting survival loop with mode: ${mode}`, "SURVIVAL")
+    Logger.info(`Available tools: ${survivalTools.map(t => t.function.name).join(', ')}`, "SURVIVAL")
+
+    // Initialize history on stateController if needed
+    if (!stateController.chatHistory) {
+        stateController.chatHistory = []
+    }
+
+    // ─── Tick Execution ────────────────────────────────────────────────────
     async function runTick() {
-        if (!stateController) return
-
-        // Don't let the autonomous loop step on an action already in progress
-        // (started either by LOOP 1 / a direct command, or by a previous survival tick).
-        const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
-        if (busyStates.includes(stateController.currentStateName)) {
-            Logger.info(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
+        if (!stateController) {
+            Logger.warning('State controller missing, skipping tick', "SURVIVAL")
             return
         }
 
+        // Don't run if bot is busy
+        const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
+        if (busyStates.includes(stateController.currentStateName)) {
+            Logger.debug(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
+            return
+        }
+
+        // Check if we should send a message
         const allowMessage = Date.now() >= nextMessageAt
         if (allowMessage) {
             nextMessageAt = Date.now() + randomMsgDelay()
         }
 
+        // Build the prompt
         const prompt = buildSurvivalPrompt(stateController, { allowMessage })
-  
-        if (!prompt) return
+        if (!prompt) {
+            Logger.debug('No prompt generated, skipping tick', "SURVIVAL")
+            return
+        }
 
-        // thread history as real turns instead of collapsing into one string
+        // Prepare messages with history
         const messages = [
             ...stateController.chatHistory.slice(-HISTORY_MAX_TURNS),
             { role: "user", content: prompt }
         ]
 
         try {
-            const response = await fetch(`${ollamaUrl}/v1/chat/completions`, {
+            // ─── AI Request ──────────────────────────────────────────────
+            const response = await fetch(ollamaUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    model: "Lily",
+                    model: process.env.OLLAMA_MODEL ?? "Lily",
                     stream: false,
                     messages,
-                    tools: SURVIVAL_TOOLS,
+                    tools: survivalTools,
                     tool_choice: "auto",
-                    temperature: 0.4,
-                    max_tokens: 512
+                    temperature: parseFloat(process.env.SURVIVAL_TEMPERATURE ?? "0.4"),
+                    max_tokens: parseInt(process.env.SURVIVAL_MAX_TOKENS ?? "512")
                 })
             })
 
             if (!response.ok) {
                 const errBody = await response.text().catch(() => '')
-                Logger.error('HTTP ' + response.status + errBody, "SURVIVAL")
+                Logger.error(`HTTP ${response.status}: ${errBody}`, "SURVIVAL")
                 return
             }
 
             const data = await response.json()
             const message = data.choices?.[0]?.message
+
             if (!message) {
-                Logger.error('No message in response: ' + JSON.stringify(data), "SURVIVAL")
+                Logger.error(`No message in response: ${JSON.stringify(data)}`, "SURVIVAL")
                 return
             }
 
+            // ─── Process Response ─────────────────────────────────────────
             const chatText = message.content?.trim()
-            if (allowMessage && chatText) mcChat(chatText)
+            if (allowMessage && chatText && mcChat) {
+                mcChat(chatText)
+            }
 
-            // record this turn in history
-            stateController.chatHistory.push({ role: "user", content: prompt })
-            stateController.chatHistory.push({ role: "assistant", content: message.content ?? "", tool_calls: message.tool_calls })
+            // Record turn in history
+            stateController.chatHistory.push({
+                role: "user",
+                content: prompt
+            })
+            stateController.chatHistory.push({
+                role: "assistant",
+                content: message.content ?? "",
+                tool_calls: message.tool_calls
+            })
+
+            // Trim history if too long
             if (stateController.chatHistory.length > HISTORY_MAX_TURNS * 2) {
                 stateController.chatHistory = stateController.chatHistory.slice(-HISTORY_MAX_TURNS * 2)
             }
 
+            // ─── Execute Tool Calls ──────────────────────────────────────
             const toolCalls = message.tool_calls ?? []
             for (const call of toolCalls) {
-                await handleSurvivalToolCall(call, toolExecutor)
+                await handleSurvivalToolCall(call, toolRouter, mode)
             }
+
         } catch (err) {
-            Logger.error('[SURVIVAL] AI error:', err.message)
+            Logger.error(`AI error: ${err.message}`, "SURVIVAL")
+            if (err.stack) {
+                Logger.debug(err.stack, "SURVIVAL")
+            }
         }
     }
 
-    setInterval(runTick, ACTIONS_INTERVAL_MS)
+    // ─── Start the loop ──────────────────────────────────────────────────
+    const interval = setInterval(runTick, ACTIONS_INTERVAL_MS)
 
-    // expose so a new chat message can trigger an immediate tick,
-    // instead of waiting up to 30s for the next scheduled one
-    return { triggerTick: runTick }
+    // Store interval for cleanup
+    const loop = {
+        triggerTick: runTick,
+        _interval: interval,
+        stop: () => {
+            clearInterval(interval)
+            Logger.info('Survival loop stopped', "SURVIVAL")
+        }
+    }
+
+    // Run first tick immediately
+    setTimeout(runTick, 1000)
+
+    return loop
 }
 
-async function handleSurvivalToolCall(call, toolExecutor) {
+// ─── Tool Call Handler ──────────────────────────────────────────────────────
+async function handleSurvivalToolCall(call, toolRouter, mode) {
     const name = call.function?.name
     if (!name) {
-        Logger.warning('Tool call missing function name: ' + JSON.stringify(call), "SURVIVAL")
+        Logger.warning('Tool call missing function name', "SURVIVAL")
         return
     }
 
+    const config = getToolConfig(mode)
+
+    // Validate the tool is allowed in this mode
+    const isMinecraft = toolRouter.isMinecraftTool(name)
+    const isVtube = toolRouter.isVtubeTool(name)
+
+    // Check if tool is allowed
+    let allowed = false
+    if (isMinecraft && config.includeMinecraft) {
+        // If bending is disabled, skip bending tools
+        if (!config.includeBending && name.includes('bending')) {
+            Logger.warning(`Bending tool ${name} not allowed in this mode`, "SURVIVAL")
+            return
+        }
+        allowed = true
+    } else if (isVtube && config.includeVtube) {
+        allowed = true
+    }
+
+    if (!allowed) {
+        Logger.warning(`Tool ${name} not allowed in mode ${mode}`, "SURVIVAL")
+        return
+    }
+
+    // Parse arguments
     let args = {}
     try {
         args = call.function.arguments ? JSON.parse(call.function.arguments) : {}
     } catch (err) {
-        Logger.error(`Invalid tool call arguments for ${name}:` + call.function.arguments, "SURVIVAL")
+        Logger.error(`Invalid arguments for ${name}: ${call.function.arguments}`, "SURVIVAL")
         return
     }
 
-    const result = await toolExecutor.execute(name, args)
-    Logger.info(`${name} → ` + result, "SURVIVAL")
+    // Execute the tool
+    try {
+        const result = await toolRouter.execute(name, args)
+        Logger.info(`${name} → ${result}`, "SURVIVAL")
+    } catch (err) {
+        Logger.error(`Failed to execute ${name}: ${err.message}`, "SURVIVAL")
+    }
 }
+
+// ─── Export utilities for testing ──────────────────────────────────────────
+export { getToolsForMode, randomMsgDelay }

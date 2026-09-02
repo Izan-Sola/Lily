@@ -8,15 +8,14 @@ import { loadCombos, enrichCombosData } from './state-machine/helpers/comboExecu
 import { startSurvivalLoop } from './state-machine/helpers/survivalLoop.js'
 import axios from "axios"
 import { buildMinecraftSystemPrompt } from '../../ai/prompts.js'
-export function requestDuelData(opponentName) {
-    mcSend('get_duel_data', { opponent: opponentName });
-}
+import { getModeFromEnv, isSurvivalMode, MODES } from '../../startUtils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 let triggerSurvivalTick = null
-let currentMode = process.env.MODE ?? 'bending'
+let currentMode = getModeFromEnv() // Use the unified mode system
 let survivalLoopStarted = false
+let survivalLoopInstance = null
 
 export const getMode = () => currentMode
 
@@ -85,17 +84,27 @@ function requestAbilityData() {
     mcSend('request_ability_data')
 }
 
-export function startMinecraftBot({ port, ai }) {
+export function startMinecraftBot({ port, ai, vtsClient = null, mode = null }) {
     aiInstance = ai
-    if (getMode() === 'bending') {
+
+    // Use provided mode or fallback to current mode
+    if (mode) {
+        currentMode = mode
+    }
+
+    // Check if we're in a mode that supports bending
+    const hasBending = currentMode.includes('bending') || currentMode === MODES.SURVIVAL
+
+    if (hasBending) {
         loadCombos()
         loadStaticAbilityData()
     }
-    //const resolvedPort = port ?? (getMode() === 'survival' ? 8766 : 8765)
-    _connect("8766")
+
+    const resolvedPort = port ?? 8766
+    _connect(resolvedPort, vtsClient)
 }
 
-function _connect(port) {
+function _connect(port, vtsClient) {
     wss = new WebSocketServer({ port })
     Logger.info(`WebSocket server listening on port ${port} (mode: ${currentMode})`, "MC")
 
@@ -113,15 +122,37 @@ function _connect(port) {
                 tickMs: 25,
                 ai: aiInstance
             })
-            if (getMode() === 'bending') stateController.updateAbilityStats(staticAbilities)
+
+            const hasBending = currentMode.includes('bending') || currentMode === MODES.SURVIVAL
+            if (hasBending) {
+                stateController.updateAbilityStats(staticAbilities)
+            }
         }
         stateController.start()
 
-        if (getMode() === 'bending') requestAbilityData()
-        if (!survivalLoopStarted) {
-            const { triggerTick } = startSurvivalLoop(stateController, mcSend, mcChat)
-            triggerSurvivalTick = triggerTick
-            survivalLoopStarted = true
+        // Request ability data if bending is enabled
+        const hasBending = currentMode.includes('bending') || currentMode === MODES.SURVIVAL
+        if (hasBending) {
+            requestAbilityData()
+        }
+
+        // Start survival loop if in survival mode
+        if (isSurvivalMode(currentMode) && !survivalLoopStarted) {
+            const loop = startSurvivalLoop(
+                stateController,
+                mcSend,
+                mcChat,
+                process.env.OLLAMA_URL ?? "http://localhost:11435",
+                currentMode,
+                vtsClient
+            )
+
+            if (loop) {
+                survivalLoopInstance = loop
+                triggerSurvivalTick = loop.triggerTick
+                survivalLoopStarted = true
+                Logger.info('Survival loop started', "SURVIVAL")
+            }
         }
 
         socket.on("message", async (data) => {
@@ -137,6 +168,13 @@ function _connect(port) {
             Logger.info("Java mod disconnected", "MC")
             stateController?.stop()
             ws = null
+
+            // Stop survival loop if running
+            if (survivalLoopInstance) {
+                survivalLoopInstance.stop?.()
+                survivalLoopInstance = null
+                survivalLoopStarted = false
+            }
         })
 
         socket.on("error", err => {
@@ -290,7 +328,7 @@ async function _handleEvent(event) {
                 stateController.passives = event.passives ?? []
                 stateController.blocksOfInterest = event.blocks_of_interest ?? []
                 stateController.inventoryItems = event.inventory ?? {}
-                stateController.environmentInfo = event.environment_info ?? {}   // NEW
+                stateController.environmentInfo = event.environment_info ?? {}
             }
             break
         }
@@ -304,7 +342,8 @@ async function _handleEvent(event) {
             break
         }
         case "ability_data": {
-            if (getMode() === 'survival') break
+            // Skip if in survival mode (no bending)
+            if (isSurvivalMode(currentMode)) break
             mergeAbilityData(event.abilities)
             if (stateController?.updateAbilityStats) {
                 stateController.updateAbilityStats(staticAbilities)
@@ -314,7 +353,7 @@ async function _handleEvent(event) {
         }
 
         case "set_duel_target": {
-            if (getMode() === 'survival') break
+            if (isSurvivalMode(currentMode)) break
             stateController?.setDuelTarget(event.target)
             stateController.duelDifficulty = event.difficulty || "medium"
             Logger.info(`Difficulty: ${stateController.duelDifficulty}`, "DUEL")
@@ -334,7 +373,6 @@ async function _handleEvent(event) {
             Logger.info(`${event.player} left`, "MC")
             break
 
-        // Clean Hook from your custom NeoForge / Arclight Event Listener
         case "duel_result": {
             const { winner, loser } = event;
             Logger.info(`Winner: ${winner} | Loser: ${loser}`, "DUEL ENDED")
@@ -356,41 +394,51 @@ async function _handleEvent(event) {
         case "player_death": {
             const who = event.player
             Logger.info(`${who} died`, "MC")
-
-            // Note: General match termination logic is handled cleanly by "duel_result" above.
-            // This case handles fallback cleanups if non-duel entities drop.
             break
         }
 
         case "set_mode": {
-            currentMode = event.mode
+            // Handle mode switching at runtime
+            const newMode = event.mode
+            const hasBending = newMode.includes('bending') || newMode === MODES.SURVIVAL
+
+            currentMode = newMode
             Logger.info(`Mode switched to ${currentMode}`, "MC")
 
-            if (currentMode === 'bending') {
+            if (hasBending) {
                 loadCombos()
                 loadStaticAbilityData()
                 if (stateController) {
                     stateController.updateAbilityStats(staticAbilities)
                     requestAbilityData()
                 }
-                survivalLoopStarted = false
+                // Stop survival loop if running
+                if (survivalLoopInstance) {
+                    survivalLoopInstance.stop?.()
+                    survivalLoopInstance = null
+                    survivalLoopStarted = false
+                }
             }
 
-            if (currentMode === 'survival' && !survivalLoopStarted) {
-                survivalLoopStarted = true
-                startSurvivalLoop(stateController, mcSend, mcChat)
+            if (isSurvivalMode(currentMode) && !survivalLoopStarted) {
+                // Start survival loop with current vtsClient
+                const loop = startSurvivalLoop(
+                    stateController,
+                    mcSend,
+                    mcChat,
+                    process.env.OLLAMA_URL ?? "http://localhost:11435",
+                    currentMode
+                )
+                if (loop) {
+                    survivalLoopInstance = loop
+                    triggerSurvivalTick = loop.triggerTick
+                    survivalLoopStarted = true
+                }
             }
 
             break
         }
         case "block_found": {
-            // Response to the 'break_closest_generic' request sent from
-            // StateController.dispatchAction(). Java searched nearby for a
-            // block matching the requested name and reports back either a
-            // position or found:false. This is what actually kicks off
-            // MINING for the generic-name path — dispatchAction() only sent
-            // the search request, it couldn't transition into MINING itself
-            // since it never knew a position at call time.
             if (!stateController) break
 
             if (!event.found) {
@@ -410,7 +458,6 @@ async function _handleEvent(event) {
         }
         case 'mining_started': stateController?.handleMiningStarted(event); break
         case 'block_broken': stateController?.handleBlockBroken(event); break
-
     }
 }
 
@@ -422,10 +469,21 @@ export function mcSend(type, data = {}) {
     ws.send(JSON.stringify({ type, ...data }))
 }
 
-export function mcChat(message) { mcSend("chat", { message }) }
-export function mcCommand(cmd) { mcSend("run_command", { command: cmd }) }
-export function mcGetPlayers() { mcSend("get_players") }
-export function mcGetScoreboard() { mcSend("get_scoreboard") }
+export function mcChat(message) {
+    mcSend("chat", { message })
+}
+
+export function mcCommand(cmd) {
+    mcSend("run_command", { command: cmd })
+}
+
+export function mcGetPlayers() {
+    mcSend("get_players")
+}
+
+export function mcGetScoreboard() {
+    mcSend("get_scoreboard")
+}
 
 export function stopMinecraftBot() {
     clearTimeout(reconnectTimer)
@@ -435,9 +493,18 @@ export function stopMinecraftBot() {
     ws = null
     wss = null
     stateController = null
+
+    // Stop survival loop
+    if (survivalLoopInstance) {
+        survivalLoopInstance.stop?.()
+        survivalLoopInstance = null
+        survivalLoopStarted = false
+    }
 }
 
-export function getStateController() { return stateController }
+export function getStateController() {
+    return stateController
+}
 
 function _splitMessage(text, limit = 250) {
     const words = text.split(" ")

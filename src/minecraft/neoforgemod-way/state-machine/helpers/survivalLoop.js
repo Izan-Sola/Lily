@@ -1,7 +1,7 @@
 import { buildSurvivalPrompt } from '../prompt-builders/survivalPromptBuilder.js'
 import { ToolRouter, ALL_TOOL_NAMES } from '../../../../ai/tools/toolRouter.js'
 import { Logger } from '../../../../utils/Logger.js'
-import { getToolConfig, isSurvivalMode } from '../../../../startUtils.js'
+import { getToolConfig } from '../../../../startUtils.js'
 
 const ACTIONS_INTERVAL_MS = 20000
 const MSG_MIN_MS = 2 * 60 * 1000
@@ -52,12 +52,6 @@ function randomMsgDelay() {
 
 // ─── Main Survival Loop ─────────────────────────────────────────────────────
 export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mode, vtsClient = null) {
-    // Validate mode
-    if (!isSurvivalMode(mode)) {
-        Logger.warning(`Survival loop started with non-survival mode: ${mode}`, "SURVIVAL")
-        // Still continue but log warning
-    }
-
     let nextMessageAt = Date.now() + randomMsgDelay()
 
     // Create router with all executors wired up

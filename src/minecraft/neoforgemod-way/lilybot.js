@@ -8,7 +8,7 @@ import { loadCombos, enrichCombosData } from './state-machine/helpers/comboExecu
 import { startSurvivalLoop } from './state-machine/helpers/survivalLoop.js'
 import axios from "axios"
 import { buildMinecraftSystemPrompt } from '../../ai/prompts.js'
-import { getModeFromEnv, isSurvivalMode, MODES } from '../../startUtils.js'
+import { getModeFromEnv, hasBending } from '../../startUtils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -93,9 +93,9 @@ export function startMinecraftBot({ port, ai, vtsClient = null, mode = null }) {
     }
 
     // Check if we're in a mode that supports bending
-    const hasBending = currentMode.includes('bending') || currentMode === MODES.SURVIVAL
+    const bendingEnabled = hasBending(currentMode)
 
-    if (hasBending) {
+    if (bendingEnabled) {
         loadCombos()
         loadStaticAbilityData()
     }
@@ -123,21 +123,19 @@ function _connect(port, vtsClient) {
                 ai: aiInstance
             })
 
-            const hasBending = currentMode.includes('bending') || currentMode === MODES.SURVIVAL
-            if (hasBending) {
+            if (hasBending(currentMode)) {
                 stateController.updateAbilityStats(staticAbilities)
             }
         }
         stateController.start()
 
         // Request ability data if bending is enabled
-        const hasBending = currentMode.includes('bending') || currentMode === MODES.SURVIVAL
-        if (hasBending) {
+        if (hasBending(currentMode)) {
             requestAbilityData()
         }
 
-        // Start survival loop if in survival mode
-        if (isSurvivalMode(currentMode) && !survivalLoopStarted) {
+        // The survival loop always runs once the mod is connected - it's not a separate mode
+        if (!survivalLoopStarted) {
             const loop = startSurvivalLoop(
                 stateController,
                 mcSend,
@@ -342,8 +340,8 @@ async function _handleEvent(event) {
             break
         }
         case "ability_data": {
-            // Skip if in survival mode (no bending)
-            if (isSurvivalMode(currentMode)) break
+            // Skip while the survival loop is driving the bot - it doesn't need live PK tuning
+            if (survivalLoopStarted) break
             mergeAbilityData(event.abilities)
             if (stateController?.updateAbilityStats) {
                 stateController.updateAbilityStats(staticAbilities)
@@ -353,7 +351,8 @@ async function _handleEvent(event) {
         }
 
         case "set_duel_target": {
-            if (isSurvivalMode(currentMode)) break
+            // Skip while the survival loop is driving the bot - duels are a manual/Discord-driven flow
+            if (survivalLoopStarted) break
             stateController?.setDuelTarget(event.target)
             stateController.duelDifficulty = event.difficulty || "medium"
             Logger.info(`Difficulty: ${stateController.duelDifficulty}`, "DUEL")
@@ -400,40 +399,39 @@ async function _handleEvent(event) {
         case "set_mode": {
             // Handle mode switching at runtime
             const newMode = event.mode
-            const hasBending = newMode.includes('bending') || newMode === MODES.SURVIVAL
+            const bendingEnabled = hasBending(newMode)
 
             currentMode = newMode
             Logger.info(`Mode switched to ${currentMode}`, "MC")
 
-            if (hasBending) {
+            if (bendingEnabled) {
                 loadCombos()
                 loadStaticAbilityData()
                 if (stateController) {
                     stateController.updateAbilityStats(staticAbilities)
                     requestAbilityData()
                 }
-                // Stop survival loop if running
-                if (survivalLoopInstance) {
-                    survivalLoopInstance.stop?.()
-                    survivalLoopInstance = null
-                    survivalLoopStarted = false
-                }
             }
 
-            if (isSurvivalMode(currentMode) && !survivalLoopStarted) {
-                // Start survival loop with current vtsClient
-                const loop = startSurvivalLoop(
-                    stateController,
-                    mcSend,
-                    mcChat,
-                    process.env.OLLAMA_URL ?? "http://localhost:11435",
-                    currentMode
-                )
-                if (loop) {
-                    survivalLoopInstance = loop
-                    triggerSurvivalTick = loop.triggerTick
-                    survivalLoopStarted = true
-                }
+            // Restart the survival loop so it picks up the new mode's tool config
+            // (e.g. bending on/off, vtube on/off change which tools it should have)
+            if (survivalLoopInstance) {
+                survivalLoopInstance.stop?.()
+                survivalLoopInstance = null
+                survivalLoopStarted = false
+            }
+
+            const loop = startSurvivalLoop(
+                stateController,
+                mcSend,
+                mcChat,
+                process.env.OLLAMA_URL ?? "http://localhost:11435",
+                currentMode
+            )
+            if (loop) {
+                survivalLoopInstance = loop
+                triggerSurvivalTick = loop.triggerTick
+                survivalLoopStarted = true
             }
 
             break

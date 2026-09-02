@@ -10,24 +10,13 @@ export const MODES = {
 
     // Mineflayer (cracked server) 
     MINEFLAYER: 'mineflayer',
-    MINEFLAYER_VTUBE: 'mineflayer-vtube',
-
-    // Survival autonomous loop
-    SURVIVAL: 'survival',
-    SURVIVAL_VTUBE: 'survival-vtube'
+    MINEFLAYER_VTUBE: 'mineflayer-vtube'
 }
 
 export function getModeFromEnv() {
     const mode = process.env.MODE || 'modded-bending'
     const vtube = process.env.VTS_ENABLED === 'true'
-    const isSurvival = process.env.SURVIVAL_MODE === 'true'
 
-    // If survival mode is enabled, use survival mode
-    if (isSurvival) {
-        return vtube ? MODES.SURVIVAL_VTUBE : MODES.SURVIVAL
-    }
-
-    // Otherwise use the specified mode
     if (vtube) {
         // Add -vtube suffix to the mode
         return `${mode}-vtube`
@@ -37,7 +26,7 @@ export function getModeFromEnv() {
 }
 
 export function isModdedMode(mode) {
-    return mode.startsWith('modded') || mode.startsWith('survival')
+    return mode.startsWith('modded')
 }
 
 export function isMineflayerMode(mode) {
@@ -49,11 +38,7 @@ export function hasVtubeSupport(mode) {
 }
 
 export function hasBending(mode) {
-    return mode.includes('bending') || mode === MODES.SURVIVAL || mode === MODES.SURVIVAL_VTUBE
-}
-
-export function isSurvivalMode(mode) {
-    return mode.startsWith('survival')
+    return mode.includes('bending') && !mode.includes('nobending')
 }
 
 export function getToolConfig(mode) {

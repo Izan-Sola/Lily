@@ -3,18 +3,16 @@
 import { createBot, ai } from "./bot.js"
 import { config } from "./utils/config.js"
 import { Logger } from "./utils/Logger.js"
-import { MODES, getModeFromEnv, isModdedMode, isMineflayerMode, hasVtubeSupport, isSurvivalMode } from "./startUtils.js"
+import { MODES, getModeFromEnv, isModdedMode, isMineflayerMode, hasVtubeSupport } from "./startUtils.js"
 
 const mode = getModeFromEnv()
 const hasVtube = hasVtubeSupport(mode)
 const isModded = isModdedMode(mode)
 const isMineflayer = isMineflayerMode(mode)
-const isSurvival = isSurvivalMode(mode)
 
 Logger.info(`Starting with mode: ${mode}`, "STARTUP")
 Logger.info(`  • VTube Studio: ${hasVtube ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Minecraft: ${isMineflayer ? 'Mineflayer' : isModded ? 'Modded (NeoForge)' : 'None'}`, "STARTUP")
-Logger.info(`  • Survival Loop: ${isSurvival ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 
 let vtsClient = null
 
@@ -65,8 +63,6 @@ async function startMinecraft() {
 }
 
 async function startSurvivalLoop(mcSend, mcChat, stateController) {
-    if (!isSurvival) return null
-
     const { startSurvivalLoop } = await import('./ai/survivalLoop.js')
     return startSurvivalLoop(
         stateController,
@@ -88,7 +84,7 @@ async function setupDiscordBot() {
 
         const mcBot = await startMinecraft()
 
-        if (isSurvival && mcBot) {
+        if (mcBot) {
             const { stateController, mcSend, mcChat } = mcBot
             const survivalLoop = await startSurvivalLoop(mcSend, mcChat, stateController)
 

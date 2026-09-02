@@ -7,6 +7,8 @@
 - Currently working on her being able to play survival minecraft decently.
 - Eventually I want her to have a vtuber model.
 
+### Current main WIPs: Vtuber studio functionality, finishing neoforge mc functionality, and finish the mineflayer port.
+
 #### current todos so i dont forget
 - ~~make break action actually require the correct tools and blocks drop correct item~~ DONE
 - ~~make so she can craft some stuff~~ DONE

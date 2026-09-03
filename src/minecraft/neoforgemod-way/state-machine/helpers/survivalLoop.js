@@ -51,11 +51,17 @@ function randomMsgDelay() {
 }
 
 // ─── Main Survival Loop ─────────────────────────────────────────────────────
-export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mode, vtsClient = null) {
+export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mode, vtsClient = null) {
     let nextMessageAt = Date.now() + randomMsgDelay()
 
     // Create router with all executors wired up
     const toolRouter = new ToolRouter(mcSend, () => stateController, vtsClient)
+
+    // VtubeToolExecutor starts with an empty expressionCache and nothing
+    // else in this call path ever calls refreshExpressions() for it - so
+    // trigger_expression would never show up even when VTS genuinely has
+    // hotkeys available. Populate it before we compute/log the tool list.
+    await toolRouter.refreshExpressions()
 
     // Get tools based on current mode
     const survivalTools = getToolsForMode(toolRouter, mode)
@@ -83,7 +89,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mo
         // Don't run if bot is busy
         const busyStates = ['MINING', 'ATTACKING', 'RECOVERING']
         if (busyStates.includes(stateController.currentStateName)) {
-            Logger.debug(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
+            Logger.info(`Skipping tick — busy in ${stateController.currentStateName}`, "SURVIVAL")
             return
         }
 
@@ -96,7 +102,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mo
         // Build the prompt
         const prompt = buildSurvivalPrompt(stateController, { allowMessage })
         if (!prompt) {
-            Logger.debug('No prompt generated, skipping tick', "SURVIVAL")
+            Logger.warning('No prompt generated, skipping tick', "SURVIVAL")
             return
         }
 
@@ -116,7 +122,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mo
                     model: process.env.OLLAMA_MODEL ?? "Lily",
                     stream: false,
                     messages,
-                    tools: survivalTools,
+                    tools: getToolsForMode(toolRouter, mode),
                     tool_choice: "auto",
                     temperature: parseFloat(process.env.SURVIVAL_TEMPERATURE ?? "0.4"),
                     max_tokens: parseInt(process.env.SURVIVAL_MAX_TOKENS ?? "512")
@@ -168,7 +174,7 @@ export function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mo
         } catch (err) {
             Logger.error(`AI error: ${err.message}`, "SURVIVAL")
             if (err.stack) {
-                Logger.debug(err.stack, "SURVIVAL")
+                Logger.error(err.stack, "SURVIVAL")
             }
         }
     }

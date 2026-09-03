@@ -40,7 +40,7 @@ async function initializeVTS() {
     if (!hasVtube) return null
 
     try {
-        const { VTSClient } = await import('./vtuber/VTSClient.js')
+        const { VTSClient } = await import('./vtubing/VTSClient.js')
         const client = new VTSClient({
             host: process.env.VTS_HOST || 'localhost',
             port: parseInt(process.env.VTS_PORT || '8001'),

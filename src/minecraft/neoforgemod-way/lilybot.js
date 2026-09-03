@@ -24,6 +24,7 @@ let ws = null
 let stateController = null
 let aiInstance = null
 let reconnectTimer = null
+let currentVtsClient = null
 
 let staticAbilities = {}
 
@@ -105,10 +106,11 @@ export function startMinecraftBot({ port, ai, vtsClient = null, mode = null }) {
 }
 
 function _connect(port, vtsClient) {
+    currentVtsClient = vtsClient
     wss = new WebSocketServer({ port })
     Logger.info(`WebSocket server listening on port ${port} (mode: ${currentMode})`, "MC")
 
-    wss.on("connection", (socket) => {
+    wss.on("connection", async (socket) => {
         ws = socket
         Logger.info("Java mod connected", "MC")
         clearTimeout(reconnectTimer)
@@ -136,7 +138,7 @@ function _connect(port, vtsClient) {
 
         // The survival loop always runs once the mod is connected - it's not a separate mode
         if (!survivalLoopStarted) {
-            const loop = startSurvivalLoop(
+            const loop = await startSurvivalLoop(
                 stateController,
                 mcSend,
                 mcChat,
@@ -421,12 +423,13 @@ async function _handleEvent(event) {
                 survivalLoopStarted = false
             }
 
-            const loop = startSurvivalLoop(
+            const loop = await startSurvivalLoop(
                 stateController,
                 mcSend,
                 mcChat,
                 process.env.OLLAMA_URL ?? "http://localhost:11435",
-                currentMode
+                currentMode,
+                currentVtsClient
             )
             if (loop) {
                 survivalLoopInstance = loop

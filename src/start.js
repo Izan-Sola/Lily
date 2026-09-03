@@ -56,7 +56,7 @@ async function startMinecraft() {
     if (backend === 'mineflayer') {
         const { startMinecraftBot } = await import('./minecraft/lily-mineflayer/index.js')
         return startMinecraftBot({
-            host: process.env.MC_SERVER_HOST ?? "infection.fun",
+            host: process.env.MC_SERVER_HOST ?? "localhost",
             port: parseInt(process.env.MC_SERVER_PORT ?? "25565"),
             username: process.env.MC_BOT_USERNAME ?? "SillyLily_",
             followTarget: process.env.MC_FOLLOW_TARGET ?? "shinyshadow_",

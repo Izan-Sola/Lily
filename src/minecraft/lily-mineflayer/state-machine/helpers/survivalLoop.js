@@ -54,13 +54,9 @@ function randomMsgDelay() {
 export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mode, vtsClient = null) {
     let nextMessageAt = Date.now() + randomMsgDelay()
 
-    // Create router with all executors wired up
+
     const toolRouter = new ToolRouter(mcSend, () => stateController, vtsClient)
 
-    // VtubeToolExecutor starts with an empty expressionCache and nothing
-    // else in this call path ever calls refreshExpressions() for it - so
-    // trigger_expression would never show up even when VTS genuinely has
-    // hotkeys available. Populate it before we compute/log the tool list.
     await toolRouter.refreshExpressions()
 
     // Get tools based on current mode

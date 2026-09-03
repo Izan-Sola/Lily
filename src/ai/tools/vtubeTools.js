@@ -3,14 +3,7 @@ import { ok, err } from './toolHelpers.js'
 
 const EXPRESSION_COOLDOWN_MS = 800
 
-// ─── Vtube Tool Executor ────────────────────────────────────────────────
-//
-// Wraps a persistent, already-authenticated VTSClient connection.
-// Deliberately independent of the chat-turn budget in chatTools.js and
-// the minecraft cooldowns in minecraftTools.js — expressions have their
-// own short cooldown and can fire alongside either domain (mining +
-// expression, chatting + expression, etc.) since ToolRouter always
-// exposes this executor's tool regardless of what else is active.
+
 class VtubeToolExecutor {
     constructor(vtsClient = null) {
         this.vts = vtsClient
@@ -18,9 +11,7 @@ class VtubeToolExecutor {
         this.lastTrigger = 0
     }
 
-    // Lily/index wiring calls this after the VTS connection is
-    // (re)established, or on a timer to pick up new hotkeys added in
-    // VTube Studio without restarting the process.
+   
     async refreshExpressions() {
         if (!this.vts) return
         try {

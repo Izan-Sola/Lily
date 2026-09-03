@@ -3,18 +3,35 @@
 import { createBot, ai } from "./bot.js"
 import { config } from "./utils/config.js"
 import { Logger } from "./utils/Logger.js"
-import { MODES, getModeFromEnv, isModdedMode, isMineflayerMode, hasVtubeSupport } from "./startUtils.js"
+import { parseFlags, getModeFromFlags, isModdedMode, isMineflayerMode, hasVtubeSupport } from "./startUtils.js"
 
-const mode = getModeFromEnv()
+const flags = parseFlags()
+
+let mode
+try {
+    mode = getModeFromFlags(flags)
+} catch (err) {
+    Logger.error(err.message, "STARTUP")
+    process.exit(1)
+}
+
 const hasVtube = hasVtubeSupport(mode)
 const isModded = isModdedMode(mode)
 const isMineflayer = isMineflayerMode(mode)
-const isNoDiscord = process.env.NO_DISCORD === 'true'
+const isDiscordEnabled = flags.has('discord')
 
-Logger.info(`Starting with mode: ${mode}`, "STARTUP")
-Logger.info(`  • Discord: ${isNoDiscord ? '❌ Disabled' : '✅ Enabled'}`, "STARTUP")
+if (flags.has('bending') && !isModded) {
+    Logger.warning("'bending' flag has no effect without 'modded' - ignoring", "STARTUP")
+}
+
+Logger.info(`Starting with flags: ${[...flags].join(', ') || '(none)'}`, "STARTUP")
+Logger.info(`  • Discord: ${isDiscordEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • VTube Studio: ${hasVtube ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Minecraft: ${isMineflayer ? 'Mineflayer' : isModded ? 'Modded (NeoForge)' : 'None'}`, "STARTUP")
+
+if (!isDiscordEnabled && !isModded && !isMineflayer) {
+    Logger.warning('No Discord and no Minecraft backend active - there is nothing for this process to do', "STARTUP")
+}
 
 let vtsClient = null
 let survivalLoopHandle = null
@@ -94,8 +111,8 @@ async function initializeFeatures() {
 }
 
 async function setupDiscordBot() {
-    if (isNoDiscord) {
-        Logger.info('Skipping Discord login (NO_DISCORD)', "STARTUP")
+    if (!isDiscordEnabled) {
+        Logger.info("'discord' flag not set - skipping Discord login", "STARTUP")
         await initializeFeatures()
         return null
     }

@@ -13,16 +13,43 @@ export const MODES = {
     MINEFLAYER_VTUBE: 'mineflayer-vtube'
 }
 
-export function getModeFromEnv() {
-    const mode = process.env.MODE || 'modded-bending'
-    const vtube = process.env.VTS_ENABLED === 'true'
+// The only flags the parser recognizes. Anything else on the command line
+// is ignored (so `node src/start.js modded discord` and `node src/start.js
+// discord modded` are identical - order never matters, only presence).
+const KNOWN_FLAGS = ['discord', 'modded', 'mineflayer', 'bending', 'vtube']
 
-    if (vtube) {
-        // Add -vtube suffix to the mode
-        return `${mode}-vtube`
+export function parseFlags(argv = process.argv.slice(2)) {
+    return new Set(
+        argv.map(f => f.toLowerCase()).filter(f => KNOWN_FLAGS.includes(f))
+    )
+}
+
+// Turns the flag set into the same internal mode string the rest of the
+// codebase already understands (isModdedMode / hasBending / etc. all just
+// look for substrings, so nothing downstream needs to change).
+export function getModeFromFlags(flags = parseFlags()) {
+    const isModded = flags.has('modded')
+    const isMineflayer = flags.has('mineflayer')
+
+    if (isModded && isMineflayer) {
+        throw new Error("Can't combine 'modded' and 'mineflayer' flags - they're alternate Minecraft backends, pick one")
+    }
+
+    let mode = isMineflayer ? 'mineflayer' : isModded ? 'modded' : 'discord'
+
+    if (isModded) {
+        mode += flags.has('bending') ? '-bending' : '-nobending'
+    }
+
+    if (flags.has('vtube')) {
+        mode += '-vtube'
     }
 
     return mode
+}
+
+export function isDiscordEnabled(flags = parseFlags()) {
+    return flags.has('discord')
 }
 
 export function isModdedMode(mode) {

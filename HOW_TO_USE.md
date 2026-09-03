@@ -52,20 +52,11 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 ### Start modes:
 
-- `npm run start:modded:bending` - Runs the bot with modded Minecraft (NeoForge), Discord functionalities, ProjectKorra bending abilities, and the autonomous survival loop.
-- `npm run start:modded:bending:nodiscord` - Same as above, but skips Discord entirely (no login attempt).
-- `npm run start:modded:bending:vtube` - Runs the bot with modded Minecraft (NeoForge), Discord functionalities, ProjectKorra bending, the autonomous survival loop, and VTube Studio integration for expression/emote triggers.
-- `npm run start:modded:bending:vtube:nodiscord` - Same as above, but skips Discord entirely (no login attempt).
-- `npm run start:modded:nobending` - Runs the bot with modded Minecraft (NeoForge), Discord functionalities, and the autonomous survival loop, but without ProjectKorra bending abilities.
-- `npm run start:modded:nobending:nodiscord` - Same as above, but skips Discord entirely (no login attempt).
-- `npm run start:modded:nobending:vtube` - Runs the bot with modded Minecraft (NeoForge), Discord functionalities, the autonomous survival loop, and VTube Studio integration, but without ProjectKorra bending.
-- `npm run start:modded:nobending:vtube:nodiscord` - Same as above, but skips Discord entirely (no login attempt).
-- `npm run start:mineflayer` - Runs the bot with Mineflayer (cracked/plugin-based Minecraft server) functionality and the autonomous survival loop.
-- `npm run start:mineflayer:nodiscord` - Same as above, but skips Discord entirely (no login attempt).
-- `npm run start:mineflayer:vtube` - Runs the bot with Mineflayer functionality, the autonomous survival loop, and VTube Studio integration.
-- `npm run start:mineflayer:vtube:nodiscord` - Same as above, but skips Discord entirely (no login attempt).
+- There's a bunch of flags you can combine to enable each functionality. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
 
-All modes are configured through a unified start file (`src/start.js`) that automatically loads the appropriate components based on the mode you choose. The system is designed to be modular - you can mix and match features by simply adding the corresponding flags to your start command.
+- All the available flags are : `modded`, `mineflayer`, `discord`, `bending` and `vtube`
+
+All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the mode you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
 
 > **Note:** Bending (ProjectKorra) functionality only works with the NeoForge modded Minecraft approach. Mineflayer mode does not currently support bending abilities.
 

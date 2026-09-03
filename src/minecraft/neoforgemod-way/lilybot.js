@@ -8,12 +8,12 @@ import { loadCombos, enrichCombosData } from './state-machine/helpers/comboExecu
 import { startSurvivalLoop } from './state-machine/helpers/survivalLoop.js'
 import axios from "axios"
 import { buildMinecraftSystemPrompt } from '../../ai/prompts.js'
-import { getModeFromEnv, hasBending } from '../../startUtils.js'
+import { getModeFromFlags, hasBending } from '../../startUtils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 let triggerSurvivalTick = null
-let currentMode = getModeFromEnv() // Use the unified mode system
+let currentMode = getModeFromFlags() // Use the unified mode system
 let survivalLoopStarted = false
 let survivalLoopInstance = null
 

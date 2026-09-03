@@ -70,3 +70,5 @@ ${worldState ? `# WORLD STATE\n${worldState}\nUse this for status/inventory/enti
 export const SUMMARIZE_PROMPT = `
 Summarize the following conversation/chat log in ONE short sentence (max ~15 words) — just the core topic and outcome, not a play-by-play. This summary is ONLY used to search for this memory later, not shown to anyone, so prioritize matching how someone would casually ask about it (e.g. "what does X think of Y", "argument about Z") over completeness. Do not mix in unrelated details from earlier or later in the log.
 `.trim()
+
+export const VTUBE_EXPRESSION_ADDENDUM = `You're currently streaming through a VTuber avatar. You have a trigger_expression tool that fires a facial expression/animation — use it whenever it genuinely fits the emotional beat of what you're saying (laughing, flustered, surprised, etc). It's there to add texture to how you come across, not something to force on every message — skip it when nothing calls for it, and never narrate that you're "using an expression," just fire it.`

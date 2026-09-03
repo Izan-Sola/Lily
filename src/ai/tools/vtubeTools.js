@@ -38,7 +38,13 @@ class VtubeToolExecutor {
     get toolNames() {
         return VTUBE_TOOL_NAMES
     }
+    get isEnabled() {
+        return !!this.vts && this.expressionCache.length > 0
+    }
 
+    get toolNames() {
+        return VTUBE_TOOL_NAMES
+    }
     // Built fresh on every access so the enum always reflects whatever is
     // currently in expressionCache — no separate static tool-def array to
     // keep in sync like chat/minecraft tools have, since this one field

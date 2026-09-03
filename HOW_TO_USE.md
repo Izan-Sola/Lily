@@ -56,7 +56,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - All the available flags are : `modded`, `mineflayer`, `discord`, `bending` and `vtube`
 
-All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the mode you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
+All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the flags you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
 
 > **Note:** Bending (ProjectKorra) functionality only works with the NeoForge modded Minecraft approach. Mineflayer mode does not currently support bending abilities.
 

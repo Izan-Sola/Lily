@@ -2,7 +2,7 @@ import axios from "axios"
 import { getStateController } from '../minecraft/neoforgemod-way/lilybot.js'
 import { sanitizeInput, ToolCallTracker } from './utils.js'
 import { ConversationHistory, RawBuffer } from './history.js'
-import { SYSTEM_PROMPT, SUMMARIZE_PROMPT } from './prompts.js'
+import { SYSTEM_PROMPT, SUMMARIZE_PROMPT, VTUBE_EXPRESSION_ADDENDUM } from './prompts.js'
 import { ToolRouter, ALL_TOOL_NAMES } from './tools/toolRouter.js'
 import { Logger } from '../../src/utils/Logger.js'
 import { saveFlawlessTurn } from './saveFlawlessTurns.js'
@@ -184,6 +184,11 @@ export class Lily {
     buildMessagesForOllama(channelId, systemPromptOverride = null, opts = {}) {
         const { skipHistory = false, skipRawContext = false, suppressActionReminder = false } = opts
         const messages = []
+
+        let systemContent = systemPromptOverride ?? SYSTEM_PROMPT
+        if (this.tools.vtubeEnabled) {
+            systemContent += `\n\n${VTUBE_EXPRESSION_ADDENDUM}`
+        }
 
         messages.push({ role: "system", content: systemPromptOverride ?? SYSTEM_PROMPT })
 

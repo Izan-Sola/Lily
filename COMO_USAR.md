@@ -56,7 +56,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - Todas las flags disponibles son: `modded`, `mineflayer`, `discord`, `bending` y `vtube`.
 
-Todos los modos se configuran a través de un archivo de inicio unificado (`src/start.js`) que carga automáticamente cada funcionalidad según el modo que elijas. El cerebro está diseñado para ser modular, así que puedes combinar funcionalidades a tu gusto añadiendo las flags correspondientes al comando `start`.
+Todos los modos se configuran a través de un archivo de inicio unificado (`src/start.js`) que carga automáticamente cada funcionalidad según las flags que elijas. El cerebro está diseñado para ser modular, así que puedes combinar funcionalidades a tu gusto añadiendo las flags correspondientes al comando `start`.
 
 > **Nota:** La funcionalidad de bending (ProjectKorra) solo funciona con el enfoque de Minecraft modded en NeoForge. El modo Mineflayer actualmente no soporta habilidades de bending.
 

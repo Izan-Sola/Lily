@@ -23,6 +23,7 @@ import { Logger } from "./utils/Logger.js"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const execAsync = promisify(exec)
+import { VTSClient } from "./vtubing/VTSClient.js"
 
 export const ai = new Lily({ model: config.modelName })
 
@@ -507,8 +508,33 @@ export async function createBot() {
 
     client.once("clientReady", async () => {
         await initLogChannel(client)
-    })
 
+        const vts = new VTSClient()
+        connectVts(vts)
+    })
+    async function connectVts(vts, retryMs = 5000) {
+        try {
+            await vts.connect()
+            ai.setVtsClient(vts)
+            await ai.tools.refreshExpressions()
+            Logger.success("VTube Studio connected, expressions loaded", "VTUBE")
+
+            // Pick up hotkeys added/renamed in VTS without a reconnect
+            setInterval(() => ai.tools.refreshExpressions(), 60_000)
+
+            // If VTS closes (app restarted, etc.), null out the client so
+            // trigger_expression fails cleanly instead of hanging on a dead
+            // socket, and keep retrying in the background.
+            vts.ws?.once("close", () => {
+                Logger.warning("VTube Studio disconnected, retrying...", "VTUBE")
+                ai.setVtsClient(null)
+                setTimeout(() => connectVts(new VTSClient(), retryMs), retryMs)
+            })
+        } catch (err) {
+            Logger.warning(`VTube Studio not available yet (${err.message}), retrying in ${retryMs}ms`, "VTUBE")
+            setTimeout(() => connectVts(vts, retryMs), retryMs)
+        }
+    }
     client.commands = new Collection()
 
     const commandsPath = path.join(__dirname, "commands")

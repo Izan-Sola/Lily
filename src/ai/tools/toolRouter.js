@@ -78,7 +78,9 @@ class ToolRouter {
     refreshExpressions() {
         return this.vtube.refreshExpressions()
     }
-
+    get vtubeEnabled() {
+        return this.vtube.isEnabled
+    }
     // ─── Turn/flaw state — owned by chat, forwarded 1:1 ─────────────────
     // Minecraft and vtube tools don't have their own turn concept (they're
     // gated by per-action cooldowns instead), so all turn/flawless

@@ -24,6 +24,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const execAsync = promisify(exec)
 import { VTSClient } from "./vtubing/VTSClient.js"
+import { isVtubeEnabled } from "./startUtils.js"
 
 export const ai = new Lily({ model: config.modelName })
 
@@ -513,6 +514,7 @@ export async function createBot() {
         connectVts(vts)
     })
     async function connectVts(vts, retryMs = 5000) {
+        if (!isVtubeEnabled()) return
         try {
             await vts.connect()
             ai.setVtsClient(vts)

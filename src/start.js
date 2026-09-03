@@ -1,35 +1,30 @@
-#!/usr/bin/env node
-
-import { createBot, ai } from "./bot.js"
+import { createBot, ai } from "./discord/bot.js"
 import { config } from "./utils/config.js"
 import { Logger } from "./utils/Logger.js"
-import { parseFlags, getModeFromFlags, isModdedMode, isMineflayerMode, hasVtubeSupport } from "./startUtils.js"
+import { parseFlags, getConfigFromFlags, describeConfig, isVtubeEnabled, isModdedEnabled, isMineflayerEnabled } from "./startUtils.js"
 
 const flags = parseFlags()
 
-let mode
+let runConfig
 try {
-    mode = getModeFromFlags(flags)
+    runConfig = getConfigFromFlags(flags)
 } catch (err) {
     Logger.error(err.message, "STARTUP")
     process.exit(1)
 }
 
-const hasVtube = hasVtubeSupport(mode)
-const isModded = isModdedMode(mode)
-const isMineflayer = isMineflayerMode(mode)
-const isDiscordEnabled = flags.has('discord')
+const { backend, vtube, discord: isDiscordEnabled } = runConfig
 
-if (flags.has('bending') && !isModded) {
+if (flags.has('bending') && backend !== 'modded') {
     Logger.warning("'bending' flag has no effect without 'modded' - ignoring", "STARTUP")
 }
 
 Logger.info(`Starting with flags: ${[...flags].join(', ') || '(none)'}`, "STARTUP")
 Logger.info(`  • Discord: ${isDiscordEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
-Logger.info(`  • VTube Studio: ${hasVtube ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
-Logger.info(`  • Minecraft: ${isMineflayer ? 'Mineflayer' : isModded ? 'Modded (NeoForge)' : 'None'}`, "STARTUP")
+Logger.info(`  • VTube Studio: ${vtube ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
+Logger.info(`  • Minecraft: ${backend === 'mineflayer' ? 'Mineflayer' : backend === 'modded' ? 'Modded (NeoForge)' : 'None'}`, "STARTUP")
 
-if (!isDiscordEnabled && !isModded && !isMineflayer) {
+if (!isDiscordEnabled && !backend) {
     Logger.warning('No Discord and no Minecraft backend active - there is nothing for this process to do', "STARTUP")
 }
 
@@ -37,7 +32,7 @@ let vtsClient = null
 let survivalLoopHandle = null
 
 async function initializeVTS() {
-    if (!hasVtube) return null
+    if (!vtube) return null
 
     try {
         const { VTSClient } = await import('./vtubing/VTSClient.js')
@@ -58,7 +53,7 @@ async function initializeVTS() {
 }
 
 async function startMinecraft() {
-    if (isMineflayer) {
+    if (backend === 'mineflayer') {
         const { startMinecraftBot } = await import('./minecraft/lily-mineflayer/index.js')
         return startMinecraftBot({
             host: process.env.MC_SERVER_HOST ?? "infection.fun",
@@ -67,29 +62,34 @@ async function startMinecraft() {
             followTarget: process.env.MC_FOLLOW_TARGET ?? "shinyshadow_",
             ai,
             vtsClient,
-            mode
+            runConfig
         })
-    } else if (isModded) {
+    } else if (backend === 'modded') {
         const { startMinecraftBot } = await import('./minecraft/neoforgemod-way/lilybot.js')
         return startMinecraftBot({
             host: process.env.MC_BRIDGE_HOST ?? "localhost",
             port: parseInt(process.env.MC_BRIDGE_PORT ?? "8766"),
             ai,
             vtsClient,
-            mode
+            runConfig
         })
     }
     return null
 }
 
 async function startSurvivalLoop(mcSend, mcChat, stateController) {
-    const { startSurvivalLoop } = await import('./ai/survivalLoop.js')
+    if (isMineflayerEnabled()) {
+        const { startSurvivalLoop } = await import('./minecraft/lily-mineflayer/state-machine/helpers/survivalLoop.js')
+    } else if (isModdedEnabled()) {
+        const { startSurvivalLoop } = await import('./minecraft/neoforgemod-way/state-machine/helpers/survivalLoop.js')
+    } else return
+  
     return startSurvivalLoop(
         stateController,
         mcSend,
         mcChat,
         process.env.OLLAMA_URL ?? "http://localhost:11435",
-        mode,
+        runConfig,
         vtsClient
     )
 }

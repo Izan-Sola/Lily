@@ -1,17 +1,16 @@
-// Mode definitions - what we actually support
-export const MODES = {
-    // Modded Minecraft with ProjectKorra bending
-    MODDED_BENDING: 'modded-bending',
-    MODDED_BENDING_VTUBE: 'modded-bending-vtube',
-
-    // Modded Minecraft without bending
-    MODDED_NOBENDING: 'modded-nobending',
-    MODDED_NOBENDING_VTUBE: 'modded-nobending-vtube',
-
-    // Mineflayer (cracked server) 
-    MINEFLAYER: 'mineflayer',
-    MINEFLAYER_VTUBE: 'mineflayer-vtube'
-}
+// startUtils.js
+//
+// Flag parsing + a single config object derived from them. No mode
+// strings anywhere internally - every caller reads booleans/backend name
+// directly off the object getConfigFromFlags() returns, instead of
+// re-parsing a string with startsWith/endsWith/includes.
+//
+// NOTE: the old MODES enum, getModeFromFlags, isModdedMode,
+// isMineflayerMode, hasVtubeSupport, and hasBending(modeString) have all
+// been removed. Anything still importing those names will now fail to
+// import - that's intentional, grep for them and update the call site to
+// read the equivalent field off the config object instead of adding the
+// old functions back.
 
 // The only flags the parser recognizes. Anything else on the command line
 // is ignored (so `node src/start.js modded discord` and `node src/start.js
@@ -24,10 +23,16 @@ export function parseFlags(argv = process.argv.slice(2)) {
     )
 }
 
-// Turns the flag set into the same internal mode string the rest of the
-// codebase already understands (isModdedMode / hasBending / etc. all just
-// look for substrings, so nothing downstream needs to change).
-export function getModeFromFlags(flags = parseFlags()) {
+// The single source of truth for "what is this process configured to do".
+//
+// backend is null when neither 'modded' nor 'mineflayer' is set - NOT the
+// string 'discord'. The old code conflated "no Minecraft backend" with
+// the *unrelated* `discord` flag (whether the Discord bot logs in at
+// all) by reusing the string 'discord' for both. Those are independent:
+// you can run modded MC with no Discord bot, or a Discord-only bot with
+// no MC backend at all. Keeping backend===null for the latter case avoids
+// that collision.
+export function getConfigFromFlags(flags = parseFlags()) {
     const isModded = flags.has('modded')
     const isMineflayer = flags.has('mineflayer')
 
@@ -35,44 +40,44 @@ export function getModeFromFlags(flags = parseFlags()) {
         throw new Error("Can't combine 'modded' and 'mineflayer' flags - they're alternate Minecraft backends, pick one")
     }
 
-    let mode = isMineflayer ? 'mineflayer' : isModded ? 'modded' : 'discord'
-
-    if (isModded) {
-        mode += flags.has('bending') ? '-bending' : '-nobending'
+    return {
+        backend: isMineflayer ? 'mineflayer' : isModded ? 'modded' : null,
+        bending: isModded && flags.has('bending'),
+        vtube: flags.has('vtube'),
+        discord: flags.has('discord'),
     }
+}
 
-    if (flags.has('vtube')) {
-        mode += '-vtube'
-    }
-
-    return mode
+// Cosmetic only - for log lines where you want a single human-readable
+// label. Never branch on this string; read the config object's fields
+// directly instead, the way describeConfig itself does.
+export function describeConfig(config) {
+    let label = config.backend ?? 'discord-only'
+    if (config.bending) label += '-bending'
+    if (config.vtube) label += '-vtube'
+    return label
 }
 
 export function isDiscordEnabled(flags = parseFlags()) {
     return flags.has('discord')
 }
 
-export function isModdedMode(mode) {
-    return mode.startsWith('modded')
+export function isVtubeEnabled(flags = parseFlags()) {
+    return flags.has('vtube')
 }
-
-export function isMineflayerMode(mode) {
-    return mode.startsWith('mineflayer')
+export function isMineflayerEnabled(flags = parseFlags()) {
+    return flags.has('mineflayer')
 }
-
-export function hasVtubeSupport(mode) {
-    return mode.endsWith('-vtube')
+export function isModdedEnabled(flags = parseFlags()) {
+    return flags.has('modded')
 }
-
-export function hasBending(mode) {
-    return mode.includes('bending') && !mode.includes('nobending')
-}
-
-export function getToolConfig(mode) {
+// Tool-config derivation for the survival loop / AI layer - takes the
+// same config object everything else now uses, not a mode string.
+export function getToolConfig(runConfig) {
     return {
         includeMinecraft: true,
-        includeVtube: hasVtubeSupport(mode),
-        includeBending: hasBending(mode),
+        includeVtube: runConfig.vtube,
+        includeBending: runConfig.bending,
         includeChat: false // Survival loop doesn't need chat tools
     }
 }

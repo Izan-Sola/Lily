@@ -8,16 +8,16 @@ import { loadCombos, enrichCombosData } from './state-machine/helpers/comboExecu
 import { startSurvivalLoop } from './state-machine/helpers/survivalLoop.js'
 import axios from "axios"
 import { buildMinecraftSystemPrompt } from '../../ai/prompts.js'
-import { getModeFromFlags, hasBending } from '../../startUtils.js'
+import { getConfigFromFlags, describeConfig } from '../../startUtils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 let triggerSurvivalTick = null
-let currentMode = getModeFromFlags() // Use the unified mode system
+let currentConfig = getConfigFromFlags() // Use the unified config system
 let survivalLoopStarted = false
 let survivalLoopInstance = null
 
-export const getMode = () => currentMode
+export const getConfig = () => currentConfig
 
 let wss = null
 let ws = null
@@ -85,16 +85,16 @@ function requestAbilityData() {
     mcSend('request_ability_data')
 }
 
-export function startMinecraftBot({ port, ai, vtsClient = null, mode = null }) {
+export function startMinecraftBot({ port, ai, vtsClient = null, runConfig = null }) {
     aiInstance = ai
 
-    // Use provided mode or fallback to current mode
-    if (mode) {
-        currentMode = mode
+    // Use provided config or fallback to current config
+    if (runConfig) {
+        currentConfig = runConfig
     }
 
-    // Check if we're in a mode that supports bending
-    const bendingEnabled = hasBending(currentMode)
+    // Check if we're in a config that supports bending
+    const bendingEnabled = currentConfig.bending
 
     if (bendingEnabled) {
         loadCombos()
@@ -108,7 +108,7 @@ export function startMinecraftBot({ port, ai, vtsClient = null, mode = null }) {
 function _connect(port, vtsClient) {
     currentVtsClient = vtsClient
     wss = new WebSocketServer({ port })
-    Logger.info(`WebSocket server listening on port ${port} (mode: ${currentMode})`, "MC")
+    Logger.info(`WebSocket server listening on port ${port} (config: ${describeConfig(currentConfig)})`, "MC")
 
     wss.on("connection", async (socket) => {
         ws = socket
@@ -125,14 +125,14 @@ function _connect(port, vtsClient) {
                 ai: aiInstance
             })
 
-            if (hasBending(currentMode)) {
+            if (currentConfig.bending) {
                 stateController.updateAbilityStats(staticAbilities)
             }
         }
         stateController.start()
 
         // Request ability data if bending is enabled
-        if (hasBending(currentMode)) {
+        if (currentConfig.bending) {
             requestAbilityData()
         }
 
@@ -143,7 +143,7 @@ function _connect(port, vtsClient) {
                 mcSend,
                 mcChat,
                 process.env.OLLAMA_URL ?? "http://localhost:11435",
-                currentMode,
+                currentConfig,
                 vtsClient
             )
 
@@ -399,14 +399,29 @@ async function _handleEvent(event) {
         }
 
         case "set_mode": {
-            // Handle mode switching at runtime
-            const newMode = event.mode
-            const bendingEnabled = hasBending(newMode)
+            // The Java mod sends `event.mode` as a raw string over its own
+            // wire protocol - that's a different boundary than our CLI
+            // flags, and not something this file controls, so a string
+            // arriving here isn't the same bug as the old internal
+            // mode-string plumbing. It only ever toggles bending at
+            // runtime (the mod can't change backend or vtube - those are
+            // process-launch-time only), so this reads just that one bit
+            // out of the wire string rather than resurrecting the old
+            // hasBending(modeString) helper.
+            //
+            // NOTE: if the Java mod can be changed to send a boolean
+            // (e.g. { type: "set_mode", bending: true }) instead of a
+            // mode-suffix string, that removes the last string-parsing
+            // spot in this file. Flagging rather than silently guessing
+            // your mod's wire format.
+            const newBending = typeof event.mode === 'string'
+                && event.mode.includes('bending')
+                && !event.mode.includes('nobending')
 
-            currentMode = newMode
-            Logger.info(`Mode switched to ${currentMode}`, "MC")
+            currentConfig = { ...currentConfig, bending: newBending }
+            Logger.info(`Mode switched (config: ${describeConfig(currentConfig)})`, "MC")
 
-            if (bendingEnabled) {
+            if (newBending) {
                 loadCombos()
                 loadStaticAbilityData()
                 if (stateController) {
@@ -415,8 +430,8 @@ async function _handleEvent(event) {
                 }
             }
 
-            // Restart the survival loop so it picks up the new mode's tool config
-            // (e.g. bending on/off, vtube on/off change which tools it should have)
+            // Restart the survival loop so it picks up the new config's tool
+            // set (e.g. bending on/off changes which tools it should have)
             if (survivalLoopInstance) {
                 survivalLoopInstance.stop?.()
                 survivalLoopInstance = null
@@ -428,7 +443,7 @@ async function _handleEvent(event) {
                 mcSend,
                 mcChat,
                 process.env.OLLAMA_URL ?? "http://localhost:11435",
-                currentMode,
+                currentConfig,
                 currentVtsClient
             )
             if (loop) {

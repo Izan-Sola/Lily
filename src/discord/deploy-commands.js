@@ -3,18 +3,18 @@ const { REST, Routes } = pkg
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
-import { config } from "./src/utils/config.js"
-import { Logger } from "./src/utils/Logger.js"
+import { config } from "../utils/config.js"
+import { Logger } from "../utils/Logger.js"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const deploy = async () => {
-    const commandsPath = path.join(__dirname, "src/commands")
+    const commandsPath = path.join(__dirname, "/commands")
     const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js"))
     const commands = []
 
     for (const file of commandFiles) {
-        const command = await import(`./src/commands/${file}`)
+        const command = await import(`./commands/${file}`)
         commands.push(command.data.toJSON())
         Logger.info(`Loaded command: ${command.data.name}`, "SLASH COMMANDS")
     }

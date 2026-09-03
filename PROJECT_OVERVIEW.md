@@ -1,26 +1,27 @@
-# Lily - Overview 
+# Lily - Overview
+
 ###### Last edit: September 2026 (unfinished)
 
 ## Index
 
-- [Lily - Overview](#lily---overview)
-          - [Last edit: September 2026 (unfinished)](#last-edit-september-2026-unfinished)
-  - [Index](#index)
-  - [Main systems](#main-systems)
-    - [Tools](#tools)
-          - [`src/ai/tools/`](#srcaitools)
-    - [Modularity](#modularity)
-    - [Automatic training data generation](#automatic-training-data-generation)
-  - [Main functionalities](#main-functionalities)
-    - [Discord](#discord)
-          - [`src/discord/`](#srcdiscord)
-      - [Features:](#features)
-      - [Commands:](#commands)
+- [Main Systems](#main-systems)
+
+  - [Tools](#tools)
+    - [Tool executors](#tool-executors)
+
+  - [Modularity](#modularity)
+
+  - [Automatic training data generation](#automatic-training-data-generation)
+
+- [Main functionalities](#main-functionalities)
+
+- [Other functionalities](#other-functionalities)
+<br>
 
 ## Main systems
 
+### Tools
 
-### Tools 
 ###### `src/ai/tools/`
 
 - Each main functionality has its own `ToolExecutor` which contains the tool definitions for that specific functionality, its own code logic, and tool functions. Combining functionalities will make each's executor tools available globally. Note that some tools might be filtered in certains part of the code depending on the source of the user message to avoid misuse.
@@ -35,7 +36,6 @@
 
   - **`VtubeToolExecutor`**: Contains all the tools related to vtubing. Triggering expressions, etc... If the `vtube` flag is used, this executor will be enabled.
 
-
 ### Modularity
 
 - The brain contains many functionalities, but not all need to be active at the same time. By mixing different flags such as `discord`, `modded`, `vtube` etc... You can choose to enable the functionalities you are actually going to use, anything else will not be enabled.
@@ -43,7 +43,6 @@
 - The `start.js` file handles the brain initiation, checking the flags that were used and enabling each correspondent functionality.
 
 - `startUtils.js` contains a bunch of helper functions to check which modes are enabled or which tools to use.
-
 
 ### Automatic training data generation
 
@@ -56,40 +55,31 @@
 
 ###### `src/discord/`
 
+- The main file is `discordBot.js`, containing all the logic for the discord bot functionality. Handling replies, voice calls, media...
 
-  - The main file is `discordBot.js`, containing all the logic for the discord bot functionality. Handling replies, voice calls, media...
+#### Features
 
+- Will respond to messages when pinged or replied to.
+- Has a very small chance to butt-in and reply to someone when not directly addressed.
+- Can send gifs and memes.
+- Can see images sent and videos (just a few frames here and there).
+- Can send audios and join calls.
 
-#### Features:
+#### Commands
 
-  - Will respond to messages when pinged or replied to.
-  - Has a very small chance to butt-in and reply to someone when not directly addressed.
-  - Can send gifs and memes.
-  - Can see images sent and videos (just a few frames here and there).
-  - Can send audios and join calls.
+- **/aboutlily**: Displays information about Lily
+- **/lilyprefs**: Adjust your preferences such as, disabling pings, voice processing (she wont listen to you in voice calls), disabling spontaneous replies to your messages...
+- **/voice join/leave**: To make her join or leave a voice channel.
+- **/audiolily**: To make her respond with an audio message.
 
-  #### Commands:
+### Minecraft
 
-  - **/aboutlily**: Displays information about Lily
-  - **/lilyprefs**: Adjust your preferences such as, disabling pings, voice processing (she wont listen to you in voice calls), disabling spontaneous replies to your messages...
-  - **/voice join/leave**: To make her join or leave a voice channel.
-  - **/audiolily**: To make her respond with an audio message.
+### Vtubing
 
+### VRChat (currently unwired)
 
+## Other functionalities
 
+### VSC Integration
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### Pi dev

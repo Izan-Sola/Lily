@@ -67,6 +67,7 @@ Todos los modos se configuran a través de un archivo de inicio unificado (`src/
 ### Configuración de la app de Discord:
 
 * Vas a necesitar registrarte en el developer portal https://discord.com/developers/home
+* Necesitarás ejectuar `node run deploy` para aplicar todos los comands globalmente.
 * Vas a necesitar añadir 2 variables de entorno:
 
   * **DISCORD_TOKEN**: El token secreto de tu aplicación, que se encuentra en la pestaña OAuth2 de tu aplicación.

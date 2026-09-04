@@ -47,7 +47,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 ```
 * Ofc you can change/add/remove any flags, and ofc you should change the model path.
 
-* You can browse models in [Ollama's site](https://ollama.com/) and [Huggingface's](https://huggingface.co/models).
+* You can browse models in [Huggingface](https://huggingface.co/models).
 * Remember to change the system prompts inside **src/ai/prompts.js**.
 
 ### Start modes:

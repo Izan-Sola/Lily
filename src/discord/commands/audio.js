@@ -8,7 +8,7 @@ import fs from "fs"
 const ai = new Lily(config.modelName)
 
 export const data = new SlashCommandBuilder()
-    .setName("audiolily")
+    .setName("audio")
     .setDescription("Ask Lily something and she'll respond with her voice! (will take sum time)")
     .addStringOption(option =>
         option

@@ -2,20 +2,31 @@
 
 ###### Last edit: September 2026 (unfinished)
 
-# Index
+# Lily's brain - Index
 
 - [Main Systems](#main-systems)
-
   - [Tools](#tools)
     - [Tool executors](#tool-executors)
-
   - [Modularity](#modularity)
-
   - [Automatic training data generation](#automatic-training-data-generation)
 
-- [Main functionalities](#main-functionalities)
+- [Main Functionalities](#main-functionalities)
+  - [Discord](#discord)
+    - [Features](#features)
+    - [Commands](#commands)
+  - [Minecraft](#minecraft)
+    - [Neoforge (Arclight server)](#neoforge-arclight-server)
+      - [State Machine](#state-machine)
+        - [States](#states)
+        - [Helpers](#helpers)
+      - [Prompt Builders](#prompt-builders)
+    - [Mineflayer (wip)](#mineflayer-wip)
+  - [Vtubing (early wip)](#vtubing-early-wip)
+  - [VRChat (currently unwired)](#vrchat-currently-unwired)
 
-- [Other functionalities](#other-functionalities)
+- [Other Functionalities](#other-functionalities)
+  - [VSC Integration](#vsc-integration)
+  - [Pi dev](#pi-dev)
 <br>
 
 # Main systems
@@ -124,8 +135,13 @@
     - **"look:<dir>:<deg>"**: Offsets look direction. Blocking.
     - **"stop"**: Stops movement for the duration of the action. Blocking.
 
+  - "actionsTime": The time in ms that each action takes. Note that if an action is specified to executed more than once using :N, then you will have to specifiy an action time for each.
+  
 > Blocking means the queue of actions will be paused until the current action finishes. Non-blocking means the queue will continue to be drained while the current action is being executed.
 
+
+- **Prompt Builders** (`prompt-builders/`):
+  
 ### Mineflayer (wip)
 
 

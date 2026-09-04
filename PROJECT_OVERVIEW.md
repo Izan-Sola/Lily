@@ -74,6 +74,21 @@
 
 ### Minecraft
 
+#### Neoforge (Arclight server)
+
+###### `src/ai/minecraft/neoforgemod-way/`
+
+##### State Machine
+
+###### `src/ai/minecraft/neoforgemod-way/state-machine
+
+- The way the bot's state is managed is via a "state machine". The main file is `StateController.js` which contains a bunch of helper functions, ticks the current state, dispatches in-game actions and updates live in-game data.
+
+
+
+#### Mineflayer (wip)
+
+
 ### Vtubing (early wip)
 
 ### VRChat (currently unwired)

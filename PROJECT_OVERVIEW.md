@@ -2,7 +2,7 @@
 
 ###### Last edit: September 2026 (unfinished)
 
-## Index
+# Index
 
 - [Main Systems](#main-systems)
 
@@ -18,9 +18,9 @@
 - [Other functionalities](#other-functionalities)
 <br>
 
-## Main systems
+# Main systems
 
-### Tools
+## Tools
 
 ###### `src/ai/tools/`
 
@@ -36,7 +36,7 @@
 
   - **`VtubeToolExecutor`**: Contains all the tools related to vtubing. Triggering expressions, etc... If the `vtube` flag is used, this executor will be enabled.
 
-### Modularity
+## Modularity
 
 - The brain contains many functionalities, but not all need to be active at the same time. By mixing different flags such as `discord`, `modded`, `vtube` etc... You can choose to enable the functionalities you are actually going to use, anything else will not be enabled.
 
@@ -44,20 +44,20 @@
 
 - `startUtils.js` contains a bunch of helper functions to check which modes are enabled or which tools to use.
 
-### Automatic training data generation
+## Automatic training data generation
 
 - The brain inlcudes a system (`saveFlawlessTurns.js`) to automatically records as many flawless turns as configurated in the `config.json` "trainingTurnWindow", and saves the entire conversation in ShareGPT format into a file named `pending_review.jsonl` to review and use as training data for finetuning. Flawless turns are such turns that execute without a single error or warning caused by the AI messing up. If a turn is not flawless, the entire conversation is dropped, and the count is restarted.
 <br>
 
-## Main functionalities
+# Main functionalities
 
-### Discord
+## Discord
 
 ###### `src/discord/`
 
 - The main file is `discordBot.js`, containing all the logic for the discord bot functionality. Handling replies, voice calls, media...
 
-#### Features
+### Features
 
 - Will respond to messages when pinged or replied to.
 - Has a very small chance to butt-in and reply to someone when not directly addressed.
@@ -65,20 +65,20 @@
 - Can see images sent and videos (just a few frames here and there).
 - Can send audios and join calls.
 
-#### Commands
+### Commands
 
 - **/about**: Displays information about the bot, see `src/discord/commands/about.js` to change the information.
 - **/preferences**: Adjust your preferences such as, disabling pings, voice processing (she wont listen to you in voice calls), disabling spontaneous replies to your messages...
 - **/voice join/leave**: To make her join or leave a voice channel.
 - **/audio**: To make her respond with an audio message.
 
-### Minecraft
+## Minecraft
 
-#### Neoforge (Arclight server)
+### Neoforge (Arclight server)
 
 ###### `src/ai/minecraft/neoforgemod-way/`
 
-##### State Machine
+#### State Machine
 
 ###### `src/ai/minecraft/neoforgemod-way/state-machine
 
@@ -86,15 +86,15 @@
 
 
 
-#### Mineflayer (wip)
+### Mineflayer (wip)
 
 
-### Vtubing (early wip)
+## Vtubing (early wip)
 
-### VRChat (currently unwired)
+## VRChat (currently unwired)
 
-## Other functionalities
+# Other functionalities
 
-### VSC Integration
+## VSC Integration
 
-### Pi dev
+## Pi dev

@@ -1,4 +1,4 @@
-# Lily - Overview
+# Lily's brain - Overview
 
 ###### Last edit: September 2026 (unfinished)
 
@@ -67,7 +67,7 @@
 
 #### Commands
 
-- **/aboutlily**: Displays information about Lily
+- **/aboutlily**: Displays information about the bot, see `src/discord/commands/about.js` to change the information.
 - **/lilyprefs**: Adjust your preferences such as, disabling pings, voice processing (she wont listen to you in voice calls), disabling spontaneous replies to your messages...
 - **/voice join/leave**: To make her join or leave a voice channel.
 - **/audiolily**: To make her respond with an audio message.

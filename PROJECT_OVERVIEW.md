@@ -2,7 +2,7 @@
 
 ###### Last edit: September 2026 (unfinished)
 
-# Lily's brain - Index
+# Index
 
 - [Main Systems](#main-systems)
   - [Tools](#tools)

@@ -129,7 +129,7 @@
 
   - **`comboExecutor.js`**: Handles executing the array of abilities returned by the AI when prompted in the dueling state. `data/` Contains all the data of the server's current abilities and all the required manually-inputted information to properly executed them. Example:
 
-          ```json
+      ```json
           {
               "name": "FireKick",
               "description": "[ATTACK] close range.",
@@ -139,7 +139,7 @@
               "range": 10,
               "actionsTime": [ 100, 250, 250, 400, 250]
           },                
-          ```
+      ```
 
   - **"bindsRequired"**: For combos only, is an array containig all the abilities required for the AI to have binded to execute the combo.
   - **"actions"**: It is the list of actions that need to be executed to perform the ability or combo, with a concrete format:

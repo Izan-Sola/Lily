@@ -14,7 +14,7 @@
     
   - [Automatic training data generation](#automatic-training-data-generation)
 
-- [Main Functionalities](#main-functionalities
+- [Main Functionalities](#main-functionalities)
   
   - [Discord](#discord)
     
@@ -40,7 +40,7 @@
     
   - [VRChat (currently unwired)](#vrchat-currently-unwired)
 
-- [Other Functionalities](#other-functionalities
+- [Other Functionalities](#other-functionalities)
   
   - [VSC Integration](#vsc-integration)
     

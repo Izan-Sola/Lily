@@ -1,5 +1,5 @@
 import axios from "axios"
-import { getStateController } from '../minecraft/neoforgemod-way/lilybot.js'
+import { getStateController } from '../minecraft/neoforgemod-way/bot.js'
 import { sanitizeInput, ToolCallTracker } from './utils.js'
 import { ConversationHistory, RawBuffer } from './history.js'
 import { SYSTEM_PROMPT, SUMMARIZE_PROMPT, VTUBE_EXPRESSION_ADDENDUM } from './prompts.js'

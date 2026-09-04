@@ -54,7 +54,7 @@ async function initializeVTS() {
 
 async function startMinecraft() {
     if (backend === 'mineflayer') {
-        const { startMinecraftBot } = await import('./minecraft/lily-mineflayer/index.js')
+        const { startMinecraftBot } = await import('./minecraft/mineflayer/index.js')
         return startMinecraftBot({
             host: process.env.MC_SERVER_HOST ?? "localhost",
             port: parseInt(process.env.MC_SERVER_PORT ?? "25565"),
@@ -65,7 +65,7 @@ async function startMinecraft() {
             runConfig
         })
     } else if (backend === 'modded') {
-        const { startMinecraftBot } = await import('./minecraft/neoforgemod-way/lilybot.js')
+        const { startMinecraftBot } = await import('./minecraft/neoforgemod-way/bot.js')
         return startMinecraftBot({
             host: process.env.MC_BRIDGE_HOST ?? "localhost",
             port: parseInt(process.env.MC_BRIDGE_PORT ?? "8766"),
@@ -79,7 +79,7 @@ async function startMinecraft() {
 
 async function startSurvivalLoop(mcSend, mcChat, stateController) {
     if (isMineflayerEnabled()) {
-        const { startSurvivalLoop } = await import('./minecraft/lily-mineflayer/state-machine/helpers/survivalLoop.js')
+        const { startSurvivalLoop } = await import('./minecraft/mineflayer/state-machine/helpers/survivalLoop.js')
     } else if (isModdedEnabled()) {
         const { startSurvivalLoop } = await import('./minecraft/neoforgemod-way/state-machine/helpers/survivalLoop.js')
     } else return

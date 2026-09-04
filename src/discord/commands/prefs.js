@@ -2,7 +2,7 @@ import { SlashCommandBuilder } from "discord.js"
 import { getPrefs, setPrefs } from "../../utils/userPreferences.js"
 
 export const data = new SlashCommandBuilder()
-    .setName("lilyprefs")
+    .setName("preferences")
     .setDescription("Manage your personal Lily preferences")
     .addSubcommand(sub =>
         sub.setName("spontaneous")

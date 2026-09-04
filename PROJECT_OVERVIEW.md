@@ -5,27 +5,45 @@
 # Index
 
 - [Main Systems](#main-systems)
+  
   - [Tools](#tools)
+    
     - [Tool executors](#tool-executors)
+      
   - [Modularity](#modularity)
+    
   - [Automatic training data generation](#automatic-training-data-generation)
 
-- [Main Functionalities](#main-functionalities)
+- [Main Functionalities](#main-functionalities
+  
   - [Discord](#discord)
+    
     - [Features](#features)
+      
     - [Commands](#commands)
+      
   - [Minecraft](#minecraft)
+    
     - [Neoforge (Arclight server)](#neoforge-arclight-server)
+      
       - [State Machine](#state-machine)
+        
         - [States](#states)
+          
         - [Helpers](#helpers)
+          
       - [Prompt Builders](#prompt-builders)
+        
     - [Mineflayer (wip)](#mineflayer-wip)
+      
   - [Vtubing (early wip)](#vtubing-early-wip)
+    
   - [VRChat (currently unwired)](#vrchat-currently-unwired)
 
-- [Other Functionalities](#other-functionalities)
+- [Other Functionalities](#other-functionalities
+  
   - [VSC Integration](#vsc-integration)
+    
   - [Pi dev](#pi-dev)
 <br>
 

@@ -69,6 +69,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 ### Discord app set-up:
 
 * You are gonna need to sign up in the developer portal https://discord.com/developers/home
+* You will need to run `node run deploy` to deploy all the commands globally.
 * You are gonna need to add 2 environment variables:
 
   * **DISCORD_TOKEN**: Your application secret token found in the OAuth2 tab in your application.

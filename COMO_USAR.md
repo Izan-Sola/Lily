@@ -24,9 +24,9 @@
 
 ### Requisitos previos:
 
-* Instala [Node y NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm#using-a-node-installer-to-install-nodejs-and-npm)
-* Se recomienda tener una GPU decente (al menos 12GB de vram) si quieres correr a la vez un modelo de IA decente y un nivel de transcripción decente. Si no, vas a tener que sacrificar calidad en uno de los dos.
-* Ten en cuenta que cada funcionalidad es independiente de las demás. Así que si solo quieres correr el bot de Discord, no necesitas montar nada más, y podrías simplemente borrar las carpetas que contienen otras funcionalidades como minecraft y coding.
+* Instala [Node y NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm#using-a-node-installer-to-install-nodejs-and-npm). También [Python](https://www.python.org/downloads/).
+* Se recomienda tener una GPU decente (al menos 12GB de vram) si quieres correr a la vez un modelo de IA decente y un nivel de transcripción decente. Si no, vas a tener que sacrificar calidad en uno de los dos, o los dos.
+* Ten en cuenta que cada funcionalidad es independiente de las demás. Así que si solo quieres correr el bot de Discord, no necesitas configurar nada más.
 
 #### Configuración de la IA local:
 

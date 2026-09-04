@@ -74,7 +74,7 @@
 
 ### Minecraft
 
-### Vtubing
+### Vtubing (early wip)
 
 ### VRChat (currently unwired)
 

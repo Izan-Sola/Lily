@@ -1,6 +1,8 @@
 ## HOW TO USE
 ###### If you are interested in having your own VRChat bot or, for whatever reason you want to use this "brain" for your AI, you are free to do so, and you are gonna need to set up a bunch of stuff, plus a bunch of environment variables. I'm not gonna go too much into detail but all this should be helpful enough if you know what you are doing or at least are tech savvy. If not then well fuck around and find out, AI is free and learning is fun. Yes it is a lot of stuff to setup, welcome to local hosting or whatever. Yes some of my code might suck or be messy. Also this is a WIP, so yeah, it is not perfect. You might need to edit some of the provided python scripts, if you use them, just one or two variables.
 
+###### Now theres also a video guide: https://www.youtube.com/watch?v=ylGpdnShBqA
+
 ## Index
 
 * [Prerequisites](#prerequisites)
@@ -47,7 +49,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 ```
 * Ofc you can change/add/remove any flags, and ofc you should change the model path.
 
-* You can browse models in [Ollama's site](https://ollama.com/) and [Huggingface's](https://huggingface.co/models).
+* You can browse models in [Huggingface](https://huggingface.co/models).
 * Remember to change the system prompts inside **src/ai/prompts.js**.
 
 ### Start modes:

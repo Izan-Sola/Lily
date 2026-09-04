@@ -64,6 +64,7 @@
   - **`MinecraftToolExecutor`**: Contains all the tools for an assitant-like minecraft bot. Mining, dropping, attacking, etc... If either the `mineflayer` or `modded` flag is used, this executor will be enabled.
 
   - **`VtubeToolExecutor`**: Contains all the tools related to vtubing. Triggering expressions, etc... If the `vtube` flag is used, this executor will be enabled.
+<br>
 
 ## Modularity
 
@@ -72,6 +73,7 @@
 - The `start.js` file handles the brain initiation, checking the flags that were used and enabling each correspondent functionality.
 
 - `startUtils.js` contains a bunch of helper functions to check which modes are enabled or which tools to use.
+<br>
 
 ## Automatic training data generation
 

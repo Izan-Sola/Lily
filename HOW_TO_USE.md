@@ -24,9 +24,9 @@
 
 ### Prerequisites:
 
-* Install [Node and NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm#using-a-node-installer-to-install-nodejs-and-npm)
-* Recommended to have a decent GPU (12GB vram atleast) if you want to run both a decent AI model and decent transcriptor tier. If not you are gonna have to sacrifice quality on one of those.
-* Note that each functionality is separate from others. So if you want to only run the discord bot, you don't need to set up anything else, and you could just remove the folders that contain other functionalities such as minecraft and coding.
+* Install [Node and NPM](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm#using-a-node-installer-to-install-nodejs-and-npm). Also [Python](https://www.python.org/downloads/).
+* Recommended to have a decent GPU (12GB vram atleast) if you want to run both a decent AI model and decent transcriptor tier. If not you are gonna have to sacrifice quality on one of those, or both.
+* Note that each functionality is separate from others. So if you want to only run the discord bot, you don't need to set up anything else.
 
 #### Local AI set-up:
 

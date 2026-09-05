@@ -10,6 +10,13 @@
 - Eventually I want her to have a vtuber model.
   
 
+##### Notes
+
+- still cant bend water and chi.
+- mineflayer implementation still needs a good amount of work, cant even bend.
+- dont forget about finishing vtubing stop sidetracking for the love of god.
+- should make flags for coding and pi dev functionalities.
 
 
+- am i ever gonna start that mc series playing with my AI daughter?
 

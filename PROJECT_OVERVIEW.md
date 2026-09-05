@@ -187,7 +187,7 @@
     - **"look:<dir>:<deg>"**: Offsets look direction. Blocking.
     - **"stop"**: Stops movement for the duration of the action. Blocking.
 
-  - "actionsTime": The time in ms that each action takes. Note that if an action is specified to executed more than once using :N, then you will have to specifiy an action time for each.
+  - **"actionsTime"**: The time in ms that each action takes. Note that if an action is specified to be executed more than once using :N, then you will have to specifiy an action time for each.
   
 > Blocking means the queue of actions will be paused until the current action finishes. Non-blocking means the queue will continue to be drained while the current action is being executed.
 

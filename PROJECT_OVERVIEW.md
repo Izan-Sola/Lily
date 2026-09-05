@@ -41,6 +41,8 @@
   - [Vtubing (early wip)](#vtubing-early-wip)
     
   - [VRChat](#vrchat)
+ 
+    - [Listening and voice](#listening-and-voice)
 
 - [Other Functionalities](#other-functionalities)
   

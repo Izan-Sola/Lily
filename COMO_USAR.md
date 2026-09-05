@@ -54,7 +54,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - Hay varias flags que puedes combinar para activar cada funcionalidad. Por ejemplo, si quieres Discord y Minecraft modded, usarías: `npm run start -- modded discord` o `npm run start -- discord modded`.
 
-- Todas las flags disponibles son: `modded`, `mineflayer`, `discord`, `bending` y `vtube`.
+- Todas las flags disponibles son: `modded`, `mineflayer`, `discord`, `bending`, `vrchat` y `vtube`.
 
 Todos los modos se configuran a través de un archivo de inicio unificado (`src/start.js`) que carga automáticamente cada funcionalidad según las flags que elijas. El cerebro está diseñado para ser modular, así que puedes combinar funcionalidades a tu gusto añadiendo las flags correspondientes al comando `start`.
 

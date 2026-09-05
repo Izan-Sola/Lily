@@ -102,6 +102,7 @@
 - **/preferences**: Adjust your preferences such as, disabling pings, voice processing (she wont listen to you in voice calls), disabling spontaneous replies to your messages...
 - **/voice join/leave**: To make her join or leave a voice channel.
 - **/audio**: To make her respond with an audio message.
+<br>
 
 ## Minecraft
 
@@ -147,6 +148,7 @@
   <br>
 
 - The way the bot's state is managed is via a "state machine". The main file is `StateController.js` which contains a bunch of helper functions, ticks the current state, dispatches in-game actions and updates live in-game data. All states are smoothly transitioned to u sing the `transitionTo(stateName, payload = {}))` function, which can either make the bot re-enter the state with a new payload (data), or stop the current state and enter a new one.
+<br>
 
 - **States** (`states/`):
 
@@ -156,6 +158,7 @@
   - **`MiningState.js`**: Handles mining. The `NodeJS` side only knows when the bot is busy mining, and when it has finished, the Java mod handles everything else.
   - **`RecoveringState.js`**: When low HP, the bot will automatically run towards the closes player.
   - **`DuelingState.js`**: Activated using the duel command. This state handles dueling with ProjectKorra abilities. Handles moving and look direction, block sourcing, when to send the next duel prompt, handles the ability queue, etc... Periodically requests all the necessary data to the Java mod such as coordinates, abilities binded, HP...
+<br>
 
 - **Helpers** (`helpers/`):
 
@@ -190,16 +193,18 @@
   - **"actionsTime"**: The time in ms that each action takes. Note that if an action is specified to be executed more than once using :N, then you will have to specifiy an action time for each.
   
 > Blocking means the queue of actions will be paused until the current action finishes. Non-blocking means the queue will continue to be drained while the current action is being executed.
+<br>
 
 - **`survivalLoop.js`**: Periodically sends a prompt to the bot with all the necessary information for the bot to decide which action to take.
 - **`sneak.js`**: Handles the sneak timing.
 - **`movement.js`**: Handles moving to the target location. Re sends "move_to" if the target moves too far.
+<br>
 
 - **Prompt Builders** (`prompt-builders/`):
 
   - **`duelPromptBuilder.js`**: Builds the prompt for dueling with ProjectKorra abilities with data such as cooldown, range, velocity, and short recommendations depending on the situation.
   - **`suvivalPrompBuilder.js`**: Builds the prompt for the survival loop with all the necessary information provided by the `environmentScan` by the Java mod. Formats entity data, block data, etc...
-    
+<br>    
   
 ### Mineflayer (wip)
 

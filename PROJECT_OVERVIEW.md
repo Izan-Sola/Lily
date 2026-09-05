@@ -1,6 +1,6 @@
 # Lily's brain - Overview
 
-###### Last edit: September 2026 (unfinished)
+###### Last edit: September 2026 (unfinished) "Why not have AI make the documentation?" Because this is MY project, not AI's. I KNOW what my project does, even if I co-work with AI. And while documenting it I understand it even further and may find ways to improve it.
 
 # Index
 
@@ -122,10 +122,9 @@
   - **`IdleState.js`**: Idle state, triggered when no condition for any other state is met. `onTick()` Checks different conditions to transtion to any other state.
   - **`MiningState.js`**: Handles mining. The `NodeJS` side only knows when the bot is busy mining, and when it has finished, the Java mod handles everything else.
   - **`RecoveringState.js`**: When low HP, the bot will automatically run towards the closes player.
-  - **`DuelingState.js`**: Activated using the duel command. This state handles dueling with ProjectKorra abilities. Handles moving and look direction, block sourcing, when to send the next duel prompt, handles the ability queue, etc... (s
+  - **`DuelingState.js`**: Activated using the duel command. This state handles dueling with ProjectKorra abilities. Handles moving and look direction, block sourcing, when to send the next duel prompt, handles the ability queue, etc... Periodically requests all the necessary data to the Java mod such as coordinates, abilities binded, HP...
 
 - **Helpers** (`helpers/`):
-
 
   - **`comboExecutor.js`**: Handles executing the array of abilities returned by the AI when prompted in the dueling state. `data/` Contains all the data of the server's current abilities and all the required manually-inputted information to properly executed them. Example:
 
@@ -159,8 +158,12 @@
   
 > Blocking means the queue of actions will be paused until the current action finishes. Non-blocking means the queue will continue to be drained while the current action is being executed.
 
+-  **`survivalLoop.js`**:
 
 - **Prompt Builders** (`prompt-builders/`):
+
+  - **`duelPromptBuilder.js`**: Builds the prompt for dueling with ProjectKorra abilities with data such as cooldown, range, velocity, and short recommendations depending on the situation.
+  - **`suvivalPrompBuilder.js`**:
   
 ### Mineflayer (wip)
 

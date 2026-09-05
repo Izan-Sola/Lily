@@ -186,14 +186,23 @@
   - **"actions"**: It is the list of actions that need to be executed to perform the ability or combo, with a concrete format:
 
     - **"swap:slot:<Ability>"**: Swaps to the slot on which that ability is binded. Blocking.
+      
     - **"locklook"**: Locks the look direction of the bot to the current look direction. Non-blocking.
+      
     - **"source:<blocks>:<dist>"**: Finds the nearest valid source block. Non-blocking.
+      
     - **"click:left|right[:N]"**: Left or right click N times. Blocking per click.
+      
     - **"sneak:hold|tap[:N][:cont]"**: Hold or tap sneak, N times. Blocking by default, unless :cont is used.
+      
     - **"jump[:N]"**: Jumps N times. Blocking per jump.
+      
     - **"forward|back|left|right"**: Forces direction for the duration of the acion. Blocking.
-    - **"wait"**: Sleep for the duration of the action. Blocking
+      
+    - **"wait"**: Sleep for the duration of the action. Blocking.
+      
     - **"look:<dir>:<deg>"**: Offsets look direction. Blocking.
+      
     - **"stop"**: Stops movement for the duration of the action. Blocking.
 
   - **"actionsTime"**: The time in ms that each action takes. Note that if an action is specified to be executed more than once using :N, then you will have to specifiy an action time for each.

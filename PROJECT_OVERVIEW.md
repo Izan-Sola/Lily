@@ -4,7 +4,7 @@
 
 # Index
 
-- [Main Systems](#main-systems)
+- [Systems](#systems)
   
   - [Tools](#tools)
     
@@ -13,6 +13,8 @@
   - [Modularity](#modularity)
     
   - [Automatic training data generation](#automatic-training-data-generation)
+ 
+  - [Custom Logger](#custom-logger)
 
 - [Main Functionalities](#main-functionalities)
   
@@ -47,7 +49,7 @@
   - [Pi dev](#pi-dev)
 <br>
 
-# Main systems
+# Systems
 
 ## Tools
 
@@ -80,13 +82,17 @@
 - The brain inlcudes a system (`saveFlawlessTurns.js`) to automatically records as many flawless turns as configurated in the `config.json` "trainingTurnWindow", and saves the entire conversation in ShareGPT format into a file named `pending_review.jsonl` to review and use as training data for finetuning. Flawless turns are such turns that execute without a single error or warning caused by the AI messing up. If a turn is not flawless, the entire conversation is dropped, and the count is restarted.
 <br>
 
+## Custom logger.
+
+- The brain inlcudes a custom logger used by calling `Logger(message, title)`. Displays a formatted log for visual clarity both in the terminal and, if available, a discord channel. Inlcudes the methods `info`, `warning`, `success` and `error`, each with a different color. "title" helps quickly identifying where each log is from, and the color the type of the log.
+
 # Main functionalities
 
 ## Discord
 
 ###### `src/discord/`
 
-- The main file is `discordBot.js`, containing all the logic for the discord bot functionality. Handling replies, voice calls, media...
+- The main file is `bot.js`, containing all the logic for the discord bot functionality. Handling replies, voice calls, media...
 
 ### Features
 
@@ -211,7 +217,20 @@
 
 ## Vtubing (early wip)
 
-## VRChat (currently unwired)
+## VRChat 
+
+####### `src/ai/vrchatbot/`
+
+### Listening and voice
+
+####### `audiostuff/`
+
+- **audioLoop.js**: Handles the listening and processing audio loop. Uses `Silero VAD` to detect speech/silence and know when to start processing audio. Sends transcriptions requests, checks for wake word and schedules butt ins.
+- **voice.js**: Handles generating the voice replies from the AI. Depending on the tts engine specified in the `config.json` inside `util`, it will make a request to `edge-tts` or a `xtts` server for custom voice generation.
+
+> Depending on the platform, a different process is used for playing/recording the audio.
+
+<br>
 
 # Other functionalities
 

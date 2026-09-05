@@ -113,6 +113,38 @@
 
 ###### `src/ai/minecraft/neoforgemod-way/state-machine/`
 
+- The main file is `bot.js`, which handles communication between the NodeJS server and the Java client via the mcSend(type, data = {})` function:
+
+  - **"chat"**: Displays a message in-game.
+  - **"request_ability_data"**: Requests the data of all the abilities in the server. Returns the **"ability_data"** message.
+  - **"get_bindings"**: Requests the current bindings of the bot. Returns the **"bindings_update"** message.
+  - **"run_command"**: Runs the specified in-game command.
+  - **"move_to"**: Moves to the specified coordinates.
+  - **"move"**: Moves towards the specified direction.
+  - **"stop"**: Stop the bot movement.
+  - **"craft"**: Requests crafting the specified item. Returns **"craft_result"**.
+  - **"look_at"**: Look towards the specified coordinates.
+  - **"attack"**: Simulates left click, optionally swaps to the specified slot.
+  - **"break"**: Breaks the block at the target coordinates, or if instead a type of block is sent, the nearest one of the same type is located.
+  - **"cancel_break"**: When exiting mining state, cancels any of the tasks  started by `MiningManager.java` and resets state.
+  - **"use"**: Simulates right click, optionally swaps to the specified slot.
+  - **"drop"**: Drops an item, optionally swaps to the specified slot.
+  - **"jump"**: Jumps.
+  - **"sneak"**: Simulates shifting.
+  - **"sprint"** and **"unsprint"**: Activates/cancels sprint.
+  - **"hotbar"**: Swaps to the specified slot.
+  - **"spawn"** Handles spawning/respawning.
+  - **"look_dir"**: Offsets current look direction.
+  - **"fire_pk_event"**: Handles firing events that ProjectKorra listens to, to effectively trigger abilities:
+
+    - **"click"**: Calls `PlayerAnimationEvent`
+    - **"sneak"** and **"unsneak"**: Handles sneaking.
+    - **"slot"**: Handles swapping slot.
+   
+  - **"get_lily_state"*: Request data of the bot such as HP, coordinates, armor, food level...
+  - **"get_environment_scan": Request data of the environment around the bot, such as biome, entities, unique blocks...
+  - **"get_source_block"**: Finds the closest valid source block specified. Returns **"source_block"**.
+  
 - The way the bot's state is managed is via a "state machine". The main file is `StateController.js` which contains a bunch of helper functions, ticks the current state, dispatches in-game actions and updates live in-game data. All states are smoothly transitioned to u sing the `transitionTo(stateName, payload = {}))` function, which can either make the bot re-enter the state with a new payload (data), or stop the current state and enter a new one.
 
 - **States** (`states/`):

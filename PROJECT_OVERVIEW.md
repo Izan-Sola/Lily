@@ -221,7 +221,9 @@
 - **`movement.js`**: Handles moving to the target location. Re sends "move_to" if the target moves too far.
 <br>
 
-- **Prompt Builders** (`prompt-builders/`):
+#### **Prompt Builders** 
+
+###### `prompt-builders/`
 
   - **`duelPromptBuilder.js`**: Builds the prompt for dueling with ProjectKorra abilities with data such as cooldown, range, velocity, and short recommendations depending on the situation.
   - **`suvivalPrompBuilder.js`**: Builds the prompt for the survival loop with all the necessary information provided by the `environmentScan` by the Java mod. Formats entity data, block data, etc...

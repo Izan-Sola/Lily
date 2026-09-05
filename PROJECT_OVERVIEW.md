@@ -116,7 +116,7 @@
 
 ###### `src/ai/minecraft/neoforgemod-way/`
 
-#### State Machine
+#### **State Machine**
 
 ###### `src/ai/minecraft/neoforgemod-way/state-machine/`
 
@@ -156,7 +156,9 @@
 - The way the bot's state is managed is via a "state machine". The main file is `StateController.js` which contains a bunch of helper functions, ticks the current state, dispatches in-game actions and updates live in-game data. All states are smoothly transitioned to u sing the `transitionTo(stateName, payload = {}))` function, which can either make the bot re-enter the state with a new payload (data), or stop the current state and enter a new one.
 <br>
 
-##### **States** (`states/`):
+#### **States** 
+
+###### `states/`
 
   - **`AttackingSatate.js`**: Activated when a hostile mob gets too close, or via tool calling. Tracks the mob, handles look direction and attacking.
   - **`FollowingState.js`**: A simple state that handles following the player. Handles look direction and movement.
@@ -166,7 +168,9 @@
   - **`DuelingState.js`**: Activated using the duel command. This state handles dueling with ProjectKorra abilities. Handles moving and look direction, block sourcing, when to send the next duel prompt, handles the ability queue, etc... Periodically requests all the necessary data to the Java mod such as coordinates, abilities binded, HP...
 <br>
 
-##### **Helpers** (`helpers/`):
+#### **Helpers**
+
+###### `helpers/`
 
   - **`comboExecutor.js`**: Handles executing the array of abilities returned by the AI when prompted in the dueling state. `data/` Contains all the data of the server's current abilities and all the required manually-inputted information to properly executed them. Example:
 

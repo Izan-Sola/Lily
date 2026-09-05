@@ -191,12 +191,15 @@
   
 > Blocking means the queue of actions will be paused until the current action finishes. Non-blocking means the queue will continue to be drained while the current action is being executed.
 
--  **`survivalLoop.js`**:
+- **`survivalLoop.js`**: Periodically sends a prompt to the bot with all the necessary information for the bot to decide which action to take.
+- **`sneak.js`**: Handles the sneak timing.
+- **`movement.js`**: Handles moving to the target location. Re sends "move_to" if the target moves too far.
 
 - **Prompt Builders** (`prompt-builders/`):
 
   - **`duelPromptBuilder.js`**: Builds the prompt for dueling with ProjectKorra abilities with data such as cooldown, range, velocity, and short recommendations depending on the situation.
-  - **`suvivalPrompBuilder.js`**:
+  - **`suvivalPrompBuilder.js`**: Builds the prompt for the survival loop with all the necessary information provided by the `environmentScan` by the Java mod. Formats entity data, block data, etc...
+    
   
 ### Mineflayer (wip)
 

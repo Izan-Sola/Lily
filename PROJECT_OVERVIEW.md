@@ -40,7 +40,7 @@
       
   - [Vtubing (early wip)](#vtubing-early-wip)
     
-  - [VRChat (currently unwired)](#vrchat-currently-unwired)
+  - [VRChat](#vrchat)
 
 - [Other Functionalities](#other-functionalities)
   

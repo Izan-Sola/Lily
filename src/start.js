@@ -13,7 +13,7 @@ try {
     process.exit(1)
 }
 
-const { backend, vtube, discord: isDiscordEnabled } = runConfig
+const { backend, vtube, discord: isDiscordEnabled, vrchat: isVrchatEnabled } = runConfig
 
 if (flags.has('bending') && backend !== 'modded') {
     Logger.warning("'bending' flag has no effect without 'modded' - ignoring", "STARTUP")
@@ -23,13 +23,15 @@ Logger.info(`Starting with flags: ${[...flags].join(', ') || '(none)'}`, "STARTU
 Logger.info(`  • Discord: ${isDiscordEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • VTube Studio: ${vtube ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Minecraft: ${backend === 'mineflayer' ? 'Mineflayer' : backend === 'modded' ? 'Modded (NeoForge)' : 'None'}`, "STARTUP")
+Logger.info(`  • VRChat: ${isVrchatEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 
-if (!isDiscordEnabled && !backend) {
-    Logger.warning('No Discord and no Minecraft backend active - there is nothing for this process to do', "STARTUP")
+if (!isDiscordEnabled && !backend && !isVrchatEnabled) {
+    Logger.warning('No Discord, no Minecraft backend, and no VRChat bridge active - there is nothing for this process to do', "STARTUP")
 }
 
 let vtsClient = null
 let survivalLoopHandle = null
+let vrchatBotHandle = null
 
 async function initializeVTS() {
     if (!vtube) return null
@@ -94,6 +96,18 @@ async function startSurvivalLoop(mcSend, mcChat, stateController) {
     )
 }
 
+// Wires the VRChat avatar bridge into this same process, sharing the one
+// `ai` (Lily) instance every other backend uses — same shape as
+// startMinecraft() above. vrchatBot/index.js owns OSC, the web console,
+// voice listening, and the VRChat auto-join pipeline; all it needs from
+// here is the shared brain. Fully independent of `backend`/`vtube` — the
+// vrchat flag alone is enough to bring it up.
+async function startVrchat() {
+    if (!isVrchatEnabled) return null
+    const { startVrchatBot } = await import('./vrchatBot/index.js')
+    return startVrchatBot({ ai })
+}
+
 async function initializeFeatures() {
     vtsClient = await initializeVTS()
 
@@ -107,6 +121,11 @@ async function initializeFeatures() {
             survivalLoopHandle = survivalLoop
             Logger.success('Survival loop started', "SURVIVAL")
         }
+    }
+
+    vrchatBotHandle = await startVrchat()
+    if (vrchatBotHandle) {
+        Logger.success('VRChat bridge started', "VRCHAT")
     }
 }
 
@@ -145,6 +164,10 @@ async function main() {
 
             if (survivalLoopHandle?.stop) {
                 survivalLoopHandle.stop()
+            }
+
+            if (vrchatBotHandle?.stop) {
+                await vrchatBotHandle.stop()
             }
 
             if (client) {

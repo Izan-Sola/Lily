@@ -9,6 +9,11 @@ import { saveFlawlessTurn } from './saveFlawlessTurns.js'
 import { getConfig } from './config.js'
 // Channel id used for the Minecraft bridge — see getToolsForChannel().
 const MINECRAFT_CHANNEL_ID = "minecraft"
+// Channel id used for the VRChat avatar bridge (vrchatBot/) — see
+// getToolsForChannel(). Only started when this process is run with the
+// 'vrchat' flag (see start.js), but the id is a plain string constant so
+// there's nothing flag-dependent to wire up here.
+const VRCHAT_CHANNEL_ID = "vrchat"
 
 function isMinecraftActionTool(name) {
     return name === "minecraft_action" || name.startsWith("minecraft_action")
@@ -132,7 +137,9 @@ export class Lily {
     // see ToolRouter's tools/nonMinecraftTools getters — so expressions
     // mix freely with either chat tools or minecraft tools.
     getToolsForChannel(channelId) {
-        return channelId === MINECRAFT_CHANNEL_ID ? this.tools.tools : this.tools.nonMinecraftTools
+        if (channelId === MINECRAFT_CHANNEL_ID) return this.tools.tools
+        if (channelId === VRCHAT_CHANNEL_ID) return this.tools.vrchatTools
+        return this.tools.nonMinecraftTools
     }
 
     async withChannelLock(channelId, fn) {
@@ -843,7 +850,15 @@ async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
         return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts, images)
     }
 
-    buttIn(channelId, rawMessage) {
-        return this.handleMessage(channelId, rawMessage, "BUTT IN")
+    // systemPromptOverride defaults to null (old behavior: falls back to
+    // SYSTEM_PROMPT inside handleMessage/buildMessagesForOllama) so
+    // existing Discord/Minecraft callers are unaffected. VRChat's ambient
+    // "butt-in" commentary passes its own addendum-bearing prompt (see
+    // buildVrchatSystemPrompt(true) in prompts.js) since its silence-by-
+    // default framing doesn't apply to Discord's use of this same path.
+    buttIn(channelId, rawMessage, systemPromptOverride = null) {
+        return this.handleMessage(channelId, rawMessage, "BUTT IN", systemPromptOverride)
     }
 }
+
+export { VRCHAT_CHANNEL_ID, MINECRAFT_CHANNEL_ID }

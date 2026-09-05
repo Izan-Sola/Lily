@@ -100,7 +100,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 #### Neoforge way:
 
-* The server or world is gonna need to use this mod: https://github.com/Izan-Sola/Lily-Minecraft
+* The server or world is gonna need to use this mod: https://github.com/Izan-Sola/Lily-Minecraft. Note that to use projectkorra in a modded server, you need Arclight.
 * You are also gonna need to download the [SiliconeDolls](https://www.curseforge.com/minecraft/mc-mods/siliconedolls) mod as a dependency.
 
 * If the server does not run in the same local network, you are gonna need to register your own [DuckDNS](duckdns.org) (or any other) sub-domain and edit the config file `lilybridge-common.toml` generated in the config folder of the server:

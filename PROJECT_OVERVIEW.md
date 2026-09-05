@@ -1,7 +1,6 @@
 # Lily's brain - Overview
 
-###### Last edit: September 2026 (unfinished) "Why not have AI make the documentation?" Because this is MY project, not AI's. I KNOW what my project does, even if I co-work with AI. And while documenting it I understand it even further and may find ways to improve it.
-
+###### Last edit: September 2026 (unfinished) This will be an in depth documentation. Believe it or not I find manually documentating stuff fun. It also makes me understand my own project better and find ways to improve it.
 # Index
 
 - [Main Systems](#main-systems)

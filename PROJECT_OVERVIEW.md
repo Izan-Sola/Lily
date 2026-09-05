@@ -144,7 +144,8 @@
   - **"get_lily_state"**: Request data of the bot such as HP, coordinates, armor, food level...
   - **"get_environment_scan"**: Request data of the environment around the bot, such as biome, entities, unique blocks...
   - **"get_source_block"**: Finds the closest valid source block specified. Returns **"source_block"**.
-  
+  <br>
+
 - The way the bot's state is managed is via a "state machine". The main file is `StateController.js` which contains a bunch of helper functions, ticks the current state, dispatches in-game actions and updates live in-game data. All states are smoothly transitioned to u sing the `transitionTo(stateName, payload = {}))` function, which can either make the bot re-enter the state with a new payload (data), or stop the current state and enter a new one.
 
 - **States** (`states/`):

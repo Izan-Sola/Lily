@@ -1,4 +1,4 @@
-const KNOWN_FLAGS = ['discord', 'modded', 'mineflayer', 'bending', 'vtube', 'vrchat', 'coding', 'pidev', 'stts', 'browser']; // <-- new
+const KNOWN_FLAGS = ['discord', 'modded', 'mineflayer', 'bending', 'vtube', 'vrchat', 'coding', 'pidev', 'stts', 'browser', 'n8n']; // <-- new
 
 export function parseFlags(argv = process.argv.slice(2)) {
     return new Set(
@@ -23,9 +23,11 @@ export function getConfigFromFlags(flags = parseFlags()) {
         coding: flags.has('coding'),
         pidev: flags.has('pidev'),
         stts: flags.has('stts'),
-        browser: flags.has('browser'),   // <-- new
+        browser: flags.has('browser'),  
+        n8n: flags.has('n8n'),
     }
 }
+
 
 export function describeConfig(config) {
     let label = config.backend ?? 'discord-only'
@@ -35,7 +37,8 @@ export function describeConfig(config) {
     if (config.coding) label += '-coding'
     if (config.pidev) label += '-pidev'
     if (config.stts) label += '-stts'
-    if (config.browser) label += '-browser'   // <-- new
+    if (config.browser) label += '-browser'
+    if (config.n8n) label += '-n8n' 
     return label
 }
 
@@ -73,6 +76,9 @@ export function isSttsEnabled(flags = parseFlags()) {
 }
 export function isBrowserEnabled(flags = parseFlags()) {  
     return flags.has('browser')
+}
+export function isN8nEnabled(flags = parseFlags()) {
+    return flags.has('n8n')
 }
 
 export function getToolConfig(runConfig = {}) {

@@ -2,6 +2,7 @@
 import 'dotenv/config'
 import { createBot } from "./discord/bot.js"
 import { config } from "./utils/config.js"
+import { getConfig } from './ai/config.js'
 import { Logger } from "./utils/Logger.js"
 import { parseFlags, getConfigFromFlags, describeConfig, isVtubeEnabled, isModdedEnabled, isMineflayerEnabled } from "./startUtils.js"
 import * as stts from './STTS/index.js'
@@ -18,7 +19,7 @@ try {
     process.exit(1)
 }
 
-const { backend, vtube, discord: isDiscordEnabled, vrchat: isVrchatEnabled, coding: isCodingEnabled, pidev: isPidevEnabled, browser: isBrowserEnabled } = runConfig
+const { backend, vtube, discord: isDiscordEnabled, vrchat: isVrchatEnabled, coding: isCodingEnabled, pidev: isPidevEnabled, browser: isBrowserEnabled, n8n: isN8nEnabled } = runConfig
 
 if (flags.has('bending') && backend !== 'modded') {
     Logger.warning("'bending' flag has no effect without 'modded' - ignoring", "STARTUP")
@@ -34,6 +35,7 @@ Logger.info(`  • Tavily MCP server: ${isCodingEnabled ? '✅ Enabled' : '❌ D
 Logger.info(`  • Pi-dev bridge: ${isPidevEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Speech-to-Text (STT) + Voice Assistant: ${runConfig.stts ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 Logger.info(`  • Browser control bridge: ${isBrowserEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
+Logger.info(`  • n8n bridge + notification hook: ${isN8nEnabled ? '✅ Enabled' : '❌ Disabled'}`, "STARTUP")
 
 if (!isDiscordEnabled && !backend && !isVrchatEnabled && !runConfig.stts) {
     Logger.warning('No Discord, no Minecraft, no VRChat bridge, and no STTS active - there is nothing for this process to do', "STARTUP")
@@ -72,6 +74,8 @@ let continueBridgeHandle = null
 let pidevBridgeHandle = null
 let tavilyServerHandle = null
 let browserBridgeHandle = null // { process, client }
+let n8nBridgeHandle = null
+let notifyServerHandle = null
 
 // ---------- 4. Service initializers ----------
 async function startBrowserBridge() {
@@ -85,6 +89,17 @@ async function startBrowserBridge() {
         Logger.error(`Browser control bridge failed to start: ${err.message}`, "BROWSER")
         return null
     }
+}
+async function startN8nBridge() {
+    if (!isN8nEnabled) return null
+    const { startN8nBridge: start } = await import('./n8n/n8n-bridge.js')
+    return start()
+}
+
+async function startNotifyServer() {
+    if (!isN8nEnabled) return null
+    // client comes from Discord bot, so this is wired up after clientReady, not here
+    return null
 }
 
 async function initializeVTS() {
@@ -277,6 +292,11 @@ async function initializeFeatures() {
     if (pidevBridgeHandle) {
         Logger.success('Pi-dev bridge started', "PIDEV")
     }
+
+    n8nBridgeHandle = await startN8nBridge()
+    if (n8nBridgeHandle) {
+        Logger.success('n8n bridge started', "N8N")
+    }
 }
 
 // ---------- 6. Discord setup ----------
@@ -293,6 +313,11 @@ async function setupDiscordBot() {
         Logger.success(`Logged in as ${client.user.tag}`, "CLIENT")
         try {
             await initializeFeatures()
+            if (isN8nEnabled) {
+                const { startNotifyServer } = await import('./n8n/discordNotify.js')
+                notifyServerHandle = startNotifyServer(client, getConfig().discordUserID, 3300)
+                Logger.success('Notify server started', "NOTIFY")
+            }
         } catch (err) {
             Logger.error(`initializeFeatures failed: ${err.stack ?? err.message}`, "STARTUP")
         }
@@ -357,7 +382,12 @@ async function main() {
             if (pidevBridgeHandle?.close) {
                 await new Promise(resolve => pidevBridgeHandle.close(resolve))
             }
-
+            if (n8nBridgeHandle?.close) {
+                await new Promise(resolve => n8nBridgeHandle.close(resolve))
+            }
+            if (notifyServerHandle?.close) {
+                await new Promise(resolve => notifyServerHandle.close(resolve))
+            }
             if (runConfig.stts) {
                 stopVoiceAssistant()
                 stts.stop()

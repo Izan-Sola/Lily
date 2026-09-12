@@ -44,7 +44,7 @@ class BrowserBridgeClient {
                 // Try to extract an ID from common fields
                 const id = msg.id ?? msg.requestId ?? msg.reqId ?? msg.request_id
                 if (!id) {
-                    Logger.warning(`Message without ID: ${str}`, "BROWSER")
+                  //  Logger.warning(`Message without ID: ${str}`, "BROWSER")
                     return
                 }
 

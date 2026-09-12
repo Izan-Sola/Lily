@@ -16,6 +16,8 @@ const SCREENSHOT_TIMEOUT_MS = 15_000
 const FILE_APPEAR_TIMEOUT_MS = 3_000
 const FILE_APPEAR_POLL_MS = 100
 const COMPANION_REQUEST_TIMEOUT_MS = 5_000
+// Deliberately long: the user is typing, not us.
+const ASK_USER_TIMEOUT_MS = 120_000
 
 // ─── Desktop/session detection ───────────────────────────────────────────
 
@@ -114,12 +116,84 @@ async function captureImportMagick(outPath) {
     await execFileAsync('import', ['-window', 'root', outPath], { timeout: SCREENSHOT_TIMEOUT_MS })
 }
 
+// ─── Ask-the-user popup strategies ───────────────────────────────────────
+//
+// These show a modal text-input dialog and return whatever the user typed,
+// verbatim. Only for information that has to be exact (paths, exact names,
+// IDs, etc). If the tool was cancelled by the user we throw a tagged error
+// so the caller can distinguish "user cancelled" from "tool not installed",
+// which determines whether we fall through to the next strategy.
+
+function cancelError() {
+    return Object.assign(new Error('cancelled'), { cancelled: true })
+}
+
+async function askWindows(prompt) {
+    // Prompt is passed via env var to sidestep PowerShell quoting hell.
+    const script = [
+        'Add-Type -AssemblyName Microsoft.VisualBasic',
+        '$prompt = $env:LILY_ASK_PROMPT',
+        '$result = [Microsoft.VisualBasic.Interaction]::InputBox($prompt, "Lily needs your input", "")',
+        'Write-Output $result',
+    ].join('\n')
+
+    const { stdout } = await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        {
+            timeout: ASK_USER_TIMEOUT_MS,
+            env: { ...process.env, LILY_ASK_PROMPT: prompt },
+        },
+    )
+
+    const value = stdout.replace(/\r?\n$/, '').trim()
+    if (!value) throw cancelError()
+    return value
+}
+
+async function askKdialog(prompt) {
+    let stdout
+    try {
+        ({ stdout } = await execFileAsync(
+            'kdialog',
+            ['--title', 'Lily needs your input', '--inputbox', prompt],
+            { timeout: ASK_USER_TIMEOUT_MS },
+        ))
+    } catch (e) {
+        // kdialog exits 1 when the user hits Cancel/close.
+        if (e.code === 1 && !e.killed) throw cancelError()
+        throw e
+    }
+    const value = stdout.trim()
+    if (!value) throw cancelError()
+    return value
+}
+
+async function askZenity(prompt) {
+    let stdout
+    try {
+        ({ stdout } = await execFileAsync(
+            'zenity',
+            ['--entry', '--title=Lily needs your input', `--text=${prompt}`],
+            { timeout: ASK_USER_TIMEOUT_MS },
+        ))
+    } catch (e) {
+        // zenity exits 1 when the user hits Cancel/close.
+        if (e.code === 1 && !e.killed) throw cancelError()
+        throw e
+    }
+    const value = stdout.trim()
+    if (!value) throw cancelError()
+    return value
+}
+
 // ─── STTS Tool Executor ──────────────────────────────────────────────────
 //
 // Tools that only make sense while Lily is being talked to via speech.
 // Which tools *exist at all* for this process is flag-conditional:
 //   - get_screenshot needs only the STTS module (sttsEnabled)
-//   - run_system_command additionally needs the pidev bridge (pidevEnabled)
+//   - run_system_command and ask_user_for_input additionally need the
+//     pidev bridge (pidevEnabled)
 //   - edit_active_vscode_file additionally needs the coding bridge
 //     (codingEnabled) AND a companion VSCode extension reachable over
 //     HTTP AND an editCallback wired in from Lily (see Lily.generateFileEdit)
@@ -163,8 +237,8 @@ class SttsToolExecutor {
     _activeToolDefs() {
         if (!this.sttsEnabled) return []
         const defs = [SCREENSHOT_TOOL]
-        if (this.pidevEnabled) defs.push(RUN_COMMAND_TOOL)
-        if (this.codingEnabled) defs.push(EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL)
+        if (this.pidevEnabled) defs.push(RUN_COMMAND_TOOL, ASK_USER_TOOL)
+        if (this.codingEnabled) defs.push(EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL, CREATE_FILE_TOOL)
         return defs
     }
 
@@ -313,6 +387,73 @@ class SttsToolExecutor {
         })
     }
 
+    // ─── Ask-the-user popup ──────────────────────────────────────────────
+    //
+    // For info that MUST be exact — paths, exact names, IDs, tokens, URLs.
+    // The user types it into a modal dialog and we get the string back
+    // verbatim. Same platform spread as screenshots: Windows / KDE / GNOME.
+    _askStrategies() {
+        if (process.platform === 'win32') {
+            return [['windows-inputbox', askWindows]]
+        }
+
+        const { isGnome, isKde } = detectDesktop()
+        const strategies = []
+        const seen = new Set()
+        const add = (name, fn) => {
+            if (seen.has(name)) return
+            seen.add(name)
+            strategies.push([name, fn])
+        }
+
+        // Prefer the native one for the current DE, fall back to the other.
+        // Both can be installed regardless of DE, and either works fine.
+        if (isKde) {
+            add('kdialog', askKdialog)
+            add('zenity', askZenity)
+        } else if (isGnome) {
+            add('zenity', askZenity)
+            add('kdialog', askKdialog)
+        } else {
+            add('zenity', askZenity)
+            add('kdialog', askKdialog)
+        }
+
+        return strategies
+    }
+
+    async askUserForInput(args = {}) {
+        if (!this.sttsEnabled || !this.pidevEnabled) {
+            return err("Ask-user tool isn't enabled.")
+        }
+
+        const { prompt } = args
+        if (!prompt?.trim()) return err("prompt required.")
+
+        Logger.info(`Asking user for exact input: ${prompt.slice(0, 200)}`, "STTS")
+
+        const strategies = this._askStrategies()
+        const failures = []
+
+        for (const [name, run] of strategies) {
+            try {
+                const value = await run(prompt)
+                Logger.success(`User supplied via ${name}: ${value.slice(0, 200)}`, "STTS")
+                return ok(`The user typed exactly: ${value}`)
+            } catch (e) {
+                if (e.cancelled) {
+                    Logger.warning(`User cancelled the ${name} popup`, "STTS")
+                    return err("The user closed the popup without typing anything. Don't ask again this turn — carry on with what you have, or ask out loud.")
+                }
+                failures.push(`${name}: ${e.message}`)
+                continue
+            }
+        }
+
+        Logger.error(`No input-popup tool available. Tried: ${failures.join(' | ')}`, "STTS")
+        return err("Couldn't show the popup on this system.")
+    }
+
     // ─── Voice-triggered VSCode edit ─────────────────────────────────────
     //
     // Continue only executes tool calls in response to requests it starts
@@ -382,6 +523,36 @@ class SttsToolExecutor {
         Logger.success(`Applied voice edit to ${fileName}`, "STTS")
         return ok(`Edited ${fileName}. It's applied in the editor as unsaved changes — check it over before saving.`)
     }
+    async createFile(args = {}) {
+        if (!this.sttsEnabled || !this.codingEnabled) {
+            return err("VSCode file-creation tool isn't enabled.")
+        }
+
+        const { path: filePath, content, overwrite } = args
+        if (!filePath?.trim()) return err("path required.")
+
+        Logger.info(`Creating file: ${filePath}${overwrite ? ' (overwrite allowed)' : ''}`, "STTS")
+
+        let data
+        try {
+            const { data: resData } = await axios.post(
+                `${this._vscodeCompanionUrl}/create-file`,
+                { path: filePath, content: content ?? '', overwrite: !!overwrite },
+                { timeout: COMPANION_REQUEST_TIMEOUT_MS }
+            )
+            data = resData
+        } catch (e) {
+            if (e.response?.status === 409) {
+                return err(`A file already exists at ${filePath}. Ask the user if they want it overwritten, then retry with overwrite set to true.`)
+            }
+            Logger.error(`Couldn't reach VSCode companion: ${e.message}`, "STTS")
+            return err("Couldn't reach VSCode — is it open with the companion extension installed?")
+        }
+
+        const fileName = filePath.split(/[\\/]/).pop()
+        Logger.success(`Created ${fileName}${data.overwritten ? ' (overwritten)' : ''}`, "STTS")
+        return ok(`Created ${fileName}${content ? ' with the given content' : ' (empty)'}. It's open in the editor now.`)
+    }
     async readActiveFile() {
         if (!this.sttsEnabled || !this.codingEnabled) {
             return err("VSCode reading tool isn't enabled.")
@@ -408,8 +579,10 @@ class SttsToolExecutor {
         switch (name) {
             case "get_screenshot": return this.getScreenshot()
             case "run_system_command": return this.runSystemCommand(args)
+            case "ask_user_for_input": return this.askUserForInput(args)
             case "edit_active_vscode_file": return this.editActiveFile(args)
             case "read_active_vscode_file": return this.readActiveFile()
+            case "create_vscode_file": return this.createFile(args)
             default:
                 Logger.warning(`Unknown: ${name}`, "TOOL")
                 return err(`Unknown tool: ${name}`)
@@ -448,6 +621,25 @@ const RUN_COMMAND_TOOL = {
     },
 }
 
+const ASK_USER_TOOL = {
+    type: "function",
+    function: {
+        name: "ask_user_for_input",
+        description:
+            "Show the user a small popup on their screen where they can type an answer, and get the exact text back. Use this ONLY when you genuinely need information that has to be EXACT and can't be paraphrased or approximated — for example: a file path, a full filename, an exact variable/function/class name, a URL, an ID or token, an exact error string, a config key, a password, a version number, or the precise wording of something. Example: If a search for a file or app name fails, you can use this tool.",
+        parameters: {
+            type: "object",
+            properties: {
+                prompt: {
+                    type: "string",
+                    description: "What to show inside the popup. Ask a clear, specific question that makes it obvious what exact value you need, e.g. 'What's the full path to the log file you want me to check?' or 'Paste the exact function name you want renamed.'",
+                },
+            },
+            required: ["prompt"],
+        },
+    },
+}
+
 const EDIT_ACTIVE_FILE_TOOL = {
     type: "function",
     function: {
@@ -466,6 +658,32 @@ const EDIT_ACTIVE_FILE_TOOL = {
         },
     },
 }
+const CREATE_FILE_TOOL = {
+    type: "function",
+    function: {
+        name: "create_vscode_file",
+        description:
+            "Create a new file in the user's workspace, with or without initial content. Use this when the user asks you to make/create/add a new file ('make a new file called utils.js', 'create an empty README', 'create config.json with these settings'). Won't overwrite an existing file unless overwrite is explicitly true — if the file already exists and overwrite isn't set, this fails so nothing gets clobbered by accident; tell the user and confirm before retrying with overwrite. The new file opens in the editor once created.",
+        parameters: {
+            type: "object",
+            properties: {
+                path: {
+                    type: "string",
+                    description: "Full absolute path for the new file, including filename and extension, e.g. '/home/user/project/src/utils.js'.",
+                },
+                content: {
+                    type: "string",
+                    description: "Initial file content. Omit or leave empty to create a blank file.",
+                },
+                overwrite: {
+                    type: "boolean",
+                    description: "Set true only if the user has explicitly confirmed they want to replace an existing file at that path. Defaults to false.",
+                },
+            },
+            required: ["path"],
+        },
+    },
+}
 const READ_ACTIVE_FILE_TOOL = {
     type: "function",
     function: {
@@ -476,6 +694,6 @@ const READ_ACTIVE_FILE_TOOL = {
     },
 }
 const STTS_TOOL_NAMES = new Set(
-    [SCREENSHOT_TOOL, RUN_COMMAND_TOOL, EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL].map(t => t.function.name)
+    [SCREENSHOT_TOOL, RUN_COMMAND_TOOL, ASK_USER_TOOL, EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL, CREATE_FILE_TOOL].map(t => t.function.name)
 )
 export { SttsToolExecutor, STTS_TOOL_NAMES }

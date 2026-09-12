@@ -10,6 +10,7 @@ import { saveFlawlessTurn } from './saveFlawlessTurns.js'
 import { getConfig } from './config.js'
 import { speakToStream } from '../vtubing/youtube/streamTTS.js'
 import { CODE_SYSTEM_PROMPT, stripCodeFence } from '../coding/codeEditShared.js'
+import { isSttsEnabled } from "../startUtils.js"
 
 const YOUTUBE_CHANNEL_ID = "youtube"
 const MINECRAFT_CHANNEL_ID = "minecraft"
@@ -20,6 +21,28 @@ function isMinecraftActionTool(name) {
 }
 
 const GIF_TOOLS = new Set(["send_gif", "send_meme"])
+
+// Strips model artifacts and JSON-escaped angle brackets from text that's
+// about to be stored as a memory. Keeps "<think>\n\n</think>\n\n..." and
+// similar junk from leaking into episodic memory summaries / raw fields.
+function cleanMemoryText(text) {
+    if (typeof text !== 'string') return ''
+    let out = text
+        // Un-escape JSON-escaped angle brackets first so the tag strips below
+        // still match if the string literally contains "\u003Cthink\u003E".
+        .replace(/\\u003C/gi, '<')
+        .replace(/\\u003E/gi, '>')
+        // Paired blocks.
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/<answer>[\s\S]*?<\/answer>/gi, '')
+        .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+        // Any stragglers (unclosed or empty).
+        .replace(/<\/?think>/gi, '')
+        .replace(/<\/?answer>/gi, '')
+    // Collapse blank-line rubble left behind by the strips.
+    out = out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+    return out
+}
 
 export class Lily {
     /**
@@ -258,12 +281,18 @@ export class Lily {
                 max_tokens: maxTokens,
             }, { timeout: this.opts.ollamaTimeout })
 
-            const summary = data.choices?.[0]?.message?.content?.trim()
+            const summary = cleanMemoryText(data.choices?.[0]?.message?.content ?? "")
             if (!summary) return
+
+            const cleanedRaw = lines
+                .map(cleanMemoryText)
+                .filter(Boolean)
+                .join("\n")
+            if (!cleanedRaw) return
 
             await this.tools.addEpisodicMemory({
                 summary,
-                raw: lines.join("\n"),
+                raw: cleanedRaw,
                 participants,
                 emotions,
                 importance,
@@ -755,9 +784,11 @@ export class Lily {
             this.turnStartMessages.set(channelId, userMessage)
 
             this.tools.resetTurn()
-            const autoMemoryBlock = await this.tools.autoInjectMemory(clean)
-            if (autoMemoryBlock) this.turnAutoMemoryBlocks.set(channelId, autoMemoryBlock)
-            else this.turnAutoMemoryBlocks.delete(channelId)
+            if (channelId != VOICE_ASSISTANT_CHANNEL_ID) {
+                const autoMemoryBlock = await this.tools.autoInjectMemory(clean)
+                if (autoMemoryBlock) this.turnAutoMemoryBlocks.set(channelId, autoMemoryBlock)
+                else this.turnAutoMemoryBlocks.delete(channelId)
+            }
 
             const count = (this.channelMessageCounts.get(channelId) ?? 0) + 1
             this.channelMessageCounts.set(channelId, count)

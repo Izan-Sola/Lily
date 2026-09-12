@@ -224,7 +224,9 @@ export class Lily {
     getModuleStatus() {
         return this.tools.getStatus()
     }
-
+    setApprovalCallbacks(callbacks) {
+        this.tools.setApprovalCallbacks(callbacks)
+    }
     buildMessagesForOllama(channelId, systemPromptOverride = null, opts = {}) {
         const { skipHistory = false, skipRawContext = false, suppressActionReminder = false } = opts
         const messages = []

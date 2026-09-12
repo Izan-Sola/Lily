@@ -8,7 +8,10 @@ import axios from 'axios'
 import { Logger } from '../../utils/Logger.js'
 import { ok, err } from './toolHelpers.js'
 import { checkShrinkRatio, checkStubBodies } from '../../coding/codeEditShared.js'
+import { classifyRisk } from '../../ai/tools/riskyActionsManagement/riskClassifier.js'
+import { approvalStore } from '../../ai/tools/riskyActionsManagement/approvalStore.js'
 
+const SUBMODULES = ['screenshot', 'pidev', 'coding']
 const execFileAsync = promisify(execFile)
 
 const PI_TIMEOUT_MS = 90_000
@@ -218,7 +221,15 @@ class SttsToolExecutor {
         this.codingEnabled = !!codingEnabled
         this._editCallback = editCallback
         this._vscodeCompanionUrl = process.env.VSCODE_COMPANION_URL || 'http://localhost:8768'
-
+        this._available = {
+            screenshot: !!sttsEnabled,
+            pidev: !!(sttsEnabled && pidevEnabled),
+            coding: !!(sttsEnabled && codingEnabled),
+        }
+        this._enabled = { screenshot: true, pidev: true, coding: true }
+        this._onApprovalNeeded = null
+        this._onApprovalResult = null
+        approvalStore.on('resolved', (payload) => this._handleApprovalResolved(payload))
         // Tool results are text-only, so a captured screenshot can't be
         // returned inline. It's parked here as base64 instead; the tool
         // loop should drain it after execution (takePendingImages()) and
@@ -226,7 +237,24 @@ class SttsToolExecutor {
         // turnAutoMemoryBlocks gets drained per-turn in handleMessage.
         this._pendingImages = []
     }
-
+    setSubmoduleEnabled(key, enabled) {
+        if (!SUBMODULES.includes(key)) {
+            return { ok: false, reason: `"${key}" isn't a toggleable STTS submodule.` }
+        }
+        if (!this._available[key]) {
+            return { ok: false, reason: `${key} wasn't started at boot (missing flag), so it can't be toggled. Restart with that flag to make it available.` }
+        }
+        this._enabled[key] = !!enabled
+        Logger.info(`${key} tools ${enabled ? 'ENABLED' : 'DISABLED'}`, "MODULE TOGGLE")
+        return { ok: true }
+    }
+    getSubmoduleStatus() {
+        const status = {}
+        for (const key of SUBMODULES) {
+            status[key] = { available: this._available[key], enabled: this._available[key] && this._enabled[key] }
+        }
+        return status
+    }
     get toolNames() {
         return this._activeToolDefs().map(t => t.function.name)
     }
@@ -235,12 +263,13 @@ class SttsToolExecutor {
         return this._activeToolDefs()
     }
     _activeToolDefs() {
-        if (!this.sttsEnabled) return []
-        const defs = [SCREENSHOT_TOOL]
-        if (this.pidevEnabled) defs.push(RUN_COMMAND_TOOL, ASK_USER_TOOL)
-        if (this.codingEnabled) defs.push(EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL, CREATE_FILE_TOOL)
+        const defs = []
+        if (this._active('screenshot')) defs.push(SCREENSHOT_TOOL)
+        if (this._active('pidev')) defs.push(RUN_COMMAND_TOOL, ASK_USER_TOOL)
+        if (this._active('coding')) defs.push(EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL, CREATE_FILE_TOOL)
         return defs
     }
+
 
     takePendingImages() {
         const images = this._pendingImages
@@ -248,8 +277,9 @@ class SttsToolExecutor {
         return images
     }
 
+
     async getScreenshot() {
-        if (!this.sttsEnabled) return err("Screenshot tool isn't enabled.")
+        if (!this._active('screenshot')) return err("Screenshot tool isn't enabled.")
 
         let dir
         try {
@@ -270,7 +300,25 @@ class SttsToolExecutor {
             if (dir) await rm(dir, { recursive: true, force: true }).catch(() => { })
         }
     }
+    setApprovalCallbacks({ onApprovalNeeded, onApprovalResult } = {}) {
+        if (onApprovalNeeded) this._onApprovalNeeded = onApprovalNeeded
+        if (onApprovalResult) this._onApprovalResult = onApprovalResult
+    }
 
+    async _handleApprovalResolved({ id, approved, reason, instruction, channelId }) {
+        if (!approved) {
+            Logger.warning(`Declined (${reason ?? 'manual deny'}): ${instruction.slice(0, 200)}`, "APPROVAL")
+            this._onApprovalResult?.({ channelId, instruction, approved: false, reason })
+            return
+        }
+        Logger.info(`Approved, running: ${instruction.slice(0, 200)}`, "APPROVAL")
+        try {
+            const report = await this._runPi(instruction)
+            this._onApprovalResult?.({ channelId, instruction, approved: true, report })
+        } catch (e) {
+            this._onApprovalResult?.({ channelId, instruction, approved: true, error: e.message })
+        }
+    }
     _screenshotStrategies() {
         if (process.platform === 'win32') {
             return [['windows', captureWindows]]
@@ -337,26 +385,35 @@ class SttsToolExecutor {
         )
     }
 
-    async runSystemCommand(args = {}) {
-        if (!this.sttsEnabled || !this.pidevEnabled) {
+    async runSystemCommand(args = {}, context = {}) {
+        if (!this._active('pidev')) {
             return err("System command tool isn't enabled.")
         }
 
         const { prompt } = args
         if (!prompt?.trim()) return err("prompt required.")
 
-        Logger.info(`Delegating to pi: ${prompt.slice(0, 200)}`, "STTS")
+        const { risky, matched } = classifyRisk(prompt)
 
-        try {
-            const report = await this._runPi(prompt)
-            Logger.success(`pi finished: ${report.slice(0, 200)}`, "STTS")
-            return ok(report || "Done, no output.")
-        } catch (e) {
-            Logger.error(`pi failed: ${e.message}`, "STTS")
-            return err(e.message === 'timeout'
-                ? "Pi took too long and was cut off."
-                : "Pi ran into a problem executing that.")
+        if (!risky) {
+            Logger.info(`Delegating to pi: ${prompt.slice(0, 200)}`, "STTS")
+            try {
+                const report = await this._runPi(prompt)
+                Logger.success(`pi finished: ${report.slice(0, 200)}`, "STTS")
+                return ok(report || "Done, no output.")
+            } catch (e) {
+                Logger.error(`pi failed: ${e.message}`, "STTS")
+                return err(e.message === 'timeout'
+                    ? "Pi took too long and was cut off."
+                    : "Pi ran into a problem executing that.")
+            }
         }
+
+        const id = approvalStore.create({ instruction: prompt, channelId: context.channelId, matched })
+        Logger.warning(`Risky command flagged (matched "${matched}"), awaiting approval [${id}]: ${prompt.slice(0, 200)}`, "APPROVAL")
+        this._onApprovalNeeded?.({ id, instruction: prompt, channelId: context.channelId, matched })
+
+        return ok(`That looks like a risky action ("${matched}"), so I sent it for approval instead of just running it — I'll let you know once it's handled.`)
     }
     _runPi(prompt) {
         return new Promise((resolve, reject) => {
@@ -423,7 +480,7 @@ class SttsToolExecutor {
     }
 
     async askUserForInput(args = {}) {
-        if (!this.sttsEnabled || !this.pidevEnabled) {
+        if (!this._active('pidev')) {
             return err("Ask-user tool isn't enabled.")
         }
 
@@ -462,8 +519,9 @@ class SttsToolExecutor {
     // localhost HTTP to read/write the active editor directly, and reuses
     // the same generation + overwrite guard as continue-bridge.js's apply
     // role (see src/coding/codeEditShared.js) rather than reimplementing it.
+
     async editActiveFile(args = {}) {
-        if (!this.sttsEnabled || !this.codingEnabled) {
+        if (!this._active('coding')) {
             return err("VSCode editing tool isn't enabled.")
         }
         if (!this._editCallback) {
@@ -524,7 +582,7 @@ class SttsToolExecutor {
         return ok(`Edited ${fileName}. It's applied in the editor as unsaved changes — check it over before saving.`)
     }
     async createFile(args = {}) {
-        if (!this.sttsEnabled || !this.codingEnabled) {
+        if (!this._active('coding')) {
             return err("VSCode file-creation tool isn't enabled.")
         }
 
@@ -554,7 +612,7 @@ class SttsToolExecutor {
         return ok(`Created ${fileName}${content ? ' with the given content' : ' (empty)'}. It's open in the editor now.`)
     }
     async readActiveFile() {
-        if (!this.sttsEnabled || !this.codingEnabled) {
+        if (!this._active('coding')) {
             return err("VSCode reading tool isn't enabled.")
         }
 
@@ -575,10 +633,13 @@ class SttsToolExecutor {
         Logger.info(`Read active file: ${active.path}`, "STTS")
         return ok(`File: ${active.path}\n\n${active.content}`)
     }
-    async execute(name, args) {
+    _active(key) {
+        return this._available[key] && this._enabled[key]
+    }
+    async execute(name, args, context = {}) {
         switch (name) {
             case "get_screenshot": return this.getScreenshot()
-            case "run_system_command": return this.runSystemCommand(args)
+            case "run_system_command": return this.runSystemCommand(args, context)
             case "ask_user_for_input": return this.askUserForInput(args)
             case "edit_active_vscode_file": return this.editActiveFile(args)
             case "read_active_vscode_file": return this.readActiveFile()
@@ -607,13 +668,13 @@ const RUN_COMMAND_TOOL = {
     function: {
         name: "run_system_command",
         description:
-            "Delegate an operating-system task to Pi, your terminal-savvy assistant, when the user asks for something that requires actually touching the system (running a command, finding/editing a file, cleaning something up, checking system state, fixing a bug in a project on disk). Pass what the user wants done as a clear natural-language instruction - Pi figures out the actual commands. Only use this for real system/file actions, not things you can already answer yourself.",
+            "Delegate an operating-system task to Pi, your terminal-savvy assistant, when the user asks for something that requires actually touching the system (running a command or script, finding/editing a file, cleaning something up, checking system state, fixing a bug in a project on disk). Pass EXACTLY what the user said to Pi — Pi figures out the actual commands. Only use this for real system/file actions, not things you can already answer yourself.",
         parameters: {
             type: "object",
             properties: {
                 prompt: {
                     type: "string",
-                    description: "Natural-language description of the system task, e.g. 'Empty the trash and tell me how much space was freed'.",
+                    description: "Exactly what the user asked for, e.g. 'Empty the trash and tell me how much space was freed'.",
                 },
             },
             required: ["prompt"],

@@ -329,6 +329,26 @@ async function setupDiscordBot() {
         Logger.success(`Logged in as ${client.user.tag}`, "CLIENT")
         try {
             await initializeFeatures()
+            ai.setApprovalCallbacks({
+                onApprovalNeeded: async ({ instruction, channelId, matched }) => {
+                    try {
+                        const ch = await client.channels.fetch(channelId)
+                        await ch.send(`⚠️ Risky command flagged ("${matched}"): ${instruction}\nApprove/deny it from the control panel dashboard.`)
+                    } catch (e) {
+                        Logger.error(`Approval notify failed: ${e.message}`, "APPROVAL")
+                    }
+                },
+                onApprovalResult: async ({ channelId, instruction, approved, report, error, reason }) => {
+                    try {
+                        const ch = await client.channels.fetch(channelId)
+                        if (!approved) return ch.send(`❌ Declined (${reason}): ${instruction.slice(0, 150)}`)
+                        if (error) return ch.send(`⚠️ Approved but it failed: ${error}`)
+                        return ch.send(`✅ Done: ${report || 'no output'}`)
+                    } catch (e) {
+                        Logger.error(`Approval result post failed: ${e.message}`, "APPROVAL")
+                    }
+                },
+            })
             if (isN8nEnabled) {
                 const { startNotifyServer } = await import('./n8n/discordNotify.js')
                 notifyServerHandle = startNotifyServer(client, getConfig().discordUserID, 3300)

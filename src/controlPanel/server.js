@@ -2,6 +2,7 @@
 import express from 'express'
 import session from 'express-session'
 import { Logger } from '../utils/Logger.js'
+import { approvalStore } from '../ai/tools/riskyActionsManagement/approvalStore.js'
 import {
     isLockedOut, recordFailure, recordSuccess,
     verifyPassword, verifyUsername, newCsrfToken,
@@ -83,7 +84,10 @@ function dashboardPage(csrfToken) {
         <button class="action" onclick="llamaAction('restart')">Restart</button>
         <button class="action danger" onclick="llamaAction('stop')">Stop</button>
     </div>
-
+    <div class="card">
+        <h3>Pending Approvals</h3>
+        <div id="approvals">None right now.</div>
+    </div>
     <div class="toast" id="toast"></div>
 
     <script>
@@ -108,13 +112,19 @@ function dashboardPage(csrfToken) {
         return res.json()
     }
 
+    const LABELS = {
+        minecraft: 'Minecraft', vtube: 'VTube Studio', vrchat: 'VRChat',
+        browser: 'Browser control', screenshot: 'Screenshot', pidev: 'Pi-dev / system commands',
+        coding: 'VSCode editing',
+    }
+
     async function loadModules() {
         const status = await api('/api/modules')
         const el = document.getElementById('modules')
         el.innerHTML = Object.entries(status).map(([name, s]) => \`
             <div class="row">
                 <div>
-                    <span class="name">\${name}</span>
+                    <span class="name">\${LABELS[name] || name}</span>
                     \${!s.available ? '<div class="unavailable">not started at boot</div>' : ''}
                 </div>
                 <label class="switch">
@@ -135,7 +145,31 @@ function dashboardPage(csrfToken) {
             loadModules()
         }
     }
+    async function loadApprovals() {
+        const list = await api('/api/approvals')
+        const el = document.getElementById('approvals')
+        if (!list.length) { el.textContent = 'None right now.'; return }
+        el.innerHTML = list.map(a => \`
+            <div class="row">
+                <div>
+                    <div><b>\${a.matched}</b> — \${a.instruction}</div>
+                </div>
+                <div>
+                    <button class="action" onclick="decide('\${a.id}', true)">✅</button>
+                    <button class="action danger" onclick="decide('\${a.id}', false)">❌</button>
+                </div>
+            </div>
+        \`).join('')
+    }
 
+    async function decide(id, approved) {
+        await api(\`/api/approvals/\${id}/decide\`, { method: 'POST', body: JSON.stringify({ approved }) })
+        toast(approved ? 'Approved' : 'Denied')
+        loadApprovals()
+    }
+
+    loadApprovals()
+    setInterval(loadApprovals, 5000)
     async function loadLlamaStatus() {
         const { running } = await api('/api/llama/status')
         document.getElementById('dot').className = 'status-dot ' + (running ? 'status-up' : 'status-down')
@@ -210,7 +244,32 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
     app.get('/logout', (req, res) => {
         req.session.destroy(() => res.redirect('/login'))
     })
+    function requireApiKeyOrSession(req, res, next) {
+        const key = req.headers['x-api-key']
+        if (key && process.env.CP_API_KEY && key === process.env.CP_API_KEY) {
+            req._viaApiKey = true
+            return next()
+        }
+        if (req.session?.authed) return next()
+        return res.status(401).json({ error: 'Not authenticated' })
+    }
 
+    function csrfUnlessApiKey(req, res, next) {
+        if (req._viaApiKey) return next()
+        return requireCsrf(req, res, next)
+    }
+
+    app.get('/api/approvals', requireApiKeyOrSession, (req, res) => {
+        res.json(approvalStore.list())
+    })
+
+    app.post('/api/approvals/:id/decide', requireApiKeyOrSession, csrfUnlessApiKey, (req, res) => {
+        const { id } = req.params
+        const { approved } = req.body
+        const resolved = approvalStore.resolve(id, !!approved, approved ? null : 'manual deny')
+        if (!resolved) return res.status(404).json({ error: 'Not found or already resolved' })
+        res.json({ ok: true })
+    })
     app.use(requireAuth)
 
     app.get('/', (req, res) => {

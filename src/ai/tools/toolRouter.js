@@ -9,7 +9,13 @@ import { BrowserToolExecutor, BROWSER_TOOL_NAMES } from './browserTools.js'
 import { getConfig } from '../config.js'
 
 const VOICE_ASSISTANT_CHANNEL = 'voiceAssistant'
-const TOGGLEABLE_MODULES = ['minecraft', 'vtube', 'vrchat', 'stts', 'browser']
+
+// Whole-executor toggles (on/off as a unit) vs. STTS's own submodule
+// toggles (screenshot / pidev / coding), which are delegated to the
+// executor itself since it already tracks available+enabled per submodule.
+const WHOLE_EXECUTOR_MODULES = ['minecraft', 'vtube', 'vrchat', 'browser']
+const STTS_SUBMODULES = ['screenshot', 'pidev', 'coding']
+const TOGGLEABLE_MODULES = [...WHOLE_EXECUTOR_MODULES, ...STTS_SUBMODULES]
 
 class ToolRouter {
     constructor({ mcSend = null, getStateController = null, vtsClient = null, sttsConfig = {}, flags = {} }) {
@@ -34,20 +40,17 @@ class ToolRouter {
         ) : null
         this.browser = browser ? new BrowserToolExecutor() : null
 
-        // Runtime on/off switch per module. Only meaningful for modules whose
-        // executor actually exists (was started with its flag at boot) — this
-        // never starts or stops a bridge, it only controls whether that
-        // module's tools are offered to the model / allowed to execute.
+        // Runtime on/off switch for the four whole-executor modules.
+        // STTS's own submodules track their state inside SttsToolExecutor.
         this._enabled = {
             minecraft: true,
             vtube: true,
             vrchat: true,
-            stts: true,
             browser: true,
         }
 
         this._byName = new Map()
-        this._moduleByName = new Map() // toolName -> module key, or null for chat (never toggleable)
+        this._moduleByName = new Map() // toolName -> module key (only for whole-executor modules), or null
 
         const register = (executor, moduleKey) => {
             for (const name of executor.toolNames) {
@@ -56,11 +59,13 @@ class ToolRouter {
             }
         }
 
+        // chat and stts pass null: chat is never toggleable, stts gates
+        // itself internally per-submodule so the router doesn't double-check it.
         register(this.chat, null)
         if (this.minecraft) register(this.minecraft, 'minecraft')
         if (this.vtube) register(this.vtube, 'vtube')
         if (this.vrchat) register(this.vrchat, 'vrchat')
-        if (this.stts) register(this.stts, 'stts')
+        if (this.stts) register(this.stts, null)
         if (this.browser) register(this.browser, 'browser')
     }
 
@@ -75,9 +80,15 @@ class ToolRouter {
     get vtubeEnabled() { return !!this.vtube && this._enabled.vtube }
 
     // ---- runtime module toggle ----
-    // Returns { ok: boolean, reason?: string }
     setEnabled(moduleName, enabled) {
-        if (!TOGGLEABLE_MODULES.includes(moduleName)) {
+        if (STTS_SUBMODULES.includes(moduleName)) {
+            if (!this.stts) {
+                return { ok: false, reason: `STTS bridge wasn't started at boot, so ${moduleName} can't be toggled.` }
+            }
+            return this.stts.setSubmoduleEnabled(moduleName, enabled)
+        }
+
+        if (!WHOLE_EXECUTOR_MODULES.includes(moduleName)) {
             return { ok: false, reason: `"${moduleName}" isn't a toggleable module.` }
         }
         if (!this[moduleName]) {
@@ -87,14 +98,23 @@ class ToolRouter {
         Logger.info(`${moduleName} tools ${enabled ? 'ENABLED' : 'DISABLED'}`, "MODULE TOGGLE")
         return { ok: true }
     }
-
+    setApprovalCallbacks(callbacks) {
+        if (this.stts) this.stts.setApprovalCallbacks(callbacks)
+    }
     // Status for every toggleable module, for the control panel.
     getStatus() {
         const status = {}
-        for (const key of TOGGLEABLE_MODULES) {
+        for (const key of WHOLE_EXECUTOR_MODULES) {
             status[key] = {
                 available: !!this[key],
                 enabled: !!this[key] && this._enabled[key],
+            }
+        }
+        if (this.stts) {
+            Object.assign(status, this.stts.getSubmoduleStatus())
+        } else {
+            for (const key of STTS_SUBMODULES) {
+                status[key] = { available: false, enabled: false }
             }
         }
         return status
@@ -133,7 +153,8 @@ class ToolRouter {
     get voiceAssistantTools() {
         const base = [...this.chat.tools]
         if (this.vtube && this._enabled.vtube) base.push(...this.vtube.tools)
-        if (this.stts && this._enabled.stts) base.push(...this.stts.tools)
+        // stts.tools is already filtered internally by its own submodule state
+        if (this.stts) base.push(...this.stts.tools)
         if (this.browser && this._enabled.browser) base.push(...this.browser.tools)
         return base
     }
@@ -144,8 +165,9 @@ class ToolRouter {
         const executors = [this.chat, this.minecraft, this.vtube, this.vrchat, this.stts, this.browser]
             .filter(Boolean)
         for (const executor of executors) {
-            const moduleKey = executor === this.chat ? null : this._moduleName(executor)
+            const moduleKey = this._moduleName(executor)
             if (moduleKey && !this._enabled[moduleKey]) continue
+            // stts (moduleKey null) already filters internally via .tools
             for (const tool of executor.tools) {
                 seen.set(tool.function.name, tool)
             }
@@ -157,9 +179,8 @@ class ToolRouter {
         if (executor === this.minecraft) return 'minecraft'
         if (executor === this.vtube) return 'vtube'
         if (executor === this.vrchat) return 'vrchat'
-        if (executor === this.stts) return 'stts'
         if (executor === this.browser) return 'browser'
-        return null
+        return null // chat, stts — gated elsewhere/internally
     }
 
     // ---- tool name checks (safe) ----
@@ -190,6 +211,8 @@ class ToolRouter {
             this.chat.markFlawed('module_disabled')
             return JSON.stringify({ status: "error", message: `${moduleKey} is currently disabled.` })
         }
+        // stts tools (moduleKey === null) enforce their own submodule
+        // enabled-state inside each method already — no router-level check needed.
 
         const isStts = this.stts && this.isSttsTool(name)
         const isBrowser = this.browser && this.isBrowserTool(name)
@@ -209,7 +232,7 @@ class ToolRouter {
             }
         }
 
-        return executor.execute(name, args)
+        return executor.execute(name, args, context)
     }
 }
 

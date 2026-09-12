@@ -141,10 +141,19 @@ export class Lily {
         return this.rawBuffers.get(channelId)
     }
 
-    getToolsForChannel(channelId) {
+    getToolsForChannel(channelId, context = {}) {
         if (channelId === MINECRAFT_CHANNEL_ID) return this.tools.tools
         if (channelId === VRCHAT_CHANNEL_ID) return this.tools.vrchatTools
         if (channelId === VOICE_ASSISTANT_CHANNEL_ID) return this.tools.voiceAssistantTools
+
+        const opts = getConfig()
+        const isTrustedDM = opts.allowAnyToolViaDM
+            && context.isDM
+            && context.userId
+            && String(context.userId) === String(opts.discordUserID)
+
+        if (isTrustedDM) return this.tools.allTools   // ← was this.tools.voiceAssistantTools
+
         return this.tools.nonMinecraftTools
     }
 
@@ -545,7 +554,7 @@ export class Lily {
         return { text: fallback, gifUrl: pendingGifUrl }
     }
 
-    async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn) {
+    async runToolCalls(channelId, calls, tracker, toolsUsedThisTurn, pushFn, opts = {}) {
         let pendingGifUrl = null
 
         for (const { name, args } of calls) {
@@ -575,7 +584,11 @@ export class Lily {
             }
 
             toolsUsedThisTurn.set(name, usesSoFar + 1)
-            const result = await this.tools.execute(name, args, { channelId })
+            const result = await this.tools.execute(name, args, {
+                channelId,
+                isDM: opts.isDM,
+                userId: opts.userId,
+            })
 
             if (GIF_TOOLS.has(name)) {
                 try {
@@ -598,10 +611,10 @@ export class Lily {
         const images = pending.map(img => ({ mimeType: img.mediaType, base64: img.base64 }))
         scratch.push({ role: "user", content: this.buildUserContent("", images) })
     }
-
     async runToolLoop(channelId, systemPromptOverride = null, opts = {}, images = []) {
+
         const tracker = new ToolCallTracker(this.opts.maxToolRepeats)
-        const baseTools = this.getToolsForChannel(channelId)
+        const baseTools = this.getToolsForChannel(channelId, opts)
         let pendingGifUrl = null
         const toolsUsedThisTurn = new Map()
         let imagesInjected = false
@@ -661,7 +674,8 @@ export class Lily {
                         const call = calls.find(c => c.name === name && !c._used)
                         if (call) call._used = true
                         scratch.push({ role: "tool", tool_call_id: call?.id, content: text })
-                    }
+                    },
+                    opts
                 )
                 if (gif) pendingGifUrl = gif
                 this.injectPendingScreenshots(channelId, scratch)
@@ -687,7 +701,8 @@ export class Lily {
 
                     const gif = await this.runToolCalls(
                         channelId, calls, tracker, toolsUsedThisTurn,
-                        (_name, text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` })
+                        (_name, text) => scratch.push({ role: "user", content: `<tool_response>\n${text}\n</tool_response>` }),
+                        opts
                     )
 
                     if (gif) pendingGifUrl = gif

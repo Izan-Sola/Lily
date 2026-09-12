@@ -6,6 +6,7 @@ import { VtubeToolExecutor, VTUBE_TOOL_NAMES } from './vtubeTools.js'
 import { VrchatToolExecutor, VRCHAT_TOOL_NAMES } from './vrchatTools.js'
 import { SttsToolExecutor, STTS_TOOL_NAMES } from './sttsTools.js'
 import { BrowserToolExecutor, BROWSER_TOOL_NAMES } from './browserTools.js'
+import { getConfig } from '../config.js'
 
 const VOICE_ASSISTANT_CHANNEL = 'voiceAssistant'
 
@@ -107,7 +108,17 @@ class ToolRouter {
         if (this.browser) base.push(...this.browser.tools)
         return base
     }
-
+    get allTools() {
+        const seen = new Map()
+        const executors = [this.chat, this.minecraft, this.vtube, this.vrchat, this.stts, this.browser]
+            .filter(Boolean)
+        for (const executor of executors) {
+            for (const tool of executor.tools) {
+                seen.set(tool.function.name, tool)
+            }
+        }
+        return [...seen.values()]
+    }
     // ---- tool name checks (safe) ----
     isChatTool(name) { return CHAT_TOOL_NAMES.has(name) }
     isMinecraftTool(name) { return this.minecraft && MINECRAFT_TOOL_NAMES.has(name) }
@@ -130,13 +141,22 @@ class ToolRouter {
             return JSON.stringify({ status: "error", message: `Unknown tool: ${name}` })
         }
 
-        // Guard STTS and browser tools to voice channel
         const isStts = this.stts && this.isSttsTool(name)
         const isBrowser = this.browser && this.isBrowserTool(name)
-        if ((isStts || isBrowser) && context.channelId !== VOICE_ASSISTANT_CHANNEL) {
-            Logger.warning(`Blocked "${name}" outside voiceAssistant channel (channelId=${context.channelId})`, "TOOL")
-            this.chat.markFlawed(isStts ? 'stts_tool_wrong_channel' : 'browser_tool_wrong_channel')
-            return JSON.stringify({ status: "error", message: `${name} is only available in voice conversations.` })
+
+        if (isStts || isBrowser) {
+            const inVoiceChannel = context.channelId === VOICE_ASSISTANT_CHANNEL
+            const opts = getConfig()
+            const isTrustedDM = opts.allowAnyToolViaDM
+                && context.isDM
+                && context.userId
+                && String(context.userId) === String(opts.discordUserID)
+
+            if (!inVoiceChannel && !isTrustedDM) {
+                Logger.warning(`Blocked "${name}" outside voiceAssistant channel (channelId=${context.channelId}, isDM=${context.isDM}, userId=${context.userId})`, "TOOL")
+                this.chat.markFlawed(isStts ? 'stts_tool_wrong_channel' : 'browser_tool_wrong_channel')
+                return JSON.stringify({ status: "error", message: `${name} is only available in voice conversations or trusted DMs.` })
+            }
         }
 
         return executor.execute(name, args)

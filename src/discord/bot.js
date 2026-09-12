@@ -776,8 +776,8 @@ export async function createBot() {
 
         await message.channel.sendTyping()
         try {
-            const reply = await ai.chat(channelId, formattedMessage, null, {}, images)
-            await sendReply(message, reply)   // now a no-op if reply is null
+            const reply = await ai.chat(channelId, formattedMessage, null, { isDM, userId: message.author.id }, images)
+            await sendReply(message, reply)
         } catch (err) {
             Logger.error("Ping handler error: " + err.message, "MESSAGE")
             await message.reply("I'm having trouble thinking right now, sorry!")

@@ -41,25 +41,26 @@ if (!isDiscordEnabled && !backend && !isVrchatEnabled && !runConfig.stts) {
     Logger.warning('No Discord, no Minecraft, no VRChat bridge, and no STTS active - there is nothing for this process to do', "STARTUP")
 }
 
+const sttsToolsEnabled = runConfig.stts || isPidevEnabled || isCodingEnabled
 // ---------- 2. Instantiate Lily ----------
 const sttsConfig = {
-    enabled: runConfig.stts,
-    pidevEnabled: runConfig.stts && isPidevEnabled,
-    codingEnabled: runConfig.stts && isCodingEnabled,
+    enabled: sttsToolsEnabled,
+    pidevEnabled: sttsToolsEnabled && isPidevEnabled,
+    codingEnabled: sttsToolsEnabled && isCodingEnabled,
 }
 
 export const ai = new Lily(
-    {},                                     // options (will use config defaults)
-    null,                                   // mcSend – set later via ai.setMcSend()
-    null,                                   // vtsClient – set later via ai.setVtsClient()
+    {},
+    null,
+    null,
     sttsConfig,
-    null,                                   // onVoiceGif – optional, can be added later
+    null,
     {
         modded: backend === 'modded',
         mineflayer: backend === 'mineflayer',
         vtube: runConfig.vtube,
         vrchat: runConfig.vrchat,
-        stts: runConfig.stts,
+        stts: sttsToolsEnabled,   // ← was runConfig.stts
         browser: runConfig.browser,
     }
 )

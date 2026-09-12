@@ -75,8 +75,8 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 * You will need to run `node run deploy` to deploy all the commands globally.
 * You are gonna need to add 2 environment variables:
 
-  * **DISCORD_TOKEN**: Your application secret token found in the OAuth2 tab in your application.
-  * **CLIENT_ID**: Your own user client id. Inside your profile, or by right clicking your pfp in a message, "Copy User ID" (You need to activate developer mode in settings).
+  * **DISCORD_TOKEN**: Your application secret token found in the Bot tab in your application.
+  * **CLIENT_ID**: Your bot's user client id. Inside its profile, or by right clicking its pfp in a message, "Copy User ID" (You need to activate developer mode in settings).
 
 ### Memes and GIFS:
 

@@ -26,6 +26,10 @@
   * [CLI control](#cli-control)
   
 * [Pi dev](#pi-dev)
+* [VTube Studio](#vtube-studio)
+* [Browser control](#browser-control)
+* [n8n](#n8n)
+* [Control panel](#control-panel)
 
 ### Prerequisites:
 
@@ -59,7 +63,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - There's a bunch of flags you can combine to enable each functionality. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
 
-- All the available flags are : `modded`, `stts`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, `vtube`, `browser`.
+- All the available flags are : `modded`, `stts`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, `vtube`, `browser`, `n8n`.
 
 All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the flags you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
 
@@ -325,3 +329,52 @@ All modes are configured through a unified start file (`src/start.js`) that auto
      }
     ```
 - Ofc adjust the model id/name, context window etc...
+
+### VTube Studio
+
+* For this you obviously need [VTube Studio](https://denchisoft.com/) running, model loaded, and the API enabled in its settings.
+* Run with the `vtube` flag. First time it connects it'll ask you to allow the plugin inside VTube Studio itself, just click accept.
+* Environment variables (all optional, defaults shown):
+
+  * **VTS_HOST**: default `localhost`.
+  * **VTS_PORT**: default `8001`.
+  * **VTS_PLUGIN_NAME**: default `LilyVTS`, whatever shows up as the plugin name inside VTS.
+  * **VTS_PLUGIN_DEV**: default `Izan`, just the plugin dev/author name field, doesn't really matter what you put.
+
+* If you also want it to read a YouTube live chat while vtubing (so she reacts to chat messages during a stream), you need:
+
+  * **YOUTUBE_API_KEY**: A Youtube Data API v3 key from the [Google Cloud Console](https://console.cloud.google.com/).
+  * **YOUTUBE_VIDEO_ID**: The video ID of the live stream (the part after `v=` in the URL).
+
+### Browser control
+
+* This uses the [`open-browser-control`](https://github.com/smankoo/open-browser-control) Chrome extension in its bridge mode, so the AI can navigate/click/type/scroll on your actual browser.
+* You need to install the extension in Chrome first, following its own repo's instructions. The bridge itself (`npx -y open-browser-control --bridge`) gets spawned automatically when you run with the `browser` flag, you don't need to run it yourself.
+* One environment variable, optional:
+
+  * **BROWSER_BRIDGE_URL**: default `ws://localhost:9334`. Only change it if you've configured the extension to use a different port.
+
+* This is currently only offered/used on the voice assistant / STTS side, not wired into Discord.
+
+### n8n
+
+* This spins up a small OpenAI-compatible endpoint (`/v1/chat/completions`) so you can point an [n8n](https://n8n.io/) AI node at Lily's brain, plus loads any trigger files dropped in `src/n8n/triggers` (there's a `health.js` one in there as an example, add your own the same way, default export a function).
+* Run with the `n8n` flag. No required environment variables, it defaults to port 3200 for the bridge.
+* This also wires up a `/notify` endpoint on the Discord side so a workflow can DM you through the bot, that one needs Discord to also be running (`discord` flag).
+
+### Control panel
+
+* A small local web dashboard to toggle modules on/off and manage the llama-server process without touching the terminal.
+* It will NOT start unless these 3 are set:
+
+  * **CP_USERNAME**: login username.
+  * **CP_PASSWORD_HASH**: bcrypt hash of your password, generate it with `node src/controlPanel/hashPassword.js "your password"` and paste the output.
+  * **CP_SESSION_SECRET**: any random long string, used to sign the session cookie.
+
+* Optional ones:
+
+  * **CP_PORT**: default `4210`.
+  * **CP_HTTPS**: set to `true` if you're putting it behind a reverse proxy with HTTPS, so it trusts the proxy correctly.
+  * **CP_API_KEY**: only needed if you're hitting its API from outside the dashboard itself.
+
+* Same deal as the VRChat website, if you want it publicly reachable you're gonna need a sub-domain + reverse proxy, and to actually pick a real password this time.

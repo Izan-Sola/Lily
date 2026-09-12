@@ -1,6 +1,6 @@
 # Lily's brain - Overview
 
-###### Last edit: September 2026 (unfinished) This will be an in depth documentation. Believe it or not I find manually documenting stuff fun. It also makes me understand my own project better and find ways to improve it.
+###### Last edit: September 2026 (unfinished)
 
 # Index
 

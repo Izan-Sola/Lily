@@ -9,6 +9,7 @@ import * as stts from './STTS/index.js'
 import { startVoiceAssistant, stopVoiceAssistant } from './voiceAssistant/index.js'
 import { Lily } from './ai/Lily.js'
 import { loadAllTriggers } from './n8n/loadTriggers.js'
+import { startControlPanel } from './controlPanel/server.js'
 // ---------- 1. Parse flags & build config ----------
 const flags = parseFlags()
 let runConfig
@@ -64,7 +65,17 @@ export const ai = new Lily(
         browser: runConfig.browser,
     }
 )
-
+if (process.env.CP_USERNAME && process.env.CP_PASSWORD_HASH && process.env.CP_SESSION_SECRET) {
+    startControlPanel(ai, {
+        port: parseInt(process.env.CP_PORT ?? '4210'),
+        username: process.env.CP_USERNAME,
+        passwordHash: process.env.CP_PASSWORD_HASH,
+        sessionSecret: process.env.CP_SESSION_SECRET,
+        trustProxy: process.env.CP_HTTPS === 'true',   // ← new
+    })
+} else {
+    Logger.warning('Control panel not started — missing CP_USERNAME / CP_PASSWORD_HASH / CP_SESSION_SECRET in .env', "CONTROL PANEL")
+}
 // ---------- 3. Variables for services ----------
 let vtsClient = null
 let survivalLoopHandle = null

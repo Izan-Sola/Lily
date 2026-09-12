@@ -1,0 +1,59 @@
+0.00.083.681 I log_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.083.685 I device_info:
+0.00.240.382 I   - CUDA0   : NVIDIA GeForce RTX 3060 (11909 MiB, 9700 MiB free)
+0.00.240.398 I   - CPU     : Intel(R) Core(TM) i5-9400F CPU @ 2.90GHz (32025 MiB, 32025 MiB free)
+0.00.240.503 I system_info: n_threads = 6 (n_threads_batch = 6) / 6 | CUDA : ARCHS = 750,860 | USE_GRAPHS = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.00.240.852 I srv          init: using 5 threads for HTTP server
+0.00.240.963 I srv         start: binding port with default address family
+0.00.242.177 I srv          main: loading model
+0.00.242.181 I srv    load_model: loading model '/mnt/GAMES/test/qwen3.5-9b-Q6-Lily-gguf-2_gguf/Qwen3.5-9B.Q6_K.gguf'
+0.00.242.238 I common_init_result: fitting params to device memory ...
+0.00.242.239 I common_init_result: (for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on)
+0.22.283.067 W llama_context: n_ctx_seq (64000) < n_ctx_train (262144) -- the full capacity of the model will not be utilized
+0.22.411.879 W common_init_from_params: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.22.411.894 W common_init_from_params: warming up the model with an empty run - please wait ... (--no-warmup to disable)
+0.33.931.304 I srv    load_model: loaded multimodal model, '/mnt/CA200B97200B8A21/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.33.931.312 I srv    load_model: initializing slots, n_slots = 1
+0.33.966.314 W srv    load_model: speculative decoding will use checkpoints
+0.34.001.628 W common_speculative_init: no implementations specified for speculative decoding
+0.34.001.633 I slot   load_model: id  0 | task -1 | new slot, n_ctx = 64000
+0.34.001.694 I srv    load_model: prompt cache is enabled, size limit: 8192 MiB
+0.34.001.697 I srv    load_model: use `--cache-ram 0` to disable the prompt cache
+0.34.001.698 I srv    load_model: for more info see https://github.com/ggml-org/llama.cpp/pull/16391
+0.34.010.878 W srv          init: --cache-idle-slots requires --kv-unified, disabling
+0.34.085.765 I init: chat template, example_format: '<|im_start|>system
+You are a helpful assistant<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+Hi there<|im_end|>
+<|im_start|>user
+How are you?<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+'
+0.34.103.300 I srv          init: init: chat template, thinking = 0
+0.34.114.160 I srv          main: model loaded
+0.34.114.269 I srv          main: server is listening on http://0.0.0.0:11435
+0.34.115.801 I srv  update_slots: all slots are idle
+7.36.025.579 I srv  params_from_: Chat format: peg-native
+7.36.026.640 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+7.36.026.643 I srv  get_availabl: updating prompt cache
+7.36.026.645 I srv          load:  - looking for better prompt, base f_keep = -1.000, sim = 0.000
+7.36.026.647 I srv        update:  - cache state: 0 prompts, 0.000 MiB (limits: 8192.000 MiB, 64000 tokens, 8589934592 est)
+7.36.026.648 I srv  get_availabl: prompt cache update took 0.00 ms
+7.36.033.183 I reasoning-budget: activated, budget=0 tokens
+7.36.033.187 I reasoning-budget: budget=0, forcing immediately
+7.36.033.187 I reasoning-budget: forced sequence complete, done
+7.36.033.201 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+7.37.584.328 I slot create_check: id  0 | task 0 | created context checkpoint 1 of 32 (pos_min = 2066, pos_max = 2066, n_tokens = 2067, size = 50.251 MiB)
+7.37.950.827 I slot create_check: id  0 | task 0 | created context checkpoint 2 of 32 (pos_min = 2578, pos_max = 2578, n_tokens = 2579, size = 50.251 MiB)
+7.38.428.339 I slot print_timing: id  0 | task 0 | 
+prompt eval time =    2085.78 ms /  2583 tokens (    0.81 ms per token,  1238.39 tokens per second)
+       eval time =     309.33 ms /     9 tokens (   34.37 ms per token,    29.10 tokens per second)
+      total time =    2395.11 ms /  2592 tokens
+7.38.428.639 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2591, truncated = 0
+7.38.428.647 I srv  update_slots: all slots are idle

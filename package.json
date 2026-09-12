@@ -1,0 +1,35 @@
+{
+  "name": "lolita-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node --import ./src/utils/Logger.js src/start.js",
+    "deploy": "node --import ./src/utils/Logger.js ./src/discord/deploy-commands.js",
+    "─── Shortcuts (any flag combo also works via: npm run start -- <flags>) ───": "",
+    "start:discord": "npm run start -- discord",
+    "start:modded:discord": "npm run start -- modded discord",
+    "start:discord:modded": "npm run start -- modded discord",
+    "vts:test": "node src/vtubing/vts-cli.js"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@ericedouard/vad-node-realtime": "^0.2.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@snazzah/davey": "^0.1.9",
+    "@tavily/core": "^0.7.4",
+    "axios": "^1.13.5",
+    "bcryptjs": "^3.0.3",
+    "discord-api-types": "^0.38.40",
+    "discord.js": "^14.25.1",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "mineflayer": "^4.37.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "node": "^25.6.1",
+    "osc": "^2.4.5",
+    "sharp": "^0.35.4",
+    "zod": "^4.4.3"
+  }
+}

@@ -557,13 +557,11 @@ export async function createBot() {
             // trigger_expression fails cleanly instead of hanging on a dead
             // socket, and keep retrying in the background.
             vts.ws?.once("close", () => {
-                Logger.warning("VTube Studio disconnected, retrying...", "VTUBE")
                 ai.setVtsClient(null)
-                setTimeout(() => connectVts(new VTSClient(), retryMs), retryMs)
             })
         } catch (err) {
-            Logger.warning(`VTube Studio not available yet (${err.message}), retrying in ${retryMs}ms`, "VTUBE")
-            setTimeout(() => connectVts(vts, retryMs), retryMs)
+            Logger.warning(`VTube Studio not available yet (${err.message}`, "VTUBE")
+            //setTimeout(() => connectVts(vts, retryMs), retryMs)
         }
     }
 

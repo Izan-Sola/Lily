@@ -2,7 +2,7 @@
 import { stt, speak } from '../../STTS/index.js';                // <-- changed
 import { requestReply } from '../server.js';
 import { setStatus } from '../util/chatbox.js';
-import cfg from '../config.js'; // VRChat-specific config still separate
+import cfg from '../util/config.js'; // VRChat-specific config still separate
 
 const realLog = (msg) => process.stdout.write(msg + '\n');
 

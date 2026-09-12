@@ -1,0 +1,11 @@
+{
+  "name": "lily-mineflayer",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lily's Minecraft bridge, ported from the LilyBridge NeoForge mod to mineflayer for a cracked plugin server.",
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.1.10"
+  }
+}

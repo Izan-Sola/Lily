@@ -217,6 +217,13 @@ export class Lily {
     getRawContext(channelId) {
         return this.getRawBuffer(channelId).get()
     }
+    setModuleEnabled(moduleName, enabled) {
+        return this.tools.setEnabled(moduleName, enabled)
+    }
+
+    getModuleStatus() {
+        return this.tools.getStatus()
+    }
 
     buildMessagesForOllama(channelId, systemPromptOverride = null, opts = {}) {
         const { skipHistory = false, skipRawContext = false, suppressActionReminder = false } = opts

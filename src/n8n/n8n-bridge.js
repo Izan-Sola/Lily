@@ -24,21 +24,21 @@ function createThinkStripper() {
             buffer = ''
             return out
         }
-        return '' // still buffering inside/before the think block
+        return ''
     }
 }
 
 export function startN8nBridge(port = 3200) {
     const app = express()
     app.use(express.json())
+
     app.get('/v1/models', (req, res) => {
         res.json({
             object: 'list',
-            data: [
-                { id: 'Lily', object: 'model', created: Date.now(), owned_by: 'local' }
-            ]
+            data: [{ id: 'Lily', object: 'model', created: Date.now(), owned_by: 'local' }]
         })
     })
+
     app.post('/v1/chat/completions', async (req, res) => {
         const body = req.body
         const opts = getConfig()
@@ -48,6 +48,30 @@ export function startN8nBridge(port = 3200) {
             messages[0] = { role: 'system', content: `${SYSTEM_PROMPT}\n\n${messages[0].content}` }
         } else {
             messages.unshift({ role: 'system', content: SYSTEM_PROMPT })
+        }
+
+        const wantsStream = body.stream === true
+
+        if (!wantsStream) {
+            try {
+                const { data } = await axios.post(`${opts.ollamaUrl}/v1/chat/completions`, {
+                    ...body,
+                    messages,
+                    stream: false,
+                }, { timeout: opts.ollamaTimeout })
+
+                if (data.choices?.[0]?.message?.content) {
+                    data.choices[0].message.content = data.choices[0].message.content
+                        .replace(/<think>[\s\S]*?<\/think>/g, '')
+                        .trim()
+                }
+
+                res.json(data)
+            } catch (err) {
+                console.error(err.message)
+                res.status(500).json({ error: err.message })
+            }
+            return
         }
 
         try {

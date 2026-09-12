@@ -8,7 +8,7 @@ import { parseFlags, getConfigFromFlags, describeConfig, isVtubeEnabled, isModde
 import * as stts from './STTS/index.js'
 import { startVoiceAssistant, stopVoiceAssistant } from './voiceAssistant/index.js'
 import { Lily } from './ai/Lily.js'
-
+import { loadAllTriggers } from './n8n/loadTriggers.js'
 // ---------- 1. Parse flags & build config ----------
 const flags = parseFlags()
 let runConfig
@@ -76,6 +76,7 @@ let tavilyServerHandle = null
 let browserBridgeHandle = null // { process, client }
 let n8nBridgeHandle = null
 let notifyServerHandle = null
+let n8nTriggerHandles = []
 
 // ---------- 4. Service initializers ----------
 async function startBrowserBridge() {
@@ -267,7 +268,9 @@ async function initializeFeatures() {
         // Mineflayer bot might expose mcSend – adjust as needed
         if (mcBot.mcSend) ai.setMcSend(mcBot.mcSend)
     }
-
+    if (isN8nEnabled) {
+        n8nTriggerHandles = await loadAllTriggers()
+    }
     vrchatBotHandle = await startVrchat()
     if (vrchatBotHandle) {
         Logger.success('VRChat bridge started', "VRCHAT")
@@ -297,6 +300,7 @@ async function initializeFeatures() {
     if (n8nBridgeHandle) {
         Logger.success('n8n bridge started', "N8N")
     }
+
 }
 
 // ---------- 6. Discord setup ----------
@@ -345,7 +349,12 @@ async function main() {
 
         const shutdown = async (signal) => {
             Logger.info(`Shutting down (${signal})...`, "SHUTDOWN")
-
+            for (const { file, handle } of n8nTriggerHandles) {
+                if (handle?.close) {
+                    await new Promise(resolve => handle.close(resolve))
+                    Logger.info(`Closed trigger: ${file}`, "SHUTDOWN")
+                }
+            }
             if (vtsClient) {
                 await vtsClient.disconnect().catch(() => { })
             }

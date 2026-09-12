@@ -114,6 +114,21 @@
 - **/audio**: To make her respond with an audio message.
 <br>
 
+## STTS
+
+###### `src/STTS/`
+
+- Shared speech pipeline used by both the voice assistant (`voiceAssistant/`) and the VRChat bot (`vrchatBot/audiostuff/`), so wake-word detection, transcription and TTS playback aren't duplicated per surface.
+
+- **`transcription/`**: `vad.js` wraps `@ericedouard/vad-node-realtime` (Silero VAD) to detect speech start/end from a continuous mic stream. On speech end, `recorder.js`'s buffered audio gets converted and passed to `transcriber.js`, which shells out to `faster-whisper` and cleans up the raw transcript. `index.js` ties this into an `EventEmitter`, emitting `speechStart`, `speech` (every utterance, used for ambient/butt-in buffering) and `wake` (only when the wake word is matched, unless `enableWakeWord` is off in config, in which case everything is treated as a wake). Also exposes manual/forced-recording helpers used by the CLI key bindings.
+
+- **`voice/`**: `index.js`'s `speak()` handles TTS playback. Spawns either `edge-tts` or the `StyleTTS2` python script (`tts_safe.py`, see `STYLETTS2_SCRIPT`) depending on `tts.engine`, pipes the raw PCM into `paplay`/`ffplay` depending on platform. Tracks a generation counter so a new `speak()` call can cleanly kill and wait out the previous playback chain before starting, instead of racing it for the audio sink.
+
+- **`config/`**: `config.json` + `index.js`, hot-reloaded via `fs.watch` so tuning VAD thresholds, the wake words list, or the TTS sink doesn't require a restart.
+
+- Both consumers (`voiceAssistant/index.js`, `vrchatBot/audiostuff/audioLoop.js`) just subscribe to `stt.on('wake', ...)` / `stt.on('speech', ...)` and call `tts.speak(...)`, the actual mic/VAD/whisper/TTS plumbing lives entirely in this module.
+<br>
+
 ## Minecraft
 
 ### Neoforge (Arclight server)
@@ -233,19 +248,78 @@
   
 ### Mineflayer (wip)
 
+###### `src/minecraft/mineflayer/`
+
+- A second, alternate Minecraft backend for cracked/plugin servers, using [mineflayer](https://github.com/PrismarineJS/mineflayer) instead of a server-side mod. Mutually exclusive with the Neoforge backend (`modded` vs `mineflayer` flags), can't run both at once.
+
+- Ports the same `StateController` architecture 1:1 in spirit: `IDLE → RECOVERING → ATTACKING → FOLLOWING`, same priority order, same `survivalLoop.js`/`survivalPromptBuilder.js` shape and `ctx` property names, so existing persona/prompt work transfers over mostly unchanged.
+
+- `MovementHelper` wraps `mineflayer-pathfinder` instead of the mod's custom `move_to`; `SneakHelper` drives `bot.setControlState('sneak', ...)` behind the same `pulse()`/`hold()`/`cancelHold()` API. `MiningState` now issues real `bot.dig()` calls instead of a break event + callback round-trip.
+
+- The **dueling/combo system is entirely dropped** here, still wip.
+
+- New over the mod version: `helpers/whisper.js` detects incoming private messages (mineflayer's built-in `whisper` event plus a regex fallback for plugins that format `/msg` differently) and `StateController.setLastUserMessage(player, message, channel)` tracks which channel (`'public'`/`'whisper'`) a message came in on, so replies route back the same way (`/msg` stays private, public chat stays public) without needing her name mentioned first for whispers.
 
 ## Vtubing (early wip)
 
+###### `src/vtubing/`
+
+- Lets the AI control a VTube Studio avatar and read a YouTube live chat while doing so, active under the `vtube` flag.
+
+- **`VTSClient.js`**: A persistent authenticated WebSocket connection to VTube Studio's own local API. Handles the one-time plugin authorization handshake, caches the resulting token to `vts_token.json` so it isn't asked again on every restart, and exposes hotkey listing/triggering which `VtubeToolExecutor` calls into.
+
+- **`youtube/liveClient.js`**: Polls a live stream's chat via the YouTube Data API (`YOUTUBE_API_KEY` + `YOUTUBE_VIDEO_ID`), calling back per new message. Poll interval is floored server-side so a misconfigured value can't burn API quota.
+
+- **`youtube/chatBuffer.js`**: Batches incoming chat messages instead of forwarding each one individually, flushing to Lily once both a batch size and a cooldown window are satisfied (sliding window if the buffer fills before the cooldown elapses), so she comments on a digest of chat rather than replying to every single line.
+
+- **`vtubeConfig.js`**: Shared tunables (batch size, cooldown, poll floor) for the above.
+
 ## VRChat 
 
-###### `src/ai/vrchatbot/`
+###### `src/vrchatBot/`
 
+- The VRChat surface: an OSC bridge to control a VRChat avatar plus a voice loop, meant to run following the user around in-game. Kept intentionally separate from the main brain's persistent memory/tools (no tool calls here beyond what's wired through `ai`), active under the `vrchat` flag.
 
-<br>
+- **`vrchat/osc.js`**: Low-level OSC send/receive to VRChat's local OSC endpoints (movement inputs, avatar parameters, chatbox).
+
+- **`bot/follow.js`**: Reads proximity values from the 5 Contact Receiver parameters set up on the bot's avatar (center/front/back/left/right) and drives movement input addresses toward the player, with hysteresis between a start and stop range so it doesn't flap on/off right at the follow threshold.
+
+- **`bot/avatarActions.js`**: Fires default VRChat expressions/animations over OSC, either from a tool call or directly via the 1-8 CLI keys (bypassing the brain, for testing).
+
+- **`bot/perception.js`**: Screenshot capture for "what do you see" style prompts, platform-specific command (`spectacle`/`ffmpeg`+gdigrab/`gnome-screenshot`) picked from the `PLATFORM` config value, since there's no reliable way to sniff KDE vs GNOME from Node.
+
+- **`vrchat/vrchatBridge.js`**: Handles auto-accepting invites from trusted user IDs, and the Steam/Proton launch plumbing on Linux.
+
+- **`server.js`**: Exposes a small web UI on port 3030 as a text-based alternative to talking to the bot, optionally attaching a screenshot, replies still land in-game either way.
+
+### Listening and voice
+
+- Voice input/output for VRChat reuses the shared `STTS` module (see [STTS](#stts)) rather than having its own pipeline: `audiostuff/audioLoop.js` subscribes to `stt.on('wake', ...)` for direct replies and `stt.on('speech', ...)` to accumulate an ambient buffer.
+
+- **Butt-in**: on a randomized timer (`BUTTIN_MIN_MS`-`BUTTIN_MAX_MS`), the accumulated ambient buffer (audio picked up even without a wake word) gets sent to Lily as a one-off "ambient" prompt; she can choose to reply or return `NONE` to stay quiet. This is what lets her occasionally comment on conversation she wasn't directly addressed in, same idea as Discord's butt-in chance.
+
+- `chatbox.js` pushes whatever she's currently doing/saying to VRChat's in-game chatbox/status indicator so it's visible to other players even before/without an audio line.
 
 # Other functionalities
 
 ## VSC Integration
 
+###### `src/coding/`
+
+- Runs a small Express server (`continue-bridge.js`, `BRAIN_PORT`, default 8767) that speaks the OpenAI chat-completions format expected by the [Continue](https://continue.dev/) VS Code extension, so Continue's chat/edit roles both talk to the same shared `ai` instance as everything else instead of a generic API.
+
+- Two roles are handled differently: the **chat/agent role** (tool-use capable) gets Lily's persona; the **apply role** (the one that writes file content straight to disk with no tool call in between) is locked to a strict code-merging-only system prompt (`codeEditShared.js`'s `CODE_SYSTEM_PROMPT`) since there's no tool-call layer to intercept a bad response on that path.
+
+- **Overwrite guard** (`codeEditShared.js`): before trusting an apply-role rewrite, checks the new content isn't a suspiciously large shrink of the original (`maxShrinkRatio`) and doesn't contain stub bodies like `{ ... }` in place of real code, both are telltale signs of a lazily-hallucinated rewrite rather than the actual requested edit. Shared with the voice "edit this file" tool path so both call sites enforce the same safety checks.
+
+- **`tavily-mcp-server.js`**: A standalone stdio MCP server exposing an image-search tool backed by the Tavily API, wired into Continue's `mcpServers` config so image search works from inside VS Code the same way it does elsewhere.
+
 ## Pi dev
-s
+
+###### `src/pidev-bridge/`
+
+- `pidev-bridge.js` runs its own small Express server (`PIDEV_BRIDGE_PORT`, default 3100) exposing an OpenAI-compatible `/v1/chat/completions` endpoint, used as the model backend for the `pi` coding-agent CLI (running in its own terminal, not spawned by the brain).
+
+- Deliberately spins up its **own fresh `Lily` instance** (not the shared `ai` from `bot.js`), on its own channel id (`"pi-dev"`), so Pi gets an isolated memory/history lane instead of bleeding into Discord/Minecraft context.
+
+- A persona-only excerpt of the main system prompt (no tool defs, no Minecraft-specific instructions) is appended after Pi's own system prompt, so Pi's built-in tool/dev instructions stay fully intact and Lily just rides on top as a personality layer, replies get wrapped in-character but the actual file/OS operations are handled entirely by Pi's own tools, the bridge never calls into Pi directly.

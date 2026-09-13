@@ -358,7 +358,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 ### n8n
 
-* This spins up a small OpenAI-compatible endpoint (`/v1/chat/completions`) so you can point an [n8n](https://n8n.io/) AI node at Lily's brain, plus loads any trigger files dropped in `src/n8n/triggers` (there's a `health.js` one in there as an example, add your own the same way, default export a function).
+* This spins up a small OpenAI-compatible endpoint (`/v1/chat/completions`) so you can point an [n8n](https://n8n.io/) AI node at the brain, plus loads any trigger files dropped in `src/n8n/triggers` (there's a `health.js` one in there as an example, add your own the same way, default export a function).
 * Run with the `n8n` flag. No required environment variables, it defaults to port 3200 for the bridge.
 * This also wires up a `/notify` endpoint on the Discord side so a workflow can DM you through the bot, that one needs Discord to also be running (`discord` flag).
 

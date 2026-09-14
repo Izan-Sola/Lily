@@ -12,8 +12,7 @@
 - still cant bend water and chi.
 - mineflayer implementation is early wip and still needs a good amount of work.
 - dont forget about finishing vtubing stop sidetracking for the love of god.
-- add specific tools when STTS is active such as being able to screenshot ur screen if ua sk stuff like "check this meme". "see this" whaetever...
-- vague self reminder to keep documenting stuff
+- i sidetracked, heavily.
 
 - am i ever gonna start that mc series playing with my AI daughter?
 

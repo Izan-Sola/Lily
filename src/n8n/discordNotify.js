@@ -1,8 +1,12 @@
 // src/discord/notifyEndpoint.js
 import express from 'express'
-import { writeFileSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { spawn } from 'node:child_process'
 import path from 'node:path'
+
+const TYPORA_BIN = process.env.TYPORA_BIN || 'typora'
+const DOWNLOADS_DIR = path.join(homedir(), 'Downloads')
 
 export function startNotifyServer(client, yourUserId, port = 3300) {
     const app = express()
@@ -14,26 +18,23 @@ export function startNotifyServer(client, yourUserId, port = 3300) {
 
         try {
             const user = await client.users.fetch(yourUserId)
-            const payload = {}
 
-            if (message.length > 1900) {
-                const dir = mkdtempSync(path.join(tmpdir(), 'lily-notify-'))
-                const mdPath = path.join(dir, 'digest.md')
-                writeFileSync(mdPath, message)
-                payload.files = filePath ? [mdPath, filePath] : [mdPath]
-                payload.content = 'Here you go~'
-            } else {
-                payload.content = message
-                if (filePath) payload.files = [filePath]
+            const payload = {
+                content: message,
+                files: filePath ? [filePath] : []
             }
 
             await user.send(payload)
+
+            if (filePath) {
+                spawn(TYPORA_BIN, [filePath], { detached: true, stdio: 'ignore' }).unref()
+            }
+
             res.json({ status: 'ok' })
         } catch (err) {
             console.error('Notify DM failed:', err.message)
             res.status(500).json({ error: err.message })
         }
     })
-
     return app.listen(port, () => console.log(`Notify server listening on ${port}`))
 }

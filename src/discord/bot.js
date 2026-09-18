@@ -478,7 +478,7 @@ class VoiceSession {
             Logger.info(`${displayName}: "${transcript}"`, "STT")
 
             ai.pushRawMessage(this.channelId, displayName, transcript)
-            ai.observe(`${displayName} said (voice): ${transcript}`)
+           // ai.observe(`${displayName} said (voice): ${transcript}`, authorName, message.author.id)
 
             const lowerTranscript = transcript.toLowerCase()
             const wakeWords = ["lily", "lili", "lillie", "hey lily", "hi lily"]
@@ -627,7 +627,7 @@ export async function createBot() {
         // isMentioned is always true for DMs, so this branch (and its random
         // chance of ignoring the message) is never reached there.
         if (!isMentioned && !isReplyToBot) {
-            ai.observe(channelId, `${authorName} said ${userInput}`)
+            ai.observe(channelId, `${authorName} said ${userInput}`, authorName, message.author.id)
 
             if (Math.random() < 0.005) {
                 const prefs = getPrefs(message.author.id)
@@ -774,7 +774,7 @@ export async function createBot() {
 
         await message.channel.sendTyping()
         try {
-            const reply = await ai.chat(channelId, formattedMessage, null, { isDM, userId: message.author.id }, images)
+            const reply = await ai.chat(channelId, formattedMessage, null, { isDM, userId: message.author.id, authorName: message.member?.displayName ?? message.author.username }, images)
             await sendReply(message, reply)
         } catch (err) {
             Logger.error("Ping handler error: " + err.message, "MESSAGE")

@@ -2,3 +2,5 @@ data/
 node_modules/
 .env
 logs/
+llama-server.log
+working_memory.json

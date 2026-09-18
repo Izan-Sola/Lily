@@ -119,15 +119,16 @@ class ToolRouter {
         }
         return status
     }
-
     // ---- core methods (delegated) ----
     resetTurn() { this.chat.resetTurn() }
     shouldHardStop() { return this.chat.shouldHardStop() }
     markFlawed(reason) { this.chat.markFlawed(reason) }
     recordNarration() { return this.chat.recordNarration() }
     get turnFlawless() { return this.chat.turnFlawless }
-    autoInjectMemory(queryText) { return this.chat.autoInjectMemory(queryText) }
+    autoInjectMemory(queryText, speaker = {}) { return this.chat.autoInjectMemory(queryText, speaker) }
     addEpisodicMemory(payload) { return this.chat.addEpisodicMemory(payload) }
+    addFactOutOfBand(payload) { return this.chat.addFactOutOfBand(payload) }
+    removeFactOutOfBand(query) { return this.chat.removeFactOutOfBand(query) }
 
     // ---- Tool lists – only include enabled executors ----
     get tools() {

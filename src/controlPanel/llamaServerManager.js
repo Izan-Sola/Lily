@@ -9,6 +9,7 @@ import { Logger } from '../utils/Logger.js'
 const execFileAsync = promisify(execFile)
 
 const LLAMA_BIN = '/mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server'
+
 const LLAMA_ARGS = [
     '--model', '/mnt/GAMES/test/qwen3.5-9b-Q6-Lily-gguf-2_gguf/Qwen3.5-9B.Q6_K.gguf',
     '--mmproj', '/mnt/CA200B97200B8A21/mmproj-Qwen3.5-9B-Q8_0.gguf',
@@ -27,6 +28,7 @@ const LLAMA_ARGS = [
     '-ngl', '999',
     '--flash-attn', 'on',
 ]
+
 const LLAMA_ENV = { ...process.env, CUDA_VISIBLE_DEVICES: '0' }
 const LLAMA_HEALTH_URL = 'http://localhost:11435/health'
 const LOG_PATH = path.join(process.cwd(), 'logs', 'llama-server.log')

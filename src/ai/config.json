@@ -40,5 +40,14 @@
     "toolCallFormat": "xml_tags",
     "trainingOutputFormat": "sharegpt",
     "discordUserID": "572121744253386792",
-    "allowAnyToolViaDM": true
+    "allowAnyToolViaDM": true,
+
+    "workingMemoryEnabled": true,
+    "workingMemoryModel": null,
+    "workingMemoryEvery": 1,
+    "workingMemoryMaxTokens": 250,
+    "workingMemoryLines": 8,
+    "explicitMemoryEnabled": true,
+    "memoryAutoInjectPersonEnabled": true,
+    "memoryAutoInjectPersonLimit": 6
 }

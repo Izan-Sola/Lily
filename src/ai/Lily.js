@@ -11,6 +11,8 @@ import { getConfig } from './config.js'
 import { speakToStream } from '../vtubing/youtube/streamTTS.js'
 import { CODE_SYSTEM_PROMPT, stripCodeFence } from '../coding/codeEditShared.js'
 import { isSttsEnabled } from "../startUtils.js"
+import { WorkingMemory } from './memory/workingMemory.js'
+import { handleExplicitMemory } from './memory/explicitMemory.js'
 
 const YOUTUBE_CHANNEL_ID = "youtube"
 const MINECRAFT_CHANNEL_ID = "minecraft"
@@ -61,6 +63,7 @@ export class Lily {
         this.channelMessageCounts = new Map()
         this.observeBuffers = new Map()
         this.observeParticipants = new Map()
+        this.workingMemory = new WorkingMemory()
         this.mcSend = mcSend
         this.tools = new ToolRouter({
             mcSend,
@@ -241,12 +244,16 @@ export class Lily {
         const history = skipHistory ? [] : [...this.getConvoHistory(channelId)]
 
         if (!skipRawContext) {
+            const working = this.workingMemory.renderBlock(channelId)
             const autoMemory = this.turnAutoMemoryBlocks.get(channelId)
             const rawContext = this.getRawContext(channelId)
 
             let block = ""
+            if (working) {
+                block += `${working}\n`
+            }
             if (autoMemory) {
-                block += `[Memory — things you may already know, only relevant if they actually relate to the newest message. Ignore anything that doesn't.]\n${autoMemory}\n[End memory]\n`
+                block += `[Extra context] Information that might be related to the newest message - ignore if irrelevant${autoMemory}\n[Extra context]\n`
             }
             if (rawContext.length) {
                 const reminder = (channelId === MINECRAFT_CHANNEL_ID && !suppressActionReminder)
@@ -273,7 +280,6 @@ export class Lily {
         messages.push(...history)
         return messages
     }
-
     buildUserContent(text, images = []) {
         if (!images || images.length === 0) return text
         const parts = []
@@ -337,9 +343,13 @@ export class Lily {
         })
     }
 
-    observe(channelId, rawMessage, authorName = null) {
+    observe(channelId, rawMessage, authorName = null, authorId = null) {
         const clean = sanitizeInput(rawMessage)
         if (!clean) return
+
+        if (authorName && authorName.toLowerCase() !== "lily") {
+            this.workingMemory.noteSpeaker(channelId, { name: authorName, id: authorId })
+        }
 
         const buffer = this.getObserveBuffer(channelId)
         buffer.push(clean)
@@ -795,12 +805,18 @@ export class Lily {
         const clean = sanitizeInput(rawInput)
         if (!clean && images.length === 0) return null
 
+        const authorName = opts.authorName ?? null
+        const authorId = opts.userId ?? null
+
+        // Presence is deterministic and recorded even if we skip the turn below.
+        this.workingMemory.noteSpeaker(channelId, { name: authorName, id: authorId })
+
         if (this.channelLocks.get(channelId)) {
             Logger.warning(`Ignoring message in channel ${channelId} while Lily is still replying: ${clean.slice(0, 100)}`, "BUSY")
             return null
         }
 
-        Logger.info(`${clean.slice(0, 200)}${images.length ? ` + ${images.length} image(s)` : ""}`, logPrefix)
+        Logger.info(`${authorName ? `${authorName}: ` : ""}${clean.slice(0, 200)}${images.length ? ` + ${images.length} image(s)` : ""}`, logPrefix)
 
         const { skipped, result } = await this.tryChannelLock(channelId, async () => {
             const userMessage = { role: "user", content: clean || "[sent an image]" }
@@ -808,11 +824,28 @@ export class Lily {
             this.turnStartMessages.set(channelId, userMessage)
 
             this.tools.resetTurn()
-            if (channelId != VOICE_ASSISTANT_CHANNEL_ID) {
-                const autoMemoryBlock = await this.tools.autoInjectMemory(clean)
-                if (autoMemoryBlock) this.turnAutoMemoryBlocks.set(channelId, autoMemoryBlock)
-                else this.turnAutoMemoryBlocks.delete(channelId)
+
+            // Explicit "remember that ..." / "forget ..." — written before the
+            // model ever sees the message, outside the turn's tool budget.
+            let explicitNote = null
+            if (this.opts.explicitMemoryEnabled) {
+                explicitNote = await handleExplicitMemory(clean, {
+                    tools: this.tools,
+                    authorName,
+                    authorId,
+                    known: this.workingMemory.presentNames(channelId),
+                    idLookup: (name) => this.workingMemory.idFor(channelId, name),
+                })
             }
+
+            let autoMemoryBlock = null
+            if (channelId != VOICE_ASSISTANT_CHANNEL_ID) {
+                autoMemoryBlock = await this.tools.autoInjectMemory(clean, { authorName, authorId })
+            }
+
+            const combined = [explicitNote, autoMemoryBlock].filter(Boolean).join("\n")
+            if (combined) this.turnAutoMemoryBlocks.set(channelId, combined)
+            else this.turnAutoMemoryBlocks.delete(channelId)
 
             const count = (this.channelMessageCounts.get(channelId) ?? 0) + 1
             this.channelMessageCounts.set(channelId, count)
@@ -825,6 +858,14 @@ export class Lily {
             if (loopResult?.text) {
                 this.pushHistoryToBlog(channelId)
             }
+
+            // Fire-and-forget: never sits in front of the reply. Fed the whole
+            // recent room, not just the message that triggered the turn.
+            const lines = this.getRawContext(channelId)
+            this.workingMemory.update(channelId, {
+                lines: lines.length ? lines : [`${authorName ?? "User"}: ${clean}`],
+                replyText: loopResult?.text ?? "",
+            })
 
             return loopResult
         })
@@ -841,8 +882,8 @@ export class Lily {
         return this.handleMessage(channelId, userInput, "USER PROMPT", systemPromptOverride, opts, images)
     }
 
-    buttIn(channelId, rawMessage, systemPromptOverride = null) {
-        return this.handleMessage(channelId, rawMessage, "BUTT IN", systemPromptOverride)
+    buttIn(channelId, rawMessage, systemPromptOverride = null, opts = {}) {
+        return this.handleMessage(channelId, rawMessage, "BUTT IN", systemPromptOverride, opts)
     }
 }
 

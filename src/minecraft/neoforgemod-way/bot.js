@@ -201,6 +201,7 @@ async function _handleEvent(event) {
                     `${player}: ${message}`,
                     buildMinecraftSystemPrompt(getStateController()),
                     {
+                        authorName: playerName,
                         temperature: 0.5,
                         repeat_penalty: 1.0,   // was 1.15 — JSON tool calls are inherently repetitive, don't fight that
                         presence_penalty: 0,   // was 1.0 — this was almost certainly suppressing { } " : tokens

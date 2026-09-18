@@ -108,7 +108,8 @@ async function _handleIncomingMessage(player, message, channel) {
         const aiReply = await aiInstance.chat(
             "minecraft",
             `${player}: ${message}`,
-            buildMinecraftSystemPrompt(stateController)
+            buildMinecraftSystemPrompt(stateController),
+            { authorName: playerName }
         )
 
         const text = aiReply?.text?.trim()

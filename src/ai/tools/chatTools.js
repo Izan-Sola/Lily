@@ -232,13 +232,43 @@ class ChatToolExecutor {
     }
 
     // Auto-injection (passive, not a tool call) — unchanged from before the split.
-    async autoInjectMemory(queryText) {
+    // Auto-injection (passive, not a tool call).
+    async autoInjectMemory(queryText, { authorName = null, authorId = null } = {}) {
         if (!this.opts.memoryAutoInjectEnabled) return null
         const trimmed = (queryText ?? "").trim()
-        if (!trimmed) return null
+        if (!trimmed && !authorName && !authorId) return null
 
         const parts = []
+        const seen = new Set()
+        const push = (text) => {
+            const key = text.trim().toLowerCase()
+            if (!key || seen.has(key)) return
+            seen.add(key)
+            parts.push(text)
+        }
 
+        // 1. Who's talking — exact lookup, bypasses FAISS entirely.
+        if (this.opts.memoryAutoInjectPersonEnabled && (authorName || authorId)) {
+            try {
+                const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+                    subject_id: authorId ?? null,
+                    person_name: authorName ?? null,
+                    limit: this.opts.memoryAutoInjectPersonLimit ?? 6,
+                }, { timeout: this.opts.dbTimeout })
+
+                const hits = data?.results ?? []
+                if (hits.length) {
+                    Logger.info(`[person] ${authorName ?? authorId}: ${hits.length} fact(s)`, "MEMORY AUTOINJECT")
+                    for (const h of hits) push(`(about ${authorName ?? "them"}) ${h.text}`)
+                }
+            } catch (err) {
+                Logger.error(err.message, "MEMORY AUTOINJECT PERSON")
+            }
+        }
+
+        if (!trimmed) return parts.length ? parts.join("\n") : null
+
+        // 2. Topic facts.
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
                 query: trimmed,
@@ -248,16 +278,15 @@ class ChatToolExecutor {
             }, { timeout: this.opts.dbTimeout })
 
             const hits = data?.results ?? []
-            if (hits.length) {
-                for (const h of hits) {
-                    Logger.info(`[fact, score ${h.score}] "${h.text}"`, "MEMORY AUTOINJECT")
-                }
-                parts.push(...hits.map(h => h.text))
+            for (const h of hits) {
+                Logger.info(`[fact, score ${h.score}] "${h.text}"`, "MEMORY AUTOINJECT")
+                push(h.text)
             }
         } catch (err) {
             Logger.error(err.message, "MEMORY AUTOINJECT FACT")
         }
 
+        // 3. Past conversations.
         if (this.opts.memoryAutoInjectEpisodicEnabled) {
             try {
                 const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
@@ -268,11 +297,9 @@ class ChatToolExecutor {
                 }, { timeout: this.opts.dbTimeout })
 
                 const hits = data?.results ?? []
-                if (hits.length) {
-                    for (const h of hits) {
-                        Logger.info(`[episodic, score ${h.score}] summary: "${h.text}"\nraw: ${h.content}`, "MEMORY AUTOINJECT")
-                    }
-                    parts.push(...hits.map(h => `(past conversation) ${h.content}`))
+                for (const h of hits) {
+                    Logger.info(`[episodic, score ${h.score}] summary: "${h.text}"\nraw: ${h.content}`, "MEMORY AUTOINJECT")
+                    push(`(past conversation) ${h.content}`)
                 }
             } catch (err) {
                 Logger.error(err.message, "MEMORY AUTOINJECT EPISODIC")
@@ -286,7 +313,7 @@ class ChatToolExecutor {
         return parts.join("\n")
     }
 
-    async memoryAdd(factText, source = "user") {
+    async memoryAdd(factText, source = "user", meta = {}) {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr
         this._requireQuery(factText, 2, "ShinyShadow_ said their favorite color is teal")
@@ -294,7 +321,13 @@ class ChatToolExecutor {
 
         Logger.info(` Added memory: "${factText}"`, "MEMORY ADD")
         try {
-            const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, { text: factText, source }, { timeout: this.opts.dbTimeout })
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, {
+                text: factText,
+                source,
+                category: meta.category ?? null,
+                subject_id: meta.subject_id ?? null,
+                person_name: meta.person_name ?? null,
+            }, { timeout: this.opts.dbTimeout })
 
             const failed = data?.status === "error" || data?.ok === false
             if (failed) {
@@ -310,7 +343,66 @@ class ChatToolExecutor {
             return this._err("Failed to store information.")
         }
     }
+    // Exact metadata lookup — "everything I know about this person" — instead of
+    // hoping semantic similarity surfaces all of someone's facts.
+    async entityLookup({ person_name = null, subject_id = null, category = null } = {}) {
+        const limitErr = this._checkLimit('memoryQuery', LIMITS.memoryQuery, 'memory lookup (lookup_entity)')
+        if (limitErr) return limitErr
 
+        if (!person_name && !subject_id) {
+            this.markFlawed('bad_args')
+            return this._err(
+                "lookup_entity needs person_name or subject_id. If all you have is a topic, " +
+                "use query_memory_database with 2-6 keywords instead — don't call this one again."
+            )
+        }
+        this.turnUsage.memoryQuery++
+
+        Logger.info(`Entity lookup: ${person_name ?? subject_id}`, "MEMORY ENTITY")
+        try {
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+                person_name, subject_id, category, limit: 20,
+            }, { timeout: this.opts.dbTimeout })
+
+            const results = data?.results ?? []
+            return JSON.stringify({
+                status: "ok",
+                results: results.length
+                    ? results.map(r => `[${r.category}] ${r.text}`).join("\n")
+                    : "Nothing is stored under that name yet.",
+                instruction: "Lookup complete. Reply in character now — don't look the same person up again this turn.",
+            })
+        } catch (err) {
+            Logger.error(err.message, "MEMORY ENTITY")
+            return this._err("Entity lookup failed.")
+        }
+    }
+    async addFactOutOfBand({ text, source = "explicit_user_request", category = null, subject_id = null, person_name = null }) {
+        try {
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`,
+                { text, source, category, subject_id, person_name },
+                { timeout: this.opts.dbTimeout })
+            return data
+        } catch (err) {
+            Logger.error(err.message, "MEMORY ADD OOB")
+            return { status: "error", message: err.message }
+        }
+    }
+
+    async removeFactOutOfBand(query) {
+        try {
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/remove_by_query`, {
+                query,
+                k: this.opts.memoryRemoveK,
+                min_score: this.opts.memoryRemoveMinScore,
+                types: ["fact"],
+            }, { timeout: this.opts.dbTimeout })
+            return data
+        } catch (err) {
+            Logger.error(err.message, "MEMORY REMOVE OOB")
+            return { status: "error", removed: [] }
+        }
+    }
     async memoryUpdate(searchQuery, updatedText) {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr
@@ -497,7 +589,16 @@ class ChatToolExecutor {
                 windowDays: args?.window_days ?? 2,
                 daysBack: args?.days_back ?? null
             })
-            case "addto_memory_database": return this.memoryAdd(args?.text ?? "", args?.source ?? "user")
+            case "lookup_entity": return this.entityLookup({
+                person_name: args?.person_name ?? null,
+                subject_id: args?.subject_id ?? null,
+                category: args?.category ?? null,
+            })
+            case "addto_memory_database": return this.memoryAdd(args?.text ?? "", args?.source ?? "user", {
+                category: args?.category ?? null,
+                subject_id: args?.subject_id ?? null,
+                person_name: args?.person_name ?? null,
+            })
             case "update_memory_database": return this.memoryUpdate(args?.query ?? "", args?.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args?.query ?? "")
             case "send_meme": return this.searchMeme(args?.query ?? "")
@@ -636,6 +737,46 @@ const CHAT_TOOLS = [
                     }
                 },
                 required: ["query"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "lookup_entity",
+            description: `List everything stored about ONE named person. Use this for "what do you know about X", "who is X", or before saying something about a specific person you're not sure of.
+
+                        Exact lookup, not a similarity search — it returns all of their facts, not just the closest-matching ones. For topics or events rather than people, use query_memory_database instead.`,
+            parameters: {
+                type: "object",
+                properties: {
+                    person_name: { type: "string", description: "Their display name, exactly as it appears in chat. Required unless you have subject_id.", maxLength: 60 },
+                    subject_id: { type: "string", description: "Their Discord user id, only if you were actually given one. Never guess.", maxLength: 40 },
+                    category: { type: "string", description: "Optional narrowing, e.g. 'preference'.", maxLength: 30 }
+                },
+                required: []
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
+            name: "addto_memory_database",
+            description: "Store a fact worth sotring permanently that has NEVER been queried or stored before. Several people are in chat — always make clear WHO the fact is about in the text, never just 'he' or 'they'. ",
+            parameters: {
+                type: "object",
+                properties: {
+                    text: { type: "string", description: "One factual sentence naming who or what it's about. 3-20 words. Required, never empty.", maxLength: 150 },
+                    source: { type: "string" },
+                    category: {
+                        type: "string",
+                        enum: ["person", "project", "place", "object", "preference", "goal", "decision", "event", "bot", "general"],
+                        description: "What kind of thing this fact is about. Default 'general'."
+                    },
+                    person_name: { type: "string", description: "Only when the fact is about a specific person — their display name, exactly as written in chat.", maxLength: 60 },
+                    subject_id: { type: "string", description: "Only when you were actually given that person's Discord user id. Never invent one.", maxLength: 40 }
+                },
+                required: ["text", "person_name", "category"]
             }
         }
     },

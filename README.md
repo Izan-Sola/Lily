@@ -10,9 +10,10 @@
 ##### Notes or todos 
 
 - still cant bend water and chi.
-- mineflayer implementation is early wip and still needs a good amount of work.
-- dont forget about finishing vtubing stop sidetracking for the love of god.
-- i sidetracked, heavily.
+- no idea when I will bother working on the mineflayer implementation
+- should test more the vtubing on youtube
+- Thinking of reworking memory? Maybe make a database divided in categories? System, People, Lily (herself), Events... idk
+
 
 - am i ever gonna start that mc series playing with my AI daughter?
 

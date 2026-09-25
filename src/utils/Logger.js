@@ -2,6 +2,23 @@ import axios from "axios";
 
 let logChannel = null;
 
+// ---- NEW: log subscribers (for the control panel live view) ----
+const logSubscribers = new Set();
+
+export function subscribeToLogs(fn) {
+    logSubscribers.add(fn);
+    return () => logSubscribers.delete(fn);
+}
+
+function notifySubscribers(type, title, message) {
+    if (logSubscribers.size === 0) return;
+    const entry = { type, title, message, timestamp: Date.now() };
+    for (const fn of logSubscribers) {
+        try { fn(entry); } catch { /* a bad subscriber shouldn't kill logging */ }
+    }
+}
+// -----------------------------------------------------------------
+
 export async function initLogChannel(client) {
     for (const guild of client.guilds.cache.values()) {
         const ch = guild.channels.cache.find(c => c.name === "hylily-livechat-logs" && c.isTextBased());
@@ -30,7 +47,6 @@ const TYPE_ANSI = {
     success: DISCORD_ANSI.green,
 }
 
-// discord logs
 function sendToLogChannel(message, type = "info", title = "") {
     const truncated = message.length > 3200 ? message.slice(0, 3200) + "..." : message;
     const color = TYPE_ANSI[type] || DISCORD_ANSI.cyan;
@@ -127,21 +143,25 @@ export class Logger {
     static error(message, title = "ERROR") {
         sendToLogChannel(message, "error", title);
         drawBox("error", title, message);
+        notifySubscribers("error", title, message);          // NEW
     }
 
     static info(message, title = "INFO") {
         sendToLogChannel(message, "info", title);
         drawBox("info", title, message);
+        notifySubscribers("info", title, message);           // NEW
     }
 
     static warning(message, title = "WARNING") {
         sendToLogChannel(message, "warning", title);
         drawBox("warning", title, message);
+        notifySubscribers("warning", title, message);        // NEW
     }
 
     static success(message, title = "SUCCESS") {
         sendToLogChannel(message, "success", title);
         drawBox("success", title, message);
+        notifySubscribers("success", title, message);        // NEW
     }
 }
 

@@ -25,11 +25,29 @@ export async function execute(interaction) {
     await interaction.deferReply()
 
     const formattedMessage = `[${username}] says to you: ${message}`
-    const reply = await ai.chat(interaction.channelId, formattedMessage)
-
-    await interaction.editReply(
-        username + ": " + message +
-        "\n ------- \n" +
-        reply.replace(/\/\w+.*$/s, "").trim()
+    const result = await ai.chat(
+        interaction.channelId,
+        formattedMessage,
+        null,
+        { authorName: username, userId: interaction.user.id }
     )
+
+    // handleMessage returns { text, ... } from runToolLoop, or null when
+    // the input was empty or Lily is still busy replying in this channel.
+    const replyText = typeof result === "string" ? result : result?.text
+
+    if (!replyText) {
+        await interaction.editReply(
+            username + ": " + message +
+            "\n ------- \n" +
+            "*(Lily is busy or had nothing to say, try again in a moment)*"
+        )
+        return
+    }
+
+    // Strip trailing slash-commands, only when they start a line.
+    const cleaned = replyText.replace(/(^|\n)\/\w+.*$/s, "").trim()
+
+    const output = username + ": " + message + "\n ------- \n" + cleaned
+    await interaction.editReply(output.slice(0, 2000))
 }

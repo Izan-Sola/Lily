@@ -13,6 +13,7 @@ import { CODE_SYSTEM_PROMPT, stripCodeFence } from '../coding/codeEditShared.js'
 import { isSttsEnabled } from "../startUtils.js"
 import { WorkingMemory } from './memory/workingMemory.js'
 import { handleExplicitMemory } from './memory/explicitMemory.js'
+import { classifyRisk, riskAllowed } from './tools/riskyActionsManagement/riskClassifier.js'
 
 const YOUTUBE_CHANNEL_ID = "youtube"
 const MINECRAFT_CHANNEL_ID = "minecraft"
@@ -673,6 +674,18 @@ export class Lily {
                         Logger.warning(`Model tried ${foreignCalls.length} tool calls at once — only forwarding the first`, "MULTI-TOOL")
                     }
                     const single = foreignCalls[0]
+                    const argStr = typeof single.function.arguments === 'string'
+                        ? single.function.arguments
+                        : JSON.stringify(single.function.arguments ?? '')
+
+                    if (!riskAllowed()) {
+                        const { risky, matched } = classifyRisk(argStr)
+                        if (risky) {
+                            Logger.warning(`Blocked risky ${single.function.name} call (matched "${matched}"): ${argStr.slice(0, 200)}`, "APPROVAL")
+                            this._handleVoiceGif(channelId, pendingGifUrl)
+                            return { text: `I blocked that command because it looks risky ("${matched}").`, gifUrl: null }
+                        }
+                    }
                     this.pushToConvoHistory(channelId, { role: "assistant", content: msg.content ?? "", tool_calls: [single] })
                     this._handleVoiceGif(channelId, pendingGifUrl)
                     return { text: msg.content ?? "", gifUrl: null, tool_calls: [single] }

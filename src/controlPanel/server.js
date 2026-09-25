@@ -1,7 +1,7 @@
 // src/controlPanel/server.js
 import express from 'express'
 import session from 'express-session'
-import { Logger } from '../utils/Logger.js'
+import { Logger, subscribeToLogs } from '../utils/Logger.js'
 import { approvalStore } from '../ai/tools/riskyActionsManagement/approvalStore.js'
 import {
     isLockedOut, recordFailure, recordSuccess,
@@ -48,8 +48,49 @@ function loginPage(error = '') {
 function dashboardPage(csrfToken) {
     return `<!DOCTYPE html><html><head><title>Lily Control Panel</title>
     <style>
-        body { font-family: system-ui, sans-serif; background: #12121a; color: #eee; margin: 0; padding: 2rem; }
-        h1 { display: flex; justify-content: space-between; align-items: center; }
+        /* NEW: apply border-box everywhere so padding never adds to widths */
+        *, *::before, *::after { box-sizing: border-box; }
+
+        html, body { height: 100%; }
+        body {
+            font-family: system-ui, sans-serif;
+            background: #12121a;
+            color: #eee;
+            margin: 0;
+            padding: 1.25rem;
+            /* NEW: clamp any accidental overflow so the page never scrolls sideways */
+            overflow: hidden;
+        }
+
+        .layout {
+            display: flex;
+            gap: 1rem;
+            height: 100%;
+            align-items: stretch;
+            /* NEW */
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
+        }
+
+        .main {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow-y: auto;
+            padding-right: 0.25rem;
+        }
+
+        /* NEW: widened from 420px, and clamped so it can't push past the viewport */
+        .logpanel {
+            width: 520px;
+            max-width: 45vw;
+            flex-shrink: 0;
+            min-width: 0;
+            display: flex;
+            overflow: hidden;
+        }
+
+        h1 { display: flex; justify-content: space-between; align-items: center; margin-top: 0; }
         h1 a { font-size: 0.9rem; color: #aaa; text-decoration: none; }
         .card { background: #1c1c28; padding: 1.2rem 1.5rem; border-radius: 12px; margin-bottom: 1rem; }
         .row { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid #2a2a38; }
@@ -68,26 +109,107 @@ function dashboardPage(csrfToken) {
         .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 0.5rem; }
         .status-up { background: #4caf50; } .status-down { background: #d64545; }
         #llamaStatus { display:flex; align-items:center; margin-bottom: 1rem; }
-        .toast { position: fixed; bottom: 1rem; right: 1rem; background: #1c1c28; padding: 0.8rem 1.2rem; border-radius: 8px; border-left: 4px solid #7c5cff; display:none; }
+        .toast { position: fixed; bottom: 1rem; right: 1rem; background: #1c1c28; padding: 0.8rem 1.2rem; border-radius: 8px; border-left: 4px solid #7c5cff; display:none; z-index: 100; }
+
+        /* ---- Live log panel ---- */
+        .logpanel .card {
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem 1.1rem;
+            margin-bottom: 0;
+            min-height: 0;
+            min-width: 0;          /* NEW: keeps flex child from refusing to shrink */
+            overflow: hidden;      /* NEW: clip any stubborn inner overflow */
+        }
+        .logpanel h3 {
+            margin: 0 0 0.7rem 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 1.02rem;    /* NEW: slightly bigger header */
+        }
+        .logpanel h3 .clear {
+            font-size: 0.76rem;
+            color: #888;
+            cursor: pointer;
+            background: none;
+            border: 1px solid #2a2a38;
+            border-radius: 6px;
+            padding: 0.18rem 0.55rem;
+        }
+        .logpanel h3 .clear:hover { color: #eee; border-color: #444; }
+
+        #logfeed {
+            flex: 1 1 auto;
+            overflow-y: auto;
+            overflow-x: hidden;                 /* NEW: never scroll sideways, wrap instead */
+            font-family: ui-monospace, "SF Mono", Consolas, monospace;
+            font-size: 0.9rem;                  /* NEW: bumped from 0.78rem */
+            line-height: 1.4;
+            min-height: 0;
+            min-width: 0;                       /* NEW */
+        }
+        #logfeed::-webkit-scrollbar { width: 8px; }
+        #logfeed::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+
+        .log-entry {
+            padding: 0.4rem 0.6rem;
+            border-left: 3px solid #555;
+            margin-bottom: 0.32rem;
+            border-radius: 4px;
+            background: #0f0f16;
+            /* NEW: break long unbroken tokens (paths, hashes, stack frames) so nothing
+               ever pushes past the panel's right edge */
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            min-width: 0;
+            max-width: 100%;
+        }
+        .log-entry .log-title { font-weight: 600; margin-right: 0.35rem; }
+        .log-entry .log-time { color: #555; font-size: 0.78rem; margin-right: 0.4rem; }
+
+        .log-error   { border-left-color: #ff6b6b; color: #ffb0b0; }
+        .log-error   .log-title { color: #ff6b6b; }
+        .log-warning { border-left-color: #ffb84d; color: #ffd9a8; }
+        .log-warning .log-title { color: #ffb84d; }
+        .log-info    { border-left-color: #4da6ff; color: #b3d9ff; }
+        .log-info    .log-title { color: #4da6ff; }
+        .log-success { border-left-color: #4caf50; color: #b7e8b9; }
+        .log-success .log-title { color: #4caf50; }
     </style></head><body>
-    <h1>Lily Control Panel <a href="/logout">Log out</a></h1>
+    <div class="layout">
+      <div class="main">
+        <h1>Lily Control Panel <a href="/logout">Log out</a></h1>
 
-    <div class="card">
-        <h3>Modules</h3>
-        <div id="modules">Loading...</div>
+        <div class="card">
+            <h3>Modules</h3>
+            <div id="modules">Loading...</div>
+        </div>
+
+        <div class="card">
+            <h3>llama-server</h3>
+            <div id="llamaStatus"><span class="status-dot" id="dot"></span><span id="statusText">Checking...</span></div>
+            <button class="action" onclick="llamaAction('start')">Start</button>
+            <button class="action" onclick="llamaAction('restart')">Restart</button>
+            <button class="action danger" onclick="llamaAction('stop')">Stop</button>
+        </div>
+
+        <div class="card">
+            <h3>Pending Approvals</h3>
+            <div id="approvals">None right now.</div>
+        </div>
+      </div>
+
+      <aside class="logpanel">
+        <div class="card">
+          <h3>Live Logs <button class="clear" id="clearLogs">clear</button></h3>
+          <div id="logfeed"></div>
+        </div>
+      </aside>
     </div>
 
-    <div class="card">
-        <h3>llama-server</h3>
-        <div id="llamaStatus"><span class="status-dot" id="dot"></span><span id="statusText">Checking...</span></div>
-        <button class="action" onclick="llamaAction('start')">Start</button>
-        <button class="action" onclick="llamaAction('restart')">Restart</button>
-        <button class="action danger" onclick="llamaAction('stop')">Stop</button>
-    </div>
-    <div class="card">
-        <h3>Pending Approvals</h3>
-        <div id="approvals">None right now.</div>
-    </div>
     <div class="toast" id="toast"></div>
 
     <script>
@@ -145,6 +267,7 @@ function dashboardPage(csrfToken) {
             loadModules()
         }
     }
+
     async function loadApprovals() {
         const list = await api('/api/approvals')
         const el = document.getElementById('approvals')
@@ -168,8 +291,6 @@ function dashboardPage(csrfToken) {
         loadApprovals()
     }
 
-    loadApprovals()
-    setInterval(loadApprovals, 5000)
     async function loadLlamaStatus() {
         const { running } = await api('/api/llama/status')
         document.getElementById('dot').className = 'status-dot ' + (running ? 'status-up' : 'status-down')
@@ -187,7 +308,38 @@ function dashboardPage(csrfToken) {
         }
     }
 
+    // ---- Live log viewer ----
+    const logFeed = document.getElementById('logfeed')
+    const MAX_LOG_ENTRIES = 400
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+        ))
+    }
+
+    function appendLog(entry) {
+        const div = document.createElement('div')
+        div.className = 'log-entry log-' + (entry.type || 'info')
+        const time = new Date(entry.timestamp || Date.now()).toLocaleTimeString()
+        div.innerHTML = \`<span class="log-time">\${time}</span><span class="log-title">[\${escapeHtml(entry.title || '')}]</span>\${escapeHtml(entry.message || '')}\`
+        logFeed.appendChild(div)
+        while (logFeed.children.length > MAX_LOG_ENTRIES) logFeed.removeChild(logFeed.firstChild)
+        logFeed.scrollTop = logFeed.scrollHeight
+    }
+
+    const logSource = new EventSource('/api/logs/stream')
+    logSource.onmessage = (e) => {
+        try { appendLog(JSON.parse(e.data)) } catch { /* ignore */ }
+    }
+
+    document.getElementById('clearLogs').addEventListener('click', () => {
+        logFeed.innerHTML = ''
+    })
+
     loadModules()
+    loadApprovals()
+    setInterval(loadApprovals, 5000)
     loadLlamaStatus()
     setInterval(loadLlamaStatus, 8000)
     </script>
@@ -211,6 +363,15 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
             maxAge: 12 * 60 * 60 * 1000,
         },
     }))
+
+    // ---- Live log buffer: keeps the last N entries so a freshly-loaded
+    //      dashboard shows some history instead of a blank panel. ----
+    const recentLogs = []
+    const MAX_LOG_BUFFER = 200
+    subscribeToLogs((entry) => {
+        recentLogs.push(entry)
+        if (recentLogs.length > MAX_LOG_BUFFER) recentLogs.shift()
+    })
 
     app.get('/login', (req, res) => {
         if (req.session?.authed) return res.redirect('/')
@@ -244,6 +405,7 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
     app.get('/logout', (req, res) => {
         req.session.destroy(() => res.redirect('/login'))
     })
+
     function requireApiKeyOrSession(req, res, next) {
         const key = req.headers['x-api-key']
         if (key && process.env.CP_API_KEY && key === process.env.CP_API_KEY) {
@@ -270,7 +432,42 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
         if (!resolved) return res.status(404).json({ error: 'Not found or already resolved' })
         res.json({ ok: true })
     })
+
     app.use(requireAuth)
+
+    // ---- Server-Sent Events stream of live logs (session-auth only;
+    //      EventSource can't send custom headers, so API-key auth won't work here) ----
+    app.get('/api/logs/stream', (req, res) => {
+        res.set({
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no', // in case it ends up behind nginx
+        })
+        res.flushHeaders?.()
+
+        // Replay buffered history first
+        for (const entry of recentLogs) {
+            res.write(`data: ${JSON.stringify(entry)}\n\n`)
+        }
+
+        // Then stream new entries
+        const unsubscribe = subscribeToLogs((entry) => {
+            try {
+                res.write(`data: ${JSON.stringify(entry)}\n\n`)
+            } catch { /* client gone; cleanup happens on 'close' */ }
+        })
+
+        // Keep intermediaries from closing the idle connection
+        const keepalive = setInterval(() => {
+            try { res.write(': keepalive\n\n') } catch { /* ignore */ }
+        }, 25000)
+
+        req.on('close', () => {
+            clearInterval(keepalive)
+            unsubscribe()
+        })
+    })
 
     app.get('/', (req, res) => {
         res.send(dashboardPage(req.session.csrfToken))

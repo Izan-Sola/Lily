@@ -5,6 +5,17 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CONFIG_PATH = path.join(__dirname, 'riskConfig.json')
 
+let allowDepth = 0
+
+export function riskAllowed() {
+    return allowDepth > 0
+}
+
+export async function withRiskAllowed(fn) {
+    allowDepth++
+    try { return await fn() } finally { allowDepth-- }
+}
+
 export function classifyRisk(instruction) {
     const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
     for (const pattern of raw.riskyPatterns) {

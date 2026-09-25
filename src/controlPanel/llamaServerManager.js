@@ -27,6 +27,7 @@ const LLAMA_ARGS = [
     '--reasoning-format', 'none',
     '-ngl', '999',
     '--flash-attn', 'on',
+    '--cache-reuse', '256'
 ]
 
 const LLAMA_ENV = { ...process.env, CUDA_VISIBLE_DEVICES: '0' }

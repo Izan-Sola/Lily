@@ -4,7 +4,7 @@ import { Logger } from '../utils/Logger.js'
 
 const DEFAULT_URL = process.env.BROWSER_BRIDGE_URL || 'ws://localhost:9334'
 const ACTION_TIMEOUT_MS = 30000 // increased to 30s for slower actions
-const RECONNECT_DELAY_MS = 3000
+const RECONNECT_DELAY_MS = 5000
 
 class BrowserBridgeClient {
     constructor(url = DEFAULT_URL) {
@@ -75,8 +75,8 @@ class BrowserBridgeClient {
                 }
                 this._pending.clear()
                 if (!this._closedByUser) {
-                    Logger.warning(`Browser bridge connection closed, retrying in ${RECONNECT_DELAY_MS}ms`, "BROWSER")
-                    setTimeout(() => this.connect(), RECONNECT_DELAY_MS)
+                    //Logger.warning(`Browser bridge connection closed`, "BROWSER")
+                     setTimeout(() => this.connect(), RECONNECT_DELAY_MS)
                 }
             })
 

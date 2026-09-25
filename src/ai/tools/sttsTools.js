@@ -8,8 +8,8 @@ import axios from 'axios'
 import { Logger } from '../../utils/Logger.js'
 import { ok, err } from './toolHelpers.js'
 import { checkShrinkRatio, checkStubBodies } from '../../coding/codeEditShared.js'
-import { classifyRisk } from '../../ai/tools/riskyActionsManagement/riskClassifier.js'
 import { approvalStore } from '../../ai/tools/riskyActionsManagement/approvalStore.js'
+import { classifyRisk, withRiskAllowed } from './riskyActionsManagement/riskClassifier.js'
 
 const SUBMODULES = ['screenshot', 'pidev', 'coding']
 const execFileAsync = promisify(execFile)
@@ -313,7 +313,7 @@ class SttsToolExecutor {
         }
         Logger.info(`Approved, running: ${instruction.slice(0, 200)}`, "APPROVAL")
         try {
-            const report = await this._runPi(instruction)
+            await withRiskAllowed(() => this._runPi(instruction))
             this._onApprovalResult?.({ channelId, instruction, approved: true, report })
         } catch (e) {
             this._onApprovalResult?.({ channelId, instruction, approved: true, error: e.message })

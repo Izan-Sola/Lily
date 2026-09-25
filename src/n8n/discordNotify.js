@@ -20,25 +20,18 @@ export function startNotifyServer(client, yourUserId, port = 3300) {
     app.use(express.json())
 
     app.post('/notify', async (req, res) => {
-        const { message, filePath, type } = req.body
+        const { message, summary, filePath, type } = req.body
         if (!message) return res.status(400).json({ error: 'message is required' })
 
-        // Always write the full message to an MD file. This is what stops
-        // the "above 2000 characters" DM error: the file has no length
-        // limit, only the DM content preview does.
         const mdPath = filePath || makeMdPath(type)
         writeFileSync(mdPath, message, 'utf8')
 
         try {
             const user = await client.users.fetch(yourUserId)
-            const preview = message.length > 300 ? message.slice(0, 300) + '…' : message
+            const source = summary || message
+            const preview = source.length > 1900 ? source.slice(0, 1900) + '…' : source
 
-            await user.send({
-                content: preview,
-                files: [mdPath]
-            })
-
-            // Keep the download-and-open-with-Typora behavior.
+            await user.send({ content: preview, files: [mdPath] })
             spawn(TYPORA_BIN, [mdPath], { detached: true, stdio: 'ignore' }).unref()
 
             res.json({ status: 'ok', filePath: mdPath })

@@ -17,7 +17,7 @@ export const REMOTE_HOSTS = {
         discordId: '572121744253386792',
         tailscaleIp: '100.82.135.120',
     },
-    'Izan (laptop)': {
+    'Izan (desktop)': {
         discordId: '572121744253386792',
         tailscaleIp: '100.79.58.32',
     }

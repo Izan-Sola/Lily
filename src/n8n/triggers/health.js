@@ -6,7 +6,8 @@ const execFileAsync = promisify(execFile)
 
 const LOCAL_AGENT = '/srv/n8n/system-health/bin/run-agent.sh'
 const REMOTE_COLLECT = '/srv/n8n/system-health/bin/collect.py'
-const SSH_USER = process.env.HEALTH_SSH_USER || 'healthssh'
+const SSH_KEY = process.env.HEALTH_SSH_KEY || `${process.env.HOME}/.ssh/health_ed25519`
+const DEFAULT_SSH_USER = process.env.HEALTH_SSH_USER || 'healthssh'
 const TIMEOUT_MS = 1000 * 60 * 10
 
 function readJsonBody(req) {
@@ -41,24 +42,24 @@ function runAgentWithStdin(json) {
     })
 }
 
-async function runLocal() {
+function runLocal() {
     return execFileAsync(LOCAL_AGENT, [], {
         maxBuffer: 1024 * 1024 * 50,
         timeout: TIMEOUT_MS,
     })
 }
 
-const SSH_KEY = process.env.HEALTH_SSH_KEY || `${process.env.HOME}/.ssh/health_ed25519`
-
-async function runRemote(ip) {
+async function runRemote(ip, sshUser) {
+    const user = sshUser || DEFAULT_SSH_USER
+    console.log(`[health trigger] remote ssh → ${user}@${ip}`)
     const { stdout: json } = await execFileAsync('ssh', [
         '-i', SSH_KEY,
         '-o', 'IdentitiesOnly=yes',
         '-o', 'StrictHostKeyChecking=accept-new',
         '-o', 'BatchMode=yes',
         '-o', 'ConnectTimeout=15',
-        `${SSH_USER}@${ip}`,
-        REMOTE_COLLECT,
+        `${user}@${ip}`,
+        'python3', REMOTE_COLLECT,
     ], { maxBuffer: 1024 * 1024 * 50, timeout: TIMEOUT_MS })
     return runAgentWithStdin(json)
 }
@@ -72,13 +73,15 @@ export default function start(port = 3400) {
         }
 
         const payload = await readJsonBody(req)
-        const { tailscaleIp } = payload
+        const { tailscaleIp, sshUser } = payload
         const isLocal = !tailscaleIp || tailscaleIp === 'local'
+
+        console.log(`[health trigger] payload=${JSON.stringify(payload)} → ${isLocal ? 'LOCAL' : 'REMOTE ' + tailscaleIp}`)
 
         try {
             const { stdout, stderr } = isLocal
                 ? await runLocal()
-                : await runRemote(tailscaleIp)
+                : await runRemote(tailscaleIp, sshUser)
 
             res.writeHead(200, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ stdout, stderr, target: isLocal ? 'local' : tailscaleIp }))

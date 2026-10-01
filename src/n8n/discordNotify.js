@@ -2,11 +2,44 @@
 import express from 'express'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import path from 'node:path'
 
 const TYPORA_BIN = process.env.TYPORA_BIN || 'typora'
 const DOWNLOADS_DIR = path.join(homedir(), 'Downloads')
+
+// Resolve once at startup.
+function resolveBinary(bin) {
+    try {
+        const out = execFileSync('bash', ['-lc', `command -v ${bin}`], { encoding: 'utf8' }).trim()
+        return out || null
+    } catch {
+        return null
+    }
+}
+
+const TYPORA_PATH = resolveBinary(TYPORA_BIN)
+if (TYPORA_PATH) {
+    console.log(`[notify] Typora preview enabled: ${TYPORA_PATH}`)
+} else {
+    console.warn(`[notify] Typora not found (${TYPORA_BIN}); .md will be saved but not opened`)
+}
+
+function openInTypora(mdPath) {
+    if (!TYPORA_PATH) return
+    let proc
+    try {
+        proc = spawn(TYPORA_PATH, [mdPath], { detached: true, stdio: 'ignore' })
+    } catch (err) {
+        console.warn(`[notify] Typora spawn failed: ${err.message}`)
+        return
+    }
+    // THE FIX: without this, ENOENT kills the whole Node process.
+    proc.on('error', (err) => {
+        console.warn(`[notify] Typora error (${err.code || err.message}); skipping preview`)
+    })
+    proc.unref()
+}
 
 function makeMdPath(type) {
     mkdirSync(DOWNLOADS_DIR, { recursive: true })
@@ -37,9 +70,9 @@ export function startNotifyServer(client, defaultUserId, port = 3300) {
             const preview = source.length > 1900 ? source.slice(0, 1900) + '…' : source
 
             await user.send({ content: preview, files: [mdPath] })
-            spawn(TYPORA_BIN, [mdPath], { detached: true, stdio: 'ignore' }).unref()
+            openInTypora(mdPath)
 
-            res.json({ status: 'ok', filePath: mdPath, discordId: targetId })
+            res.json({ status: 'ok', filePath: mdPath, discordId: targetId, typora: !!TYPORA_PATH })
         } catch (err) {
             console.error('Notify DM failed:', err.message)
             res.status(500).json({ error: err.message })

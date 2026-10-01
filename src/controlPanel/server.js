@@ -549,6 +549,7 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
                     tailscaleIp: info.tailscaleIp,
                     discordId: info.discordId,
                     sshUser: info.sshUser || '',
+                    scriptMode: info.scriptMode || 'stdin',
                     hostName: host,
                 },
                 { timeout: 15000 }

@@ -7,7 +7,7 @@ import path from 'node:path'
 const execFileAsync = promisify(execFile)
 
 const LOCAL_AGENT = '/srv/n8n/system-health/bin/run-agent.sh'
-const REMOTE_COLLECT = '/srv/n8n/system-health/bin/collect.py'
+const REMOTE_COLLECT = '/srv/n8n/system-health/bin/collect.py'  // also the local source when piping
 const REPORTS_DIR = '/srv/n8n/system-health/reports'
 const SSH_KEY = process.env.HEALTH_SSH_KEY || `${process.env.HOME}/.ssh/health_ed25519`
 const DEFAULT_SSH_USER = process.env.HEALTH_SSH_USER || 'healthssh'
@@ -25,7 +25,12 @@ function resolveBinary(bin) {
 const PI_BIN = process.env.PI_BIN || resolveBinary('pi') || 'pi'
 console.log(`[health trigger] using pi: ${PI_BIN}`)
 
-// Same prompt as run-agent.sh uses. Duplicated here so remote runs don't depend on it.
+// Cache collect.py content for stdin-piping. Reloaded per-run so edits on minipc
+// take effect immediately without restarting the panel.
+function readCollectScript() {
+    return fs.readFileSync(REMOTE_COLLECT, 'utf8')
+}
+
 const PROMPT = `
 You are a Linux system reliability analyst.
 
@@ -126,7 +131,6 @@ function readJsonBody(req) {
     })
 }
 
-// Run pi locally on the minipc with JSON piped to its stdin.
 function runPiWithJson(json) {
     return new Promise((resolve, reject) => {
         const proc = spawn(PI_BIN, ['--no-tools', '--no-session', '-p', PROMPT], {
@@ -153,7 +157,6 @@ function runPiWithJson(json) {
     })
 }
 
-// LOCAL: unchanged — run-agent.sh collects and calls pi itself.
 function runLocal() {
     return execFileAsync(LOCAL_AGENT, [], {
         maxBuffer: 1024 * 1024 * 50,
@@ -161,11 +164,11 @@ function runLocal() {
     })
 }
 
-// REMOTE: SSH the target, get raw JSON, run pi on the minipc with that JSON.
-// Does NOT go through run-agent.sh — that's the whole point.
-async function runRemote(ip, sshUser) {
+// ---- REMOTE MODE: file ---------------------------------------------------
+// Old behavior. SSH the target, run collect.py from disk, get JSON back.
+async function runRemoteFile(ip, sshUser) {
     const user = sshUser || DEFAULT_SSH_USER
-    console.log(`[health trigger] remote ssh → ${user}@${ip}`)
+    console.log(`[health trigger] remote ssh (file mode) → ${user}@${ip}`)
 
     const { stdout: json } = await execFileAsync('ssh', [
         '-i', SSH_KEY,
@@ -177,27 +180,86 @@ async function runRemote(ip, sshUser) {
         'python3', REMOTE_COLLECT,
     ], { maxBuffer: 1024 * 1024 * 50, timeout: TIMEOUT_MS })
 
+    return json
+}
+
+// ---- REMOTE MODE: stdin --------------------------------------------------
+// New behavior. Pipe collect.py into `python3 -` on the remote.
+// Requires on the remote's sshd_config:
+//     Match User healthssh
+//         ForceCommand /usr/bin/python3 -
+//         PermitTTY no
+//         X11Forwarding no
+//         AllowTcpForwarding no
+//         AllowAgentForwarding no
+//
+// The remote needs NOTHING on disk. No collect.py, no exec bit, no shebang.
+async function runRemoteStdin(ip, sshUser) {
+    const user = sshUser || DEFAULT_SSH_USER
+    console.log(`[health trigger] remote ssh (stdin mode) → ${user}@${ip}`)
+
+    const script = readCollectScript()
+
+    return new Promise((resolve, reject) => {
+        const proc = spawn('ssh', [
+            '-i', SSH_KEY,
+            '-o', 'IdentitiesOnly=yes',
+            '-o', 'StrictHostKeyChecking=accept-new',
+            '-o', 'BatchMode=yes',
+            '-o', 'ConnectTimeout=15',
+            `${user}@${ip}`,
+            // NO command argument — sshd's ForceCommand runs `python3 -`
+        ], { stdio: ['pipe', 'pipe', 'pipe'] })
+
+        let out = '', err = ''
+        proc.stdout.on('data', (d) => (out += d))
+        proc.stderr.on('data', (d) => (err += d))
+        proc.on('error', reject)
+
+        const t = setTimeout(() => {
+            try { proc.kill('SIGKILL') } catch { }
+            reject(new Error('remote ssh (stdin) timed out'))
+        }, TIMEOUT_MS)
+
+        proc.on('close', (code) => {
+            clearTimeout(t)
+            if (code === 0) resolve(out)
+            else reject(new Error(`remote exited ${code}: ${err.slice(0, 500)}`))
+        })
+
+        proc.stdin.write(script)
+        proc.stdin.end()
+    })
+}
+
+// ---- REMOTE dispatch -----------------------------------------------------
+async function runRemote(ip, sshUser, scriptMode) {
+    const mode = (scriptMode || 'stdin').toLowerCase()
+    let json
+
+    if (mode === 'file') {
+        json = await runRemoteFile(ip, sshUser)
+    } else {
+        json = await runRemoteStdin(ip, sshUser)
+    }
+
     console.log(`[health trigger] got ${json.length} bytes from ${ip}, first 80: ${json.slice(0, 80).replace(/\n/g, ' ')}`)
 
     if (!json || json.length < 50) {
         throw new Error(`Empty or tiny response from ${ip}: ${JSON.stringify(json.slice(0, 200))}`)
     }
-
-    // Sanity guard: make sure the JSON looks like a report and not an error.
     if (!json.trimStart().startsWith('{')) {
         throw new Error(`Non-JSON output from ${ip}: ${json.slice(0, 200)}`)
     }
 
-    // Save the raw JSON for debugging (overwritten each run).
+    // Save raw JSON for debugging (overwritten each run).
     try {
         fs.mkdirSync(REPORTS_DIR, { recursive: true })
         fs.writeFileSync(path.join(REPORTS_DIR, 'last-remote-raw.json'), json)
     } catch { }
 
-    // Run pi locally with the remote JSON.
     const { stdout, stderr } = await runPiWithJson(json)
 
-    // Save report + append the marker line that the n8n workflow parses.
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const outPath = path.join(REPORTS_DIR, `${stamp}.md`)
     try {
@@ -220,7 +282,7 @@ export default function start(port = 3400) {
         }
 
         const payload = await readJsonBody(req)
-        const { tailscaleIp, sshUser } = payload
+        const { tailscaleIp, sshUser, scriptMode } = payload
         const isLocal = !tailscaleIp || tailscaleIp === 'local'
 
         console.log(`[health trigger] payload=${JSON.stringify(payload)} → ${isLocal ? 'LOCAL' : 'REMOTE ' + tailscaleIp}`)
@@ -228,7 +290,7 @@ export default function start(port = 3400) {
         try {
             const { stdout, stderr } = isLocal
                 ? await runLocal()
-                : await runRemote(tailscaleIp, sshUser)
+                : await runRemote(tailscaleIp, sshUser, scriptMode)
 
             res.writeHead(200, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({ stdout, stderr, target: isLocal ? 'local' : tailscaleIp }))

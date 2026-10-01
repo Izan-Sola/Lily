@@ -6,7 +6,7 @@ const execFileAsync = promisify(execFile)
 
 const LOCAL_AGENT = '/srv/n8n/system-health/bin/run-agent.sh'
 const REMOTE_COLLECT = '/srv/n8n/system-health/bin/collect.py'
-const SSH_USER = process.env.HEALTH_SSH_USER || 'laptopssh'
+const SSH_USER = process.env.HEALTH_SSH_USER || 'healthssh'
 const TIMEOUT_MS = 1000 * 60 * 10
 
 function readJsonBody(req) {

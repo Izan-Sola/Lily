@@ -48,19 +48,18 @@ async function runLocal() {
     })
 }
 
-// Only data collection happens on the remote. JSON comes back here,
-// gets piped into the minipc's run-agent.sh, which calls pi locally.
+const SSH_KEY = process.env.HEALTH_SSH_KEY || `${process.env.HOME}/.ssh/health_ed25519`
+
 async function runRemote(ip) {
     const { stdout: json } = await execFileAsync('ssh', [
+        '-i', SSH_KEY,
+        '-o', 'IdentitiesOnly=yes',
         '-o', 'StrictHostKeyChecking=accept-new',
         '-o', 'BatchMode=yes',
         '-o', 'ConnectTimeout=15',
         `${SSH_USER}@${ip}`,
         REMOTE_COLLECT,
-    ], {
-        maxBuffer: 1024 * 1024 * 50,
-        timeout: TIMEOUT_MS,
-    })
+    ], { maxBuffer: 1024 * 1024 * 50, timeout: TIMEOUT_MS })
     return runAgentWithStdin(json)
 }
 

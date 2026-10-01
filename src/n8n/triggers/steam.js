@@ -1,5 +1,6 @@
 import http from 'node:http'
 import { exec } from 'node:child_process'
+import { STEAM_RECIPIENTS } from '../steamRecipients.js'
 
 const SCRIPT_PATH = '/srv/n8n/steam-watch/bin/run_steam.sh'
 
@@ -19,7 +20,7 @@ export default function start(port = 3401) {
                 return
             }
             res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ stdout, stderr }))
+            res.end(JSON.stringify({ stdout, stderr, recipients: STEAM_RECIPIENTS }))
         })
     })
 

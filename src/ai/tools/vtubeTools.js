@@ -60,7 +60,7 @@ class VtubeToolExecutor {
                     properties: {
                         expression: {
                             type: "string",
-                            enum: this.expressionCache.map(h => h.name),
+                            enum: this.expressionCache.length > 0 ? this.expressionCache.map(h => h.name) : ["neutral"],
                             description: "Name of the expression to trigger."
                         }
                     },

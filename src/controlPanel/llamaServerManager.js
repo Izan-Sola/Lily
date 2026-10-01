@@ -11,8 +11,8 @@ const execFileAsync = promisify(execFile)
 const LLAMA_BIN = '/mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server'
 
 const LLAMA_ARGS = [
-    '--model', '/mnt/GAMES/test/qwen3.5-9b-Q6-Lily-gguf-2_gguf/Qwen3.5-9B.Q6_K.gguf',
-    '--mmproj', '/mnt/CA200B97200B8A21/mmproj-Qwen3.5-9B-Q8_0.gguf',
+    '--model', '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf',
+    '--mmproj', '/home/izansola/mmproj-Qwen3.5-9B-Q8_0.gguf',
     '--jinja',
     '--parallel', '1',
     '--cache-type-k', 'q8_0',

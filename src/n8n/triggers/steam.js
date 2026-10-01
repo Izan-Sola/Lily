@@ -1,7 +1,7 @@
 import http from 'node:http'
 import { exec } from 'node:child_process'
 
-const SCRIPT_PATH = '/mnt/GAMES/n8n/steam-watch/bin/run_steam.sh'
+const SCRIPT_PATH = '/srv/n8n/steam-watch/bin/run_steam.sh'
 
 export default function start(port = 3401) {
     const server = http.createServer((req, res) => {

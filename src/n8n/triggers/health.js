@@ -2,7 +2,7 @@
 import http from 'node:http'
 import { exec } from 'node:child_process'
 
-const SCRIPT_PATH = '/mnt/GAMES/n8n/system-health/bin/run-agent.sh'
+const SCRIPT_PATH = '/srv/n8n/system-health/bin/run-agent.sh'
 
 export default function start(port = 3400) {
     const server = http.createServer((req, res) => {

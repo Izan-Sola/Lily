@@ -8,7 +8,7 @@ import { Logger } from '../utils/Logger.js'
 
 const execFileAsync = promisify(execFile)
 
-const LLAMA_BIN = '/mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server'
+const LLAMA_BIN = '/home/izansola/llama.cpp/build/bin/llama-server'
 
 const LLAMA_ARGS = [
     '--model', '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf',

@@ -1,6 +1,7 @@
 // src/controlPanel/server.js
 import express from 'express'
 import session from 'express-session'
+import axios from 'axios'
 import { Logger, subscribeToLogs } from '../utils/Logger.js'
 import { approvalStore } from '../ai/tools/riskyActionsManagement/approvalStore.js'
 import {
@@ -9,6 +10,11 @@ import {
 } from './auth.js'
 import { isRunning, restartLlamaServer, startLlamaServer, stopLlamaServer } from './llamaServerManager.js'
 import { TOGGLEABLE_MODULES } from '../ai/tools/toolRouter.js'
+import { REMOTE_HOSTS } from './remoteHosts.js'   // NEW
+
+// NEW: where the n8n webhook lives. Override via env if needed.
+const N8N_HEALTH_WEBHOOK =
+    process.env.N8N_HEALTH_WEBHOOK || 'http://localhost:5678/webhook/health-check'
 
 function requireAuth(req, res, next) {
     if (req.session?.authed) return next()
@@ -48,7 +54,6 @@ function loginPage(error = '') {
 function dashboardPage(csrfToken) {
     return `<!DOCTYPE html><html><head><title>Lily Control Panel</title>
     <style>
-        /* NEW: apply border-box everywhere so padding never adds to widths */
         *, *::before, *::after { box-sizing: border-box; }
 
         html, body { height: 100%; }
@@ -58,7 +63,6 @@ function dashboardPage(csrfToken) {
             color: #eee;
             margin: 0;
             padding: 1.25rem;
-            /* NEW: clamp any accidental overflow so the page never scrolls sideways */
             overflow: hidden;
         }
 
@@ -67,7 +71,6 @@ function dashboardPage(csrfToken) {
             gap: 1rem;
             height: 100%;
             align-items: stretch;
-            /* NEW */
             width: 100%;
             max-width: 100%;
             min-width: 0;
@@ -80,7 +83,6 @@ function dashboardPage(csrfToken) {
             padding-right: 0.25rem;
         }
 
-        /* NEW: widened from 420px, and clamped so it can't push past the viewport */
         .logpanel {
             width: 520px;
             max-width: 45vw;
@@ -111,7 +113,17 @@ function dashboardPage(csrfToken) {
         #llamaStatus { display:flex; align-items:center; margin-bottom: 1rem; }
         .toast { position: fixed; bottom: 1rem; right: 1rem; background: #1c1c28; padding: 0.8rem 1.2rem; border-radius: 8px; border-left: 4px solid #7c5cff; display:none; z-index: 100; }
 
-        /* ---- Live log panel ---- */
+        /* NEW: styles for the remote health row */
+        .health-row { display: flex; gap: 0.5rem; align-items: center; }
+        .health-row select {
+            flex: 1 1 auto;
+            padding: 0.5rem 0.6rem;
+            border-radius: 8px;
+            border: 1px solid #333;
+            background: #0f0f16;
+            color: #eee;
+        }
+
         .logpanel .card {
             flex: 1 1 auto;
             display: flex;
@@ -119,15 +131,15 @@ function dashboardPage(csrfToken) {
             padding: 1rem 1.1rem;
             margin-bottom: 0;
             min-height: 0;
-            min-width: 0;          /* NEW: keeps flex child from refusing to shrink */
-            overflow: hidden;      /* NEW: clip any stubborn inner overflow */
+            min-width: 0;
+            overflow: hidden;
         }
         .logpanel h3 {
             margin: 0 0 0.7rem 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 1.02rem;    /* NEW: slightly bigger header */
+            font-size: 1.02rem;
         }
         .logpanel h3 .clear {
             font-size: 0.76rem;
@@ -143,12 +155,12 @@ function dashboardPage(csrfToken) {
         #logfeed {
             flex: 1 1 auto;
             overflow-y: auto;
-            overflow-x: hidden;                 /* NEW: never scroll sideways, wrap instead */
+            overflow-x: hidden;
             font-family: ui-monospace, "SF Mono", Consolas, monospace;
-            font-size: 0.9rem;                  /* NEW: bumped from 0.78rem */
+            font-size: 0.9rem;
             line-height: 1.4;
             min-height: 0;
-            min-width: 0;                       /* NEW */
+            min-width: 0;
         }
         #logfeed::-webkit-scrollbar { width: 8px; }
         #logfeed::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
@@ -159,8 +171,6 @@ function dashboardPage(csrfToken) {
             margin-bottom: 0.32rem;
             border-radius: 4px;
             background: #0f0f16;
-            /* NEW: break long unbroken tokens (paths, hashes, stack frames) so nothing
-               ever pushes past the panel's right edge */
             white-space: pre-wrap;
             overflow-wrap: anywhere;
             word-break: break-word;
@@ -194,6 +204,16 @@ function dashboardPage(csrfToken) {
             <button class="action" onclick="llamaAction('start')">Start</button>
             <button class="action" onclick="llamaAction('restart')">Restart</button>
             <button class="action danger" onclick="llamaAction('stop')">Stop</button>
+        </div>
+
+        <!-- NEW: Remote Health Check card -->
+        <div class="card">
+            <h3>Remote Health Check</h3>
+            <div class="health-row">
+                <select id="healthHost"><option>Loading...</option></select>
+                <button class="action" onclick="runHealth()">Run</button>
+            </div>
+            <div class="unavailable" style="margin-top:0.5rem;">Report will arrive as a Discord DM.</div>
         </div>
 
         <div class="card">
@@ -308,6 +328,31 @@ function dashboardPage(csrfToken) {
         }
     }
 
+    // ---- NEW: Remote health check ----
+    async function loadHealthHosts() {
+        const hosts = await api('/api/health/hosts')
+        const sel = document.getElementById('healthHost')
+        if (!hosts.length) {
+            sel.innerHTML = '<option value="">No hosts configured</option>'
+            return
+        }
+        sel.innerHTML = hosts.map(h =>
+            \`<option value="\${h.name}">\${h.name}\${h.tailscaleIp === 'local' ? ' (local)' : ''}</option>\`
+        ).join('')
+    }
+
+    async function runHealth() {
+        const host = document.getElementById('healthHost').value
+        if (!host) return toast('No host selected')
+        toast(\`Triggering health check on \${host}...\`)
+        try {
+            await api('/api/health/run', { method: 'POST', body: JSON.stringify({ host }) })
+            toast(\`Triggered on \${host} — check Discord for the report\`)
+        } catch (e) {
+            toast('Error: ' + e.message)
+        }
+    }
+
     // ---- Live log viewer ----
     const logFeed = document.getElementById('logfeed')
     const MAX_LOG_ENTRIES = 400
@@ -342,6 +387,7 @@ function dashboardPage(csrfToken) {
     setInterval(loadApprovals, 5000)
     loadLlamaStatus()
     setInterval(loadLlamaStatus, 8000)
+    loadHealthHosts()
     </script>
     </body></html>`
 }
@@ -364,8 +410,6 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
         },
     }))
 
-    // ---- Live log buffer: keeps the last N entries so a freshly-loaded
-    //      dashboard shows some history instead of a blank panel. ----
     const recentLogs = []
     const MAX_LOG_BUFFER = 200
     subscribeToLogs((entry) => {
@@ -435,30 +479,25 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
 
     app.use(requireAuth)
 
-    // ---- Server-Sent Events stream of live logs (session-auth only;
-    //      EventSource can't send custom headers, so API-key auth won't work here) ----
     app.get('/api/logs/stream', (req, res) => {
         res.set({
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no', // in case it ends up behind nginx
+            'X-Accel-Buffering': 'no',
         })
         res.flushHeaders?.()
 
-        // Replay buffered history first
         for (const entry of recentLogs) {
             res.write(`data: ${JSON.stringify(entry)}\n\n`)
         }
 
-        // Then stream new entries
         const unsubscribe = subscribeToLogs((entry) => {
             try {
                 res.write(`data: ${JSON.stringify(entry)}\n\n`)
-            } catch { /* client gone; cleanup happens on 'close' */ }
+            } catch { /* client gone */ }
         })
 
-        // Keep intermediaries from closing the idle connection
         const keepalive = setInterval(() => {
             try { res.write(': keepalive\n\n') } catch { /* ignore */ }
         }, 25000)
@@ -486,6 +525,38 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
         const result = ai.setModuleEnabled(name, !!enabled)
         if (!result.ok) return res.status(400).json({ error: result.reason })
         res.json({ ok: true })
+    })
+
+    // ---- NEW: Remote health check endpoints ----
+    app.get('/api/health/hosts', (req, res) => {
+        res.json(
+            Object.entries(REMOTE_HOSTS).map(([name, info]) => ({
+                name,
+                tailscaleIp: info.tailscaleIp,
+            }))
+        )
+    })
+
+    app.post('/api/health/run', requireCsrf, async (req, res) => {
+        const { host } = req.body || {}
+        const info = REMOTE_HOSTS[host]
+        if (!info) return res.status(400).json({ error: 'Unknown host' })
+
+        try {
+            const { data } = await axios.post(
+                N8N_HEALTH_WEBHOOK,
+                {
+                    tailscaleIp: info.tailscaleIp,
+                    discordId: info.discordId,
+                    hostName: host,
+                },
+                { timeout: 15000 }
+            )
+            res.json({ ok: true, n8n: data })
+        } catch (e) {
+            Logger.error(`Health trigger failed: ${e.message}`, 'CONTROL PANEL')
+            res.status(500).json({ error: e.message })
+        }
     })
 
     app.get('/api/llama/status', async (req, res) => {

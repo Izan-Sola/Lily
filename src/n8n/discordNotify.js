@@ -15,30 +15,36 @@ function makeMdPath(type) {
     return path.join(DOWNLOADS_DIR, `${label}-${stamp}.md`)
 }
 
-export function startNotifyServer(client, yourUserId, port = 3300) {
+export function startNotifyServer(client, defaultUserId, port = 3300) {
     const app = express()
     app.use(express.json())
 
     app.post('/notify', async (req, res) => {
-        const { message, summary, filePath, type } = req.body
+        const { message, summary, filePath, type, discordId } = req.body
         if (!message) return res.status(400).json({ error: 'message is required' })
 
         const mdPath = filePath || makeMdPath(type)
         writeFileSync(mdPath, message, 'utf8')
 
         try {
-            const user = await client.users.fetch(yourUserId)
+            const targetId = discordId || defaultUserId
+            if (!targetId) {
+                return res.status(400).json({ error: 'no discordId provided and no default set' })
+            }
+
+            const user = await client.users.fetch(targetId)
             const source = summary || message
             const preview = source.length > 1900 ? source.slice(0, 1900) + '…' : source
 
             await user.send({ content: preview, files: [mdPath] })
             spawn(TYPORA_BIN, [mdPath], { detached: true, stdio: 'ignore' }).unref()
 
-            res.json({ status: 'ok', filePath: mdPath })
+            res.json({ status: 'ok', filePath: mdPath, discordId: targetId })
         } catch (err) {
             console.error('Notify DM failed:', err.message)
             res.status(500).json({ error: err.message })
         }
     })
+
     return app.listen(port, () => console.log(`Notify server listening on ${port}`))
 }

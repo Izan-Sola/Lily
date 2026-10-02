@@ -31,6 +31,29 @@ function readCollectScript() {
     return fs.readFileSync(REMOTE_COLLECT, 'utf8')
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Process-group isolation
+//
+// Every external process we launch here (pi, ssh, run-agent.sh) must
+// run in its OWN process group. Without `detached: true` they share
+// LilyBrain's group, and a child that calls kill(0, SIGINT) or
+// kill(-pgid, SIGINT) — which some CLIs do on cleanup — will signal
+// us too. Node has no SIGINT handler by default, so we die cleanly
+// and PM2 restarts us. This is the "no error, just restart" symptom.
+//
+// With `detached: true`, the child is in a fresh process group. Its
+// signals stay inside that group.
+//
+// `killGroup(pid, sig)` sends a signal to the whole group of a
+// detached child. Use that (not proc.kill) for timeouts, so orphans
+// (llama-server, shell wrappers, etc.) get cleaned up too.
+// ─────────────────────────────────────────────────────────────────
+function killGroup(pid, signal = 'SIGKILL') {
+    if (!pid) return
+    try { process.kill(-pid, signal) }
+    catch { /* group may already be gone */ }
+}
+
 const PROMPT = `
 You are a Linux system reliability analyst.
 
@@ -131,10 +154,13 @@ function readJsonBody(req) {
     })
 }
 
+// Run pi on the minipc with JSON piped to stdin. Detached so a
+// misbehaving pi subprocess can't signal LilyBrain.
 function runPiWithJson(json) {
     return new Promise((resolve, reject) => {
         const proc = spawn(PI_BIN, ['--no-tools', '--no-session', '-p', PROMPT], {
             stdio: ['pipe', 'pipe', 'pipe'],
+            detached: true,
         })
         let out = '', err = ''
         proc.stdout.on('data', (d) => (out += d))
@@ -142,7 +168,7 @@ function runPiWithJson(json) {
         proc.on('error', reject)
 
         const t = setTimeout(() => {
-            try { proc.kill('SIGKILL') } catch { }
+            killGroup(proc.pid, 'SIGKILL')
             reject(new Error('pi timed out'))
         }, TIMEOUT_MS)
 
@@ -157,10 +183,13 @@ function runPiWithJson(json) {
     })
 }
 
+// Local run-agent.sh (which itself calls collect.py and pi). Detached
+// for the same reason.
 function runLocal() {
     return execFileAsync(LOCAL_AGENT, [], {
         maxBuffer: 1024 * 1024 * 50,
         timeout: TIMEOUT_MS,
+        detached: true,
     })
 }
 
@@ -178,14 +207,18 @@ async function runRemoteFile(ip, sshUser) {
         '-o', 'ConnectTimeout=15',
         `${user}@${ip}`,
         'python3', REMOTE_COLLECT,
-    ], { maxBuffer: 1024 * 1024 * 50, timeout: TIMEOUT_MS })
+    ], {
+        maxBuffer: 1024 * 1024 * 50,
+        timeout: TIMEOUT_MS,
+        detached: true,
+    })
 
     return json
 }
 
 // ---- REMOTE MODE: stdin --------------------------------------------------
-// New behavior. Pipe collect.py into `python3 -` on the remote.
-// Requires on the remote's sshd_config:
+// Pipe collect.py into `python3 -` on the remote. Requires on the
+// remote's sshd_config:
 //     Match User healthssh
 //         ForceCommand /usr/bin/python3 -
 //         PermitTTY no
@@ -209,7 +242,10 @@ async function runRemoteStdin(ip, sshUser) {
             '-o', 'ConnectTimeout=15',
             `${user}@${ip}`,
             // NO command argument — sshd's ForceCommand runs `python3 -`
-        ], { stdio: ['pipe', 'pipe', 'pipe'] })
+        ], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: true,
+        })
 
         let out = '', err = ''
         proc.stdout.on('data', (d) => (out += d))
@@ -217,7 +253,7 @@ async function runRemoteStdin(ip, sshUser) {
         proc.on('error', reject)
 
         const t = setTimeout(() => {
-            try { proc.kill('SIGKILL') } catch { }
+            killGroup(proc.pid, 'SIGKILL')
             reject(new Error('remote ssh (stdin) timed out'))
         }, TIMEOUT_MS)
 

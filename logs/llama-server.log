@@ -2892,3 +2892,299 @@ prompt eval time =    1696.52 ms /  2562 tokens (    0.66 ms per token,  1510.15
 1.42.882.335 I slot print_timing: id  0 | task 9 |    graphs reused =          2
 1.42.882.338 I slot print_timing: id  0 | task 9 | draft acceptance = 0.25000 (    2 accepted /     8 generated), mean len =  2.00
 1.42.882.380 I slot      release: id  0 | task 9 | stop processing: n_tokens = 458, truncated = 0
+5.23.262.846 I srv    operator(): operator(): cleaning up before exit...
+0.00.035.126 I srv  llama_server: initializing ...
+0.00.035.135 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.035.381 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.037.835 I srv    load_model: loading model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.476.348 I cmn          init: llama threadpool init, n_threads = 6
+0.02.477.572 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.02.538.923 I common_speculative_init_result: creating MTP draft context against the target model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.583.817 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.02.583.820 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.02.583.820 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.02.766.501 I srv    load_model: loaded multimodal model, '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.02.766.505 W srv    load_model: cache_reuse is not supported by multimodal, it will be disabled
+0.02.766.525 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 64000, kv_unified = 'false'
+0.02.827.645 I srv  llama_server: model loaded
+0.02.827.652 I srv  llama_server: listening on http://0.0.0.0:11435
+0.12.650.070 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.12.650.451 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.14.714.284 I slot print_timing: id  0 | task 0 | prompt eval time =    1865.61 ms /  2521 tokens (    0.74 ms per token,  1351.30 tokens per second)
+0.14.714.289 I slot print_timing: id  0 | task 0 |        eval time =     198.15 ms /    12 tokens (   18.01 ms per token,    55.51 tokens per second)
+0.14.714.290 I slot print_timing: id  0 | task 0 |       total time =    2063.75 ms /  2533 tokens
+0.14.714.294 I slot print_timing: id  0 | task 0 |    graphs reused =          2
+0.14.714.296 I slot print_timing: id  0 | task 0 | draft acceptance = 1.00000 (    8 accepted /     8 generated), mean len =  5.00
+0.14.714.533 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2533, truncated = 0
+0.14.725.274 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 253600861118
+0.14.847.115 I slot launch_slot_: id  0 | task 9 | processing task, is_child = 0
+0.15.356.595 I slot print_timing: id  0 | task 9 | prompt eval time =     410.49 ms /   441 tokens (    0.93 ms per token,  1074.33 tokens per second)
+0.15.356.599 I slot print_timing: id  0 | task 9 |        eval time =      98.91 ms /     5 tokens (   24.73 ms per token,    40.44 tokens per second)
+0.15.356.599 I slot print_timing: id  0 | task 9 |       total time =     509.40 ms /   446 tokens
+0.15.356.600 I slot print_timing: id  0 | task 9 |    graphs reused =          3
+0.15.356.602 I slot print_timing: id  0 | task 9 | draft acceptance = 0.25000 (    2 accepted /     8 generated), mean len =  2.00
+0.15.356.644 I slot      release: id  0 | task 9 | stop processing: n_tokens = 445, truncated = 0
+1.13.586.852 I srv    operator(): operator(): cleaning up before exit...
+0.00.036.063 I srv  llama_server: initializing ...
+0.00.036.072 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.036.316 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.038.445 I srv    load_model: loading model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.464.355 I cmn          init: llama threadpool init, n_threads = 6
+0.02.465.719 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.02.528.005 I common_speculative_init_result: creating MTP draft context against the target model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.572.491 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.02.572.494 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.02.572.494 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.02.754.996 I srv    load_model: loaded multimodal model, '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.02.755.000 W srv    load_model: cache_reuse is not supported by multimodal, it will be disabled
+0.02.755.018 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 64000, kv_unified = 'false'
+0.02.820.324 I srv  llama_server: model loaded
+0.02.820.331 I srv  llama_server: listening on http://0.0.0.0:11435
+0.08.718.281 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.08.718.647 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.10.798.611 I slot print_timing: id  0 | task 0 | prompt eval time =    1882.63 ms /  2521 tokens (    0.75 ms per token,  1339.08 tokens per second)
+0.10.798.615 I slot print_timing: id  0 | task 0 |        eval time =     197.25 ms /    12 tokens (   17.93 ms per token,    55.77 tokens per second)
+0.10.798.615 I slot print_timing: id  0 | task 0 |       total time =    2079.88 ms /  2533 tokens
+0.10.798.620 I slot print_timing: id  0 | task 0 |    graphs reused =          2
+0.10.798.621 I slot print_timing: id  0 | task 0 | draft acceptance = 1.00000 (    8 accepted /     8 generated), mean len =  5.00
+0.10.798.763 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2533, truncated = 0
+0.10.808.001 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 253680704881
+0.10.929.958 I slot launch_slot_: id  0 | task 9 | processing task, is_child = 0
+0.11.442.295 I slot print_timing: id  0 | task 9 | prompt eval time =     412.10 ms /   441 tokens (    0.93 ms per token,  1070.12 tokens per second)
+0.11.442.298 I slot print_timing: id  0 | task 9 |        eval time =     100.16 ms /     6 tokens (   20.03 ms per token,    49.92 tokens per second)
+0.11.442.298 I slot print_timing: id  0 | task 9 |       total time =     512.26 ms /   447 tokens
+0.11.442.299 I slot print_timing: id  0 | task 9 |    graphs reused =          3
+0.11.442.301 I slot print_timing: id  0 | task 9 | draft acceptance = 0.37500 (    3 accepted /     8 generated), mean len =  2.50
+0.11.442.342 I slot      release: id  0 | task 9 | stop processing: n_tokens = 446, truncated = 0
+0.47.490.554 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 253681348459
+0.47.596.859 I slot launch_slot_: id  0 | task 15 | processing task, is_child = 0
+0.48.031.729 I slot print_timing: id  0 | task 15 | prompt eval time =     227.25 ms /    74 tokens (    3.07 ms per token,   325.63 tokens per second)
+0.48.031.732 I slot print_timing: id  0 | task 15 |        eval time =     207.54 ms /    13 tokens (   17.29 ms per token,    57.82 tokens per second)
+0.48.031.733 I slot print_timing: id  0 | task 15 |       total time =     434.79 ms /    87 tokens
+0.48.031.734 I slot print_timing: id  0 | task 15 |    graphs reused =          5
+0.48.031.736 I slot print_timing: id  0 | task 15 | draft acceptance = 0.56250 (    9 accepted /    16 generated), mean len =  3.25
+0.48.031.858 I slot      release: id  0 | task 15 | stop processing: n_tokens = 2565, truncated = 0
+0.48.042.236 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 253717937976
+0.48.208.305 I slot launch_slot_: id  0 | task 23 | processing task, is_child = 0
+0.48.489.978 I slot print_timing: id  0 | task 23 | prompt eval time =     180.70 ms /   102 tokens (    1.77 ms per token,   564.48 tokens per second)
+0.48.489.981 I slot print_timing: id  0 | task 23 |        eval time =     100.89 ms /     6 tokens (   20.18 ms per token,    49.56 tokens per second)
+0.48.489.982 I slot print_timing: id  0 | task 23 |       total time =     281.59 ms /   108 tokens
+0.48.489.983 I slot print_timing: id  0 | task 23 |    graphs reused =          6
+0.48.489.986 I slot print_timing: id  0 | task 23 | draft acceptance = 0.37500 (    3 accepted /     8 generated), mean len =  2.50
+0.48.490.029 I slot      release: id  0 | task 23 | stop processing: n_tokens = 447, truncated = 0
+1.41.695.462 I srv    operator(): operator(): cleaning up before exit...
+0.00.036.562 I srv  llama_server: initializing ...
+0.00.036.571 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.036.814 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.039.186 I srv    load_model: loading model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.440.226 I cmn          init: llama threadpool init, n_threads = 6
+0.02.441.594 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.02.503.678 I common_speculative_init_result: creating MTP draft context against the target model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.549.018 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.02.549.021 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.02.549.021 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.02.731.676 I srv    load_model: loaded multimodal model, '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.02.731.681 W srv    load_model: cache_reuse is not supported by multimodal, it will be disabled
+0.02.731.701 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 64000, kv_unified = 'false'
+0.02.797.018 I srv  llama_server: model loaded
+0.02.797.026 I srv  llama_server: listening on http://0.0.0.0:11435
+0.06.964.673 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.06.965.038 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.09.058.948 I slot print_timing: id  0 | task 0 | prompt eval time =    1869.74 ms /  2521 tokens (    0.74 ms per token,  1348.31 tokens per second)
+0.09.058.951 I slot print_timing: id  0 | task 0 |        eval time =     224.08 ms /    13 tokens (   18.67 ms per token,    53.55 tokens per second)
+0.09.058.952 I slot print_timing: id  0 | task 0 |       total time =    2093.83 ms /  2534 tokens
+0.09.058.956 I slot print_timing: id  0 | task 0 |    graphs reused =          1
+0.09.058.959 I slot print_timing: id  0 | task 0 | draft acceptance = 1.00000 (    9 accepted /     9 generated), mean len =  4.00
+0.09.059.111 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2534, truncated = 0
+0.09.069.158 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 253792602795
+0.09.197.327 I slot launch_slot_: id  0 | task 9 | processing task, is_child = 0
+0.09.707.887 I slot print_timing: id  0 | task 9 | prompt eval time =     411.04 ms /   442 tokens (    0.93 ms per token,  1075.31 tokens per second)
+0.09.707.892 I slot print_timing: id  0 | task 9 |        eval time =      99.44 ms /     5 tokens (   24.86 ms per token,    40.23 tokens per second)
+0.09.707.893 I slot print_timing: id  0 | task 9 |       total time =     510.48 ms /   447 tokens
+0.09.707.893 I slot print_timing: id  0 | task 9 |    graphs reused =          2
+0.09.707.896 I slot print_timing: id  0 | task 9 | draft acceptance = 0.25000 (    2 accepted /     8 generated), mean len =  2.00
+0.09.707.937 I slot      release: id  0 | task 9 | stop processing: n_tokens = 446, truncated = 0
+0.44.849.677 I srv    operator(): operator(): cleaning up before exit...
+0.00.035.522 I srv  llama_server: initializing ...
+0.00.035.532 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.035.780 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.038.561 I srv    load_model: loading model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.440.707 I cmn          init: llama threadpool init, n_threads = 6
+0.02.442.084 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.02.503.251 I common_speculative_init_result: creating MTP draft context against the target model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.547.306 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.02.547.309 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.02.547.310 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.02.729.977 I srv    load_model: loaded multimodal model, '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.02.729.982 W srv    load_model: cache_reuse is not supported by multimodal, it will be disabled
+0.02.730.001 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 64000, kv_unified = 'false'
+0.02.795.487 I srv  llama_server: model loaded
+0.02.795.494 I srv  llama_server: listening on http://0.0.0.0:11435
+0.09.212.228 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.09.212.592 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.11.617.041 I slot print_timing: id  0 | task 0 | prompt eval time =    1875.81 ms /  2525 tokens (    0.74 ms per token,  1346.09 tokens per second)
+0.11.617.044 I slot print_timing: id  0 | task 0 |        eval time =     528.56 ms /    14 tokens (   40.66 ms per token,    24.59 tokens per second)
+0.11.617.044 I slot print_timing: id  0 | task 0 |       total time =    2404.37 ms /  2539 tokens
+0.11.617.049 I slot print_timing: id  0 | task 0 |    graphs reused =          8
+0.11.617.051 I slot print_timing: id  0 | task 0 | draft acceptance = 0.04167 (    1 accepted /    24 generated), mean len =  1.12
+0.11.617.202 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2538, truncated = 0
+0.11.627.273 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 253857800256
+0.11.748.954 I slot launch_slot_: id  0 | task 17 | processing task, is_child = 0
+0.12.210.593 I slot print_timing: id  0 | task 17 | prompt eval time =     411.35 ms /   447 tokens (    0.92 ms per token,  1086.68 tokens per second)
+0.12.210.597 I slot print_timing: id  0 | task 17 |        eval time =      50.21 ms /     5 tokens (   12.55 ms per token,    79.67 tokens per second)
+0.12.210.598 I slot print_timing: id  0 | task 17 |       total time =     461.55 ms /   452 tokens
+0.12.210.598 I slot print_timing: id  0 | task 17 |    graphs reused =          8
+0.12.210.600 I slot print_timing: id  0 | task 17 | draft acceptance = 0.75000 (    3 accepted /     4 generated), mean len =  4.00
+0.12.210.640 I slot      release: id  0 | task 17 | stop processing: n_tokens = 451, truncated = 0
+1.29.043.502 I srv    operator(): operator(): cleaning up before exit...
+0.00.035.654 I srv  llama_server: initializing ...
+0.00.035.664 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.035.915 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.038.650 I srv    load_model: loading model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.451.671 I cmn          init: llama threadpool init, n_threads = 6
+0.02.452.989 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.02.514.194 I common_speculative_init_result: creating MTP draft context against the target model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.558.962 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.02.558.965 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.02.558.966 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.02.741.103 I srv    load_model: loaded multimodal model, '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.02.741.109 W srv    load_model: cache_reuse is not supported by multimodal, it will be disabled
+0.02.741.128 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 64000, kv_unified = 'false'
+0.02.802.262 I srv  llama_server: model loaded
+0.02.802.269 I srv  llama_server: listening on http://0.0.0.0:11435
+0.06.780.407 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.06.780.774 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.08.996.300 I slot print_timing: id  0 | task 0 | prompt eval time =    1877.48 ms /  2525 tokens (    0.74 ms per token,  1344.89 tokens per second)
+0.08.996.304 I slot print_timing: id  0 | task 0 |        eval time =     337.96 ms /    12 tokens (   30.72 ms per token,    32.55 tokens per second)
+0.08.996.304 I slot print_timing: id  0 | task 0 |       total time =    2215.44 ms /  2537 tokens
+0.08.996.309 I slot print_timing: id  0 | task 0 |    graphs reused =          2
+0.08.996.312 I slot print_timing: id  0 | task 0 | draft acceptance = 0.33333 (    3 accepted /     9 generated), mean len =  1.75
+0.08.996.464 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2536, truncated = 0
+0.09.006.508 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 254008024400
+0.09.134.274 I slot launch_slot_: id  0 | task 13 | processing task, is_child = 0
+0.09.888.143 I slot print_timing: id  0 | task 13 | prompt eval time =     412.39 ms /   445 tokens (    0.93 ms per token,  1079.08 tokens per second)
+0.09.888.147 I slot print_timing: id  0 | task 13 |        eval time =     341.38 ms /    28 tokens (   12.64 ms per token,    79.09 tokens per second)
+0.09.888.147 I slot print_timing: id  0 | task 13 |       total time =     753.77 ms /   473 tokens
+0.09.888.148 I slot print_timing: id  0 | task 13 |    graphs reused =          8
+0.09.888.150 I slot print_timing: id  0 | task 13 | draft acceptance = 0.71429 (   20 accepted /    28 generated), mean len =  3.86
+0.09.888.191 I slot      release: id  0 | task 13 | stop processing: n_tokens = 472, truncated = 0
+12.29.357.921 I srv    operator(): operator(): cleaning up before exit...
+0.00.035.844 I srv  llama_server: initializing ...
+0.00.035.856 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.036.132 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.038.179 I srv    load_model: loading model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.03.669.471 I cmn          init: llama threadpool init, n_threads = 6
+0.03.670.830 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.03.745.267 I common_speculative_init_result: creating MTP draft context against the target model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.03.789.706 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.03.789.709 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.03.789.710 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.04.275.740 I srv    load_model: loaded multimodal model, '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.04.275.744 W srv    load_model: cache_reuse is not supported by multimodal, it will be disabled
+0.04.275.764 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 64000, kv_unified = 'false'
+0.04.339.420 I srv  llama_server: model loaded
+0.04.339.426 I srv  llama_server: listening on http://0.0.0.0:11435
+0.12.303.773 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.12.304.157 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.14.654.306 I slot print_timing: id  0 | task 0 | prompt eval time =    1876.19 ms /  2525 tokens (    0.74 ms per token,  1345.81 tokens per second)
+0.14.654.309 I slot print_timing: id  0 | task 0 |        eval time =     473.88 ms /    21 tokens (   23.69 ms per token,    42.20 tokens per second)
+0.14.654.310 I slot print_timing: id  0 | task 0 |       total time =    2350.07 ms /  2546 tokens
+0.14.654.314 I slot print_timing: id  0 | task 0 |    graphs reused =          4
+0.14.654.316 I slot print_timing: id  0 | task 0 | draft acceptance = 0.47619 (   10 accepted /    21 generated), mean len =  2.25
+0.14.654.458 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2545, truncated = 0
+0.14.666.734 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 254774735575
+0.14.790.649 I slot launch_slot_: id  0 | task 15 | processing task, is_child = 0
+0.15.583.961 I slot print_timing: id  0 | task 15 | prompt eval time =     412.78 ms /   454 tokens (    0.91 ms per token,  1099.86 tokens per second)
+0.15.583.964 I slot print_timing: id  0 | task 15 |        eval time =     380.44 ms /    28 tokens (   14.09 ms per token,    70.97 tokens per second)
+0.15.583.965 I slot print_timing: id  0 | task 15 |       total time =     793.22 ms /   482 tokens
+0.15.583.965 I slot print_timing: id  0 | task 15 |    graphs reused =          9
+0.15.583.968 I slot print_timing: id  0 | task 15 | draft acceptance = 0.65517 (   19 accepted /    29 generated), mean len =  3.38
+0.15.584.010 I slot      release: id  0 | task 15 | stop processing: n_tokens = 481, truncated = 0
+6.34.240.397 I srv    operator(): operator(): cleaning up before exit...
+0.00.037.563 I srv  llama_server: initializing ...
+0.00.037.575 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.037.847 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.039.941 I srv    load_model: loading model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.492.275 I cmn          init: llama threadpool init, n_threads = 6
+0.02.493.645 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.02.555.539 I common_speculative_init_result: creating MTP draft context against the target model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.599.651 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.02.599.655 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.02.599.655 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.02.789.972 I srv    load_model: loaded multimodal model, '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.02.789.978 W srv    load_model: cache_reuse is not supported by multimodal, it will be disabled
+0.02.789.997 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 64000, kv_unified = 'false'
+0.02.855.304 I srv  llama_server: model loaded
+0.02.855.312 I srv  llama_server: listening on http://0.0.0.0:11435
+0.09.605.497 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.09.605.862 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.11.912.205 I slot print_timing: id  0 | task 0 | prompt eval time =    1866.88 ms /  2525 tokens (    0.74 ms per token,  1352.53 tokens per second)
+0.11.912.208 I slot print_timing: id  0 | task 0 |        eval time =     439.38 ms /    17 tokens (   27.46 ms per token,    36.42 tokens per second)
+0.11.912.209 I slot print_timing: id  0 | task 0 |       total time =    2306.25 ms /  2542 tokens
+0.11.912.213 I slot print_timing: id  0 | task 0 |    graphs reused =          5
+0.11.912.216 I slot print_timing: id  0 | task 0 | draft acceptance = 0.40000 (    6 accepted /    15 generated), mean len =  1.75
+0.11.912.386 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2541, truncated = 0
+0.11.922.245 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 255174036918
+0.12.046.775 I slot launch_slot_: id  0 | task 15 | processing task, is_child = 0
+0.12.806.122 I slot print_timing: id  0 | task 15 | prompt eval time =     413.67 ms /   450 tokens (    0.92 ms per token,  1087.81 tokens per second)
+0.12.806.127 I slot print_timing: id  0 | task 15 |        eval time =     345.59 ms /    28 tokens (   12.80 ms per token,    78.13 tokens per second)
+0.12.806.128 I slot print_timing: id  0 | task 15 |       total time =     759.26 ms /   478 tokens
+0.12.806.129 I slot print_timing: id  0 | task 15 |    graphs reused =         11
+0.12.806.131 I slot print_timing: id  0 | task 15 | draft acceptance = 0.71429 (   20 accepted /    28 generated), mean len =  3.86
+0.12.806.172 I slot      release: id  0 | task 15 | stop processing: n_tokens = 477, truncated = 0
+1.59.027.979 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 255174930701
+1.59.159.204 I slot launch_slot_: id  0 | task 26 | processing task, is_child = 0
+1.59.786.115 I slot print_timing: id  0 | task 26 | prompt eval time =     302.09 ms /    87 tokens (    3.47 ms per token,   288.00 tokens per second)
+1.59.786.120 I slot print_timing: id  0 | task 26 |        eval time =     324.55 ms /    19 tokens (   18.03 ms per token,    55.46 tokens per second)
+1.59.786.120 I slot print_timing: id  0 | task 26 |       total time =     626.64 ms /   106 tokens
+1.59.786.121 I slot print_timing: id  0 | task 26 |    graphs reused =         12
+1.59.786.124 I slot print_timing: id  0 | task 26 | draft acceptance = 0.70588 (   12 accepted /    17 generated), mean len =  3.40
+1.59.811.429 I slot      release: id  0 | task 26 | stop processing: n_tokens = 2584, truncated = 0
+1.59.854.993 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 255281935960
+2.00.035.756 I slot launch_slot_: id  0 | task 37 | processing task, is_child = 0
+2.00.589.521 I slot print_timing: id  0 | task 37 | prompt eval time =     204.25 ms /   112 tokens (    1.82 ms per token,   548.35 tokens per second)
+2.00.589.526 I slot print_timing: id  0 | task 37 |        eval time =     349.41 ms /    28 tokens (   12.94 ms per token,    77.27 tokens per second)
+2.00.589.526 I slot print_timing: id  0 | task 37 |       total time =     553.66 ms /   140 tokens
+2.00.589.527 I slot print_timing: id  0 | task 37 |    graphs reused =         18
+2.00.591.067 I slot print_timing: id  0 | task 37 | draft acceptance = 0.71429 (   20 accepted /    28 generated), mean len =  3.86
+2.00.593.709 I slot      release: id  0 | task 37 | stop processing: n_tokens = 479, truncated = 0
+6.09.807.875 I srv    operator(): operator(): cleaning up before exit...
+0.00.034.713 I srv  llama_server: initializing ...
+0.00.034.722 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.034.968 W srv  llama_server: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.037.436 I srv    load_model: loading model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.499.109 I cmn          init: llama threadpool init, n_threads = 6
+0.02.500.438 W cmn  common_init_: KV cache shifting is not supported for this context, disabling KV cache shifting
+0.02.561.410 I common_speculative_init_result: creating MTP draft context against the target model '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf'
+0.02.605.691 W load_hparams: Qwen-VL models require at minimum 1024 image tokens to function correctly on grounding tasks
+0.02.605.696 W load_hparams: if you encounter problems with accuracy, try adding --image-min-tokens 1024
+0.02.605.696 W load_hparams: more info: https://github.com/ggml-org/llama.cpp/issues/16842
+
+0.03.333.113 I srv    load_model: loaded multimodal model, '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf'
+0.03.333.120 W srv    load_model: cache_reuse is not supported by multimodal, it will be disabled
+0.03.333.139 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 64000, kv_unified = 'false'
+0.03.395.956 I srv  llama_server: model loaded
+0.03.395.962 I srv  llama_server: listening on http://0.0.0.0:11435
+0.06.152.835 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.06.153.206 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.08.416.745 I slot print_timing: id  0 | task 0 | prompt eval time =    1865.33 ms /  2525 tokens (    0.74 ms per token,  1353.65 tokens per second)
+0.08.416.749 I slot print_timing: id  0 | task 0 |        eval time =     398.13 ms /    12 tokens (   36.19 ms per token,    27.63 tokens per second)
+0.08.416.750 I slot print_timing: id  0 | task 0 |       total time =    2263.46 ms /  2537 tokens
+0.08.416.754 I slot print_timing: id  0 | task 0 |    graphs reused =          3
+0.08.416.757 I slot print_timing: id  0 | task 0 | draft acceptance = 0.15000 (    3 accepted /    20 generated), mean len =  1.43
+0.08.416.930 I slot      release: id  0 | task 0 | stop processing: n_tokens = 2536, truncated = 0
+0.08.427.015 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = 255550487063
+0.08.550.302 I slot launch_slot_: id  0 | task 13 | processing task, is_child = 0
+0.09.302.690 I slot print_timing: id  0 | task 13 | prompt eval time =     410.02 ms /   445 tokens (    0.92 ms per token,  1085.31 tokens per second)
+0.09.302.693 I slot print_timing: id  0 | task 13 |        eval time =     342.28 ms /    28 tokens (   12.68 ms per token,    78.88 tokens per second)
+0.09.302.694 I slot print_timing: id  0 | task 13 |       total time =     752.30 ms /   473 tokens
+0.09.302.695 I slot print_timing: id  0 | task 13 |    graphs reused =          9
+0.09.302.697 I slot print_timing: id  0 | task 13 | draft acceptance = 0.71429 (   20 accepted /    28 generated), mean len =  3.86
+0.09.302.739 I slot      release: id  0 | task 13 | stop processing: n_tokens = 472, truncated = 0

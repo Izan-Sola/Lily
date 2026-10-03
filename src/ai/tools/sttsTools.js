@@ -313,7 +313,8 @@ class SttsToolExecutor {
         }
         Logger.info(`Approved, running: ${instruction.slice(0, 200)}`, "APPROVAL")
         try {
-            await withRiskAllowed(() => this._runPi(instruction))
+            // FIX: Assign the result to `report` so it isn't undefined when passed to the callback
+            const report = await withRiskAllowed(() => this._runPi(instruction))
             this._onApprovalResult?.({ channelId, instruction, approved: true, report })
         } catch (e) {
             this._onApprovalResult?.({ channelId, instruction, approved: true, error: e.message })
@@ -409,9 +410,15 @@ class SttsToolExecutor {
             }
         }
 
+        // FIX: Guard against missing callback to prevent silent failure
+        if (!this._onApprovalNeeded) {
+            Logger.error("Risky command flagged, but no approval callback is registered!", "APPROVAL")
+            return err("Risky action detected, but the approval system isn't connected right now.")
+        }
+
         const id = approvalStore.create({ instruction: prompt, channelId: context.channelId, matched })
         Logger.warning(`Risky command flagged (matched "${matched}"), awaiting approval [${id}]: ${prompt.slice(0, 200)}`, "APPROVAL")
-        this._onApprovalNeeded?.({ id, instruction: prompt, channelId: context.channelId, matched })
+        this._onApprovalNeeded({ id, instruction: prompt, channelId: context.channelId, matched })
 
         return ok(`That looks like a risky action ("${matched}"), so I sent it for approval instead of just running it — I'll let you know once it's handled.`)
     }

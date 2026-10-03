@@ -25,15 +25,10 @@
 import fs from 'fs'
 import axios from 'axios'
 import { Logger } from '../../utils/Logger.js'
-import { getConfig } from '../config.js'
+import { getConfig, getSection } from '../config.js'
 
-const STORE_PATH = './working_memory.json'
-
-const MAX_PEOPLE = 8
-const MAX_THREADS = 6
-const MAX_LEN = 140
-const PRESENCE_TTL_MS = 45 * 60 * 1000      // stop listing someone who went quiet
-const THREAD_TTL_MS = 6 * 60 * 60 * 1000
+// Limits come from config.json "memory"; read on each access so edits apply live.
+const M = new Proxy({}, { get: (_, key) => getSection('memory')[key] })
 
 // Per-surface flavour for the update prompt. Keys match the channel ids used
 // in Lily.js (minecraft / youtube / vrchat / voiceAssistant); anything else
@@ -84,7 +79,7 @@ function clean(value) {
         .trim()
     if (!text) return null
     if (['null', 'none', 'unknown', 'n/a', 'someone', 'user', 'the user'].includes(text.toLowerCase())) return null
-    return text.slice(0, MAX_LEN)
+    return text.slice(0, M.maxLen)
 }
 
 function sameText(a, b) {
@@ -92,7 +87,7 @@ function sameText(a, b) {
 }
 
 export class WorkingMemory {
-    constructor({ storePath = STORE_PATH } = {}) {
+    constructor({ storePath = M.workingMemoryStorePath } = {}) {
         this.storePath = storePath
         this.states = new Map()
         this.inflight = new Set()
@@ -135,10 +130,10 @@ export class WorkingMemory {
 
         // Oldest-seen falls off first once the room gets busy.
         const names = Object.keys(state.people)
-        if (names.length > MAX_PEOPLE) {
+        if (names.length > M.maxPeople) {
             names
                 .sort((a, b) => state.people[a].lastSeen - state.people[b].lastSeen)
-                .slice(0, names.length - MAX_PEOPLE)
+                .slice(0, names.length - M.maxPeople)
                 .forEach(n => delete state.people[n])
         }
 
@@ -149,7 +144,7 @@ export class WorkingMemory {
     /** Names seen recently enough to still count as "in the room". */
     presentNames(channelId) {
         const state = this.get(channelId)
-        const cutoff = Date.now() - PRESENCE_TTL_MS
+        const cutoff = Date.now() - M.presenceTtlMs
         return Object.entries(state.people)
             .filter(([, p]) => p.lastSeen >= cutoff)
             .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
@@ -169,13 +164,13 @@ export class WorkingMemory {
     _prune(state) {
         const now = Date.now()
         state.threads = state.threads
-            .filter(t => t.ts >= now - THREAD_TTL_MS)
-            .slice(-MAX_THREADS)
+            .filter(t => t.ts >= now - M.threadTtlMs)
+            .slice(-M.maxThreads)
         for (const [name, person] of Object.entries(state.people)) {
             // Keep the person (their id is worth caching) but drop a stale note
             // so the block never describes what someone was doing yesterday.
-            if (person.lastSeen < now - PRESENCE_TTL_MS) person.note = null
-            if (person.lastSeen < now - THREAD_TTL_MS) delete state.people[name]
+            if (person.lastSeen < now - M.presenceTtlMs) person.note = null
+            if (person.lastSeen < now - M.threadTtlMs) delete state.people[name]
         }
     }
 
@@ -262,7 +257,7 @@ export class WorkingMemory {
                     if (!value) break
                     if (state.threads.some(t => sameText(t.text, value))) break
                     state.threads.push({ text: value, who: resolveName(raw?.who), ts: Date.now() })
-                    if (state.threads.length > MAX_THREADS) state.threads.shift()
+                    if (state.threads.length > M.maxThreads) state.threads.shift()
                     applied++
                     break
                 }
@@ -409,7 +404,7 @@ export class WorkingMemory {
                         ? state.threads
                             .map(t => ({ text: clean(t?.text), who: clean(t?.who), ts: Number(t?.ts) || Date.now() }))
                             .filter(t => t.text)
-                            .slice(-MAX_THREADS)
+                            .slice(-M.maxThreads)
                         : [],
                     updatedAt: Number(state?.updatedAt) || 0,
                 })
@@ -428,7 +423,7 @@ export class WorkingMemory {
             } catch (err) {
                 Logger.error(`Save failed (non-fatal): ${err.message}`, 'WORKING MEMORY')
             }
-        }, 1000)
+        }, getSection('timeouts').workingMemorySaveDebounceMs)
         this._saveTimer.unref?.()
     }
 }

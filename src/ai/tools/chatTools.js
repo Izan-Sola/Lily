@@ -1,21 +1,16 @@
 import axios from "axios"
 import { Logger } from '../../utils/Logger.js'
 import { tavily } from "@tavily/core"
-import { getConfig } from '../config.js'
+import { getConfig, getSection } from '../config.js'
 import { DONE_NOTE } from './toolHelpers.js'
 
 // ─── Turn budget limits ─────────────────────────────────────────────────
 // Only chat-context tools (memory, media, web search) spend against this.
 // Minecraft and VTubing tools are intentionally exempt — see tools.js.
-const LIMITS = {
-    memoryQuery: 10,
-    memoryWrite: 10,
-    media: 10,
-    webSearch: 10,
-    total: 10,
-    narration: 10,
-    badArgs: 10,
-}
+// Values come from config.json "toolLimits"; read on each access so edits apply live.
+const LIMITS = new Proxy({}, {
+    get: (_, key) => getSection('toolLimits')[key],
+})
 
 // ─── Chat Tool Executor ──────────────────────────────────────────────────
 //
@@ -181,7 +176,7 @@ class ChatToolExecutor {
             Logger.info(`Queried recent memories up to ${daysBack} days back`, "MEMORY QUERY")
             try {
                 const { data } = await axios.post(`${this.opts.memoryDbUrl}/recent`, {
-                    limit: 10, days_back: daysBack, min_importance: 0.3
+                    limit: getSection('memory').recentLimit, days_back: daysBack, min_importance: getSection('memory').recentMinImportance
                 }, { timeout: this.opts.dbTimeout })
 
                 if (!data?.results?.length) return finish(`No memories found from the last ${daysBack} days.`)
@@ -361,7 +356,7 @@ class ChatToolExecutor {
         Logger.info(`Entity lookup: ${person_name ?? subject_id}`, "MEMORY ENTITY")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
-                person_name, subject_id, category, limit: 20,
+                person_name, subject_id, category, limit: getSection('memory').lookupEntityLimit,
             }, { timeout: this.opts.dbTimeout })
 
             const results = data?.results ?? []
@@ -481,7 +476,7 @@ class ChatToolExecutor {
         Logger.info(`Querying Klipy API: "${query}"`, "GIF")
         try {
             const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/gifs/search`, {
-                params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
+                params: { q: query, per_page: getSection('search').klipyPerPage, page: 1, customer_id: getSection('search').klipyCustomerId },
                 timeout: this.opts.dbTimeout
             })
             const results = data?.data?.data ?? []
@@ -489,7 +484,7 @@ class ChatToolExecutor {
                 this.markFlawed('gif_not_found')
                 return JSON.stringify({ status: "not_found", message: "No GIF found — don't retry with a near-identical query, just reply without a gif." })
             }
-            const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
+            const pick = results[Math.floor(Math.random() * Math.min(results.length, getSection('search').klipyPickPool))]
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
             if (!url) {
                 this.markFlawed('gif_no_url')
@@ -513,7 +508,7 @@ class ChatToolExecutor {
         Logger.info(`Querying Klipy API: "${query}"`, "MEME")
         try {
             const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/static-memes/search`, {
-                params: { q: query, per_page: 10, page: 1, customer_id: "lily-bot" },
+                params: { q: query, per_page: getSection('search').klipyPerPage, page: 1, customer_id: getSection('search').klipyCustomerId },
                 timeout: this.opts.dbTimeout
             })
 
@@ -523,7 +518,7 @@ class ChatToolExecutor {
                 return JSON.stringify({ status: "not_found", message: "No meme found — don't retry with a near-identical query, just reply without a meme." })
             }
 
-            const pick = results[Math.floor(Math.random() * Math.min(results.length, 8))]
+            const pick = results[Math.floor(Math.random() * Math.min(results.length, getSection('search').klipyPickPool))]
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
             if (!url) {
                 this.markFlawed('meme_no_url')
@@ -550,7 +545,8 @@ class ChatToolExecutor {
         try {
             const client = tavily({ apiKey: process.env.TAVILY_API_KEY })
             const response = await client.search(query, {
-                maxResults: 5,
+                maxResults: getSection('search').tavilyMaxResults,
+                includeImages: getSection('search').tavilyIncludeImages,
                 searchDepth: "basic",
             })
 

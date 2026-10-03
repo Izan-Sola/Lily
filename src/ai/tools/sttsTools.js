@@ -10,16 +10,13 @@ import { ok, err } from './toolHelpers.js'
 import { checkShrinkRatio, checkStubBodies } from '../../coding/codeEditShared.js'
 import { approvalStore } from '../../ai/tools/riskyActionsManagement/approvalStore.js'
 import { classifyRisk } from './riskyActionsManagement/riskClassifier.js'
+import { getSection } from '../config.js'
 
 const SUBMODULES = ['screenshot', 'pidev', 'coding']
 const execFileAsync = promisify(execFile)
 
-const PI_TIMEOUT_MS = 90_000
-const SCREENSHOT_TIMEOUT_MS = 15_000
-const FILE_APPEAR_TIMEOUT_MS = 3_000
-const FILE_APPEAR_POLL_MS = 100
-const COMPANION_REQUEST_TIMEOUT_MS = 5_000
-const ASK_USER_TIMEOUT_MS = 120_000
+// Timeouts come from config.json "timeouts"; read on each access so edits apply live.
+const T = new Proxy({}, { get: (_, key) => getSection('timeouts')[key] })
 
 // ─── Desktop/session detection ───────────────────────────────────────────
 
@@ -35,7 +32,7 @@ function detectDesktop() {
     }
 }
 
-async function waitForFile(filePath, timeoutMs = FILE_APPEAR_TIMEOUT_MS, pollMs = FILE_APPEAR_POLL_MS) {
+async function waitForFile(filePath, timeoutMs = T.fileAppearMs, pollMs = T.fileAppearPollMs) {
     const deadline = Date.now() + timeoutMs
     let lastSize = -1
     let stableCount = 0
@@ -76,7 +73,7 @@ async function captureWindows(outPath) {
     await execFileAsync(
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-Command', script],
-        { timeout: SCREENSHOT_TIMEOUT_MS },
+        { timeout: T.screenshotMs },
     )
 }
 
@@ -87,7 +84,7 @@ async function captureGnomeDbus(outPath) {
         '--object-path', '/org/gnome/Shell/Screenshot',
         '--method', 'org.gnome.Shell.Screenshot.Screenshot',
         'false', 'false', outPath,
-    ], { timeout: SCREENSHOT_TIMEOUT_MS })
+    ], { timeout: T.screenshotMs })
 
     if (!/^\(true,/.test(stdout.trim())) {
         throw new Error(`gnome-shell reported failure: ${stdout.trim()}`)
@@ -95,27 +92,27 @@ async function captureGnomeDbus(outPath) {
 }
 
 async function captureGnomeScreenshotCli(outPath) {
-    await execFileAsync('gnome-screenshot', ['-f', outPath], { timeout: SCREENSHOT_TIMEOUT_MS })
+    await execFileAsync('gnome-screenshot', ['-f', outPath], { timeout: T.screenshotMs })
 }
 
 async function captureSpectacle(outPath) {
-    await execFileAsync('spectacle', ['-b', '-n', '-o', outPath], { timeout: SCREENSHOT_TIMEOUT_MS })
+    await execFileAsync('spectacle', ['-b', '-n', '-o', outPath], { timeout: T.screenshotMs })
 }
 
 async function captureGrim(outPath) {
-    await execFileAsync('grim', [outPath], { timeout: SCREENSHOT_TIMEOUT_MS })
+    await execFileAsync('grim', [outPath], { timeout: T.screenshotMs })
 }
 
 async function captureScrot(outPath) {
-    await execFileAsync('scrot', ['-o', outPath], { timeout: SCREENSHOT_TIMEOUT_MS })
+    await execFileAsync('scrot', ['-o', outPath], { timeout: T.screenshotMs })
 }
 
 async function captureMaim(outPath) {
-    await execFileAsync('maim', [outPath], { timeout: SCREENSHOT_TIMEOUT_MS })
+    await execFileAsync('maim', [outPath], { timeout: T.screenshotMs })
 }
 
 async function captureImportMagick(outPath) {
-    await execFileAsync('import', ['-window', 'root', outPath], { timeout: SCREENSHOT_TIMEOUT_MS })
+    await execFileAsync('import', ['-window', 'root', outPath], { timeout: T.screenshotMs })
 }
 
 // ─── Ask-the-user popup strategies ───────────────────────────────────────
@@ -136,7 +133,7 @@ async function askWindows(prompt) {
         'powershell.exe',
         ['-NoProfile', '-NonInteractive', '-Command', script],
         {
-            timeout: ASK_USER_TIMEOUT_MS,
+            timeout: T.askUserMs,
             env: { ...process.env, LILY_ASK_PROMPT: prompt },
         },
     )
@@ -152,7 +149,7 @@ async function askKdialog(prompt) {
         ({ stdout } = await execFileAsync(
             'kdialog',
             ['--title', 'Lily needs your input', '--inputbox', prompt],
-            { timeout: ASK_USER_TIMEOUT_MS },
+            { timeout: T.askUserMs },
         ))
     } catch (e) {
         if (e.code === 1 && !e.killed) throw cancelError()
@@ -169,7 +166,7 @@ async function askZenity(prompt) {
         ({ stdout } = await execFileAsync(
             'zenity',
             ['--entry', '--title=Lily needs your input', `--text=${prompt}`],
-            { timeout: ASK_USER_TIMEOUT_MS },
+            { timeout: T.askUserMs },
         ))
     } catch (e) {
         if (e.code === 1 && !e.killed) throw cancelError()
@@ -437,7 +434,7 @@ class SttsToolExecutor {
             const timer = setTimeout(() => {
                 child.kill('SIGTERM')
                 reject(new Error('timeout'))
-            }, PI_TIMEOUT_MS)
+            }, T.piMs)
 
             child.on('error', e => {
                 clearTimeout(timer)
@@ -531,7 +528,7 @@ class SttsToolExecutor {
         try {
             const { data } = await axios.get(
                 `${this._vscodeCompanionUrl}/active-file`,
-                { timeout: COMPANION_REQUEST_TIMEOUT_MS }
+                { timeout: T.companionRequestMs }
             )
             active = data
         } catch (e) {
@@ -566,7 +563,7 @@ class SttsToolExecutor {
             await axios.post(
                 `${this._vscodeCompanionUrl}/apply-edit`,
                 { path: active.path, content: newContent },
-                { timeout: COMPANION_REQUEST_TIMEOUT_MS }
+                { timeout: T.companionRequestMs }
             )
         } catch (e) {
             Logger.error(`Apply failed: ${e.message}`, "STTS")
@@ -593,7 +590,7 @@ class SttsToolExecutor {
             const { data: resData } = await axios.post(
                 `${this._vscodeCompanionUrl}/create-file`,
                 { path: filePath, content: content ?? '', overwrite: !!overwrite },
-                { timeout: COMPANION_REQUEST_TIMEOUT_MS }
+                { timeout: T.companionRequestMs }
             )
             data = resData
         } catch (e) {
@@ -618,7 +615,7 @@ class SttsToolExecutor {
         try {
             const { data } = await axios.get(
                 `${this._vscodeCompanionUrl}/active-file`,
-                { timeout: COMPANION_REQUEST_TIMEOUT_MS }
+                { timeout: T.companionRequestMs }
             )
             active = data
         } catch (e) {

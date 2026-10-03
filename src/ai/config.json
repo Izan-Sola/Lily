@@ -17,10 +17,10 @@
     "maxUsesPerTool": 3,
     "maxUsesPerMinecraftAction": 1,
     "memoryQueryMinScore": 0.3,
-    "memoryRemoveMinScore": 0.70,
+    "memoryRemoveMinScore": 0.7,
     "memoryRemoveK": 2,
-    "episodicQueryMinScore": 0.40,
-    "episodicRemoveMinScore": 0.80,
+    "episodicQueryMinScore": 0.4,
+    "episodicRemoveMinScore": 0.8,
     "episodicRemoveK": 3,
     "summarizeEvery": 20,
     "summarizeLastN": 20,
@@ -39,9 +39,7 @@
     "memoryAutoInjectEpisodicMinScore": 0.65,
     "toolCallFormat": "xml_tags",
     "trainingOutputFormat": "sharegpt",
-    "discordUserID": "572121744253386792",
     "allowAnyToolViaDM": true,
-
     "workingMemoryEnabled": true,
     "workingMemoryModel": null,
     "workingMemoryEvery": 1,
@@ -49,5 +47,155 @@
     "workingMemoryLines": 8,
     "explicitMemoryEnabled": true,
     "memoryAutoInjectPersonEnabled": true,
-    "memoryAutoInjectPersonLimit": 6
+    "memoryAutoInjectPersonLimit": 6,
+    "discord": {
+        "ownerUserId": "572121744253386792",
+        "mentionRoleId": "1473317878785773684",
+        "relayBotName": "Coolade",
+        "logChannelName": "hylily-livechat-logs",
+        "bannedUsers": [
+            "not pikarohan",
+            "pikarohan",
+            "_helixer_",
+            "H-Elixer",
+            "[H-Elixer]"
+        ],
+        "steamRecipients": [
+            "572121744253386792",
+            "612325709691748394",
+            "1061566925391540265"
+        ]
+    },
+    "llm": {
+        "agentMaxTokens": 8000,
+        "agentTemperature": 0.15,
+        "summaryTemperature": 0.3,
+        "summaryMaxTokens": 300,
+        "maxRetries": 6,
+        "duelMaxTokens": 120,
+        "presencePenaltyMinecraft": 0,
+        "repeatLastNMinecraft": 64,
+        "budgetFallbackRepeatPenalty": 1.3
+    },
+    "toolLimits": {
+        "memoryQuery": 10,
+        "memoryWrite": 10,
+        "media": 10,
+        "webSearch": 10,
+        "total": 10,
+        "narration": 10,
+        "badArgs": 10,
+        "maxDropsPerCall": 64,
+        "maxAmount": 32,
+        "maxCraftQuantity": 64
+    },
+    "search": {
+        "tavilyMaxResults": 3,
+        "tavilyIncludeImages": true,
+        "klipyPerPage": 10,
+        "klipyCustomerId": "lily-bot",
+        "klipyPickPool": 8
+    },
+    "timeouts": {
+        "piMs": 90000,
+        "screenshotMs": 15000,
+        "fileAppearMs": 3000,
+        "fileAppearPollMs": 100,
+        "companionRequestMs": 5000,
+        "askUserMs": 120000,
+        "browserActionMs": 30000,
+        "browserReconnectMs": 5000,
+        "browserStartupGraceMs": 2000,
+        "approvalTtlMs": 600000,
+        "healthMs": 600000,
+        "cleanupMs": 1200000,
+        "steamMs": 300000,
+        "sshConnectSec": 15,
+        "blogPushMs": 3000,
+        "mineCooldownMs": 9000,
+        "dropDelayMs": 250,
+        "mineBatchDelayMs": 1500,
+        "vtubeExpressionCooldownMs": 800,
+        "channelLockPollMs": 50,
+        "workingMemorySaveDebounceMs": 1000
+    },
+    "controlPanel": {
+        "maxLoginAttempts": 5,
+        "lockoutMs": 900000,
+        "sessionMaxAgeMs": 43200000,
+        "maxLogEntries": 400,
+        "maxLogBuffer": 200
+    },
+    "memory": {
+        "workingMemoryStorePath": "./working_memory.json",
+        "maxPeople": 8,
+        "maxThreads": 6,
+        "maxLen": 140,
+        "presenceTtlMs": 2700000,
+        "threadTtlMs": 21600000,
+        "explicitMinWords": 2,
+        "explicitMaxLen": 150,
+        "recentLimit": 10,
+        "recentMinImportance": 0.3,
+        "lookupEntityLimit": 20
+    },
+    "paths": {
+        "flawlessTurnsDir": "./data/flawless_turns",
+        "userPreferences": "./data/user_preferences.json",
+        "llamaLog": "./logs/llama-server.log"
+    },
+    "llama": {
+        "contextSize": 64000,
+        "cacheTypeK": "q8_0",
+        "cacheTypeV": "q8_0",
+        "parallel": 1,
+        "gpuLayers": 999,
+        "flashAttn": "on",
+        "cacheReuse": 256,
+        "cacheRamMb": 4096,
+        "reasoning": "off",
+        "reasoningBudget": 0,
+        "reasoningFormat": "none",
+        "specType": "draft-mtp",
+        "specDraftPMin": 0.4,
+        "specDraftNMax": 4,
+        "specDraftNMin": 1
+    },
+    "voice": {
+        "edgeVoice": "en-US-AnaNeural",
+        "sampleRate": 24000,
+        "micSampleRate": 16000,
+        "discordSilenceThresholdMs": 800,
+        "discordMinSpeechMs": 500,
+        "discordMaxSpeechMs": 30000,
+        "recentInteractionWindowMs": 30000,
+        "styletts2MaxChars": 220,
+        "styletts2VramBudgetMb": 1600
+    },
+    "remoteHosts": {
+        "Izan (minipc)": {
+            "discordId": "572121744253386792",
+            "tailscaleIp": "local",
+            "sshUser": "healthssh",
+            "scriptMode": "stdin"
+        },
+        "Izan (laptop)": {
+            "discordId": "572121744253386792",
+            "tailscaleIp": "100.82.135.120",
+            "sshUser": "healthssh",
+            "scriptMode": "stdin"
+        },
+        "Izan (desktop)": {
+            "discordId": "572121744253386792",
+            "tailscaleIp": "100.79.58.32",
+            "sshUser": "healthssh",
+            "scriptMode": "stdin"
+        },
+        "ThePhantomDX (laptop)": {
+            "discordId": "612325709691748394",
+            "tailscaleIp": "100.108.3.123",
+            "sshUser": "healthssh",
+            "scriptMode": "stdin"
+        }
+    }
 }

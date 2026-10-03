@@ -1,7 +1,6 @@
 import { EventEmitter } from 'node:events'
 import crypto from 'node:crypto'
-
-const TTL_MS = 10 * 60 * 1000 // auto-decline if nobody answers in 10 min
+import { getSection } from '../../config.js'
 
 class ApprovalStore extends EventEmitter {
     constructor() {
@@ -11,7 +10,7 @@ class ApprovalStore extends EventEmitter {
 
     create({ instruction, channelId, matched }) {
         const id = crypto.randomUUID()
-        const timer = setTimeout(() => this.resolve(id, false, 'timeout'), TTL_MS)
+        const timer = setTimeout(() => this.resolve(id, false, 'timeout'), getSection('timeouts').approvalTtlMs) // auto-decline if nobody answers
         this._pending.set(id, { instruction, channelId, matched, createdAt: Date.now(), timer })
         return id
     }

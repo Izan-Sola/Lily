@@ -1,7 +1,6 @@
 import { Logger } from '../../utils/Logger.js'
 import { ok, err } from './toolHelpers.js'
-
-const EXPRESSION_COOLDOWN_MS = 800
+import { getSection } from '../config.js'
 
 
 class VtubeToolExecutor {
@@ -75,7 +74,7 @@ class VtubeToolExecutor {
             return err("VTuber model isn't connected right now.")
         }
 
-        if (Date.now() - this.lastTrigger < EXPRESSION_COOLDOWN_MS) {
+        if (Date.now() - this.lastTrigger < getSection('timeouts').vtubeExpressionCooldownMs) {
             return JSON.stringify({ status: "cooldown", message: "Expression triggered too recently, skip it." })
         }
 

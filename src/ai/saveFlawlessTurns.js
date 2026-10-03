@@ -1,10 +1,10 @@
 import fs from "fs"
 import path from "path"
 import { Logger } from '../../src/utils/Logger.js'
-import { getConfig } from '../../src/ai/config.js'
+import { getConfig, getSection } from '../../src/ai/config.js'
 
-const OUTPUT_DIR = path.resolve("./data/flawless_turns")
-const OUTPUT_FILE = path.join(OUTPUT_DIR, "pending_review.jsonl")
+const getOutputDir = () => path.resolve(getSection("paths").flawlessTurnsDir)
+const getOutputFile = () => path.join(getOutputDir(), "pending_review.jsonl")
 
 // Simple write queue so concurrent saves (e.g. Discord and Minecraft turns
 // finishing around the same moment) can't interleave partial writes to
@@ -197,8 +197,8 @@ export async function saveFlawlessTurn({ channelId, messages }) {
 
     writeQueue = writeQueue.then(async () => {
         try {
-            await fs.promises.mkdir(OUTPUT_DIR, { recursive: true })
-            await fs.promises.appendFile(OUTPUT_FILE, JSON.stringify(record) + "\n", "utf8")
+            await fs.promises.mkdir(getOutputDir(), { recursive: true })
+            await fs.promises.appendFile(getOutputFile(), JSON.stringify(record) + "\n", "utf8")
             Logger.info(`Saved flawless turn (${channelId})`, "FLAWLESS SAVE")
         } catch (err) {
             Logger.error(err.message, "FLAWLESS SAVE")

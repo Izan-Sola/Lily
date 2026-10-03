@@ -1,5 +1,6 @@
 import { Logger } from '../../utils/Logger.js'
 import { ok, err } from './toolHelpers.js'
+import { getSection } from '../config.js'
 
 // ─── Minecraft Tool Executor ────────────────────────────────────────────
 //
@@ -78,7 +79,7 @@ class MinecraftToolExecutor {
             return err("slot (1-36) required.")
         }
         const count = Number.isInteger(amount) && amount > 0 ? amount : 1
-        const MAX_DROPS_PER_CALL = 64
+        const MAX_DROPS_PER_CALL = getSection('toolLimits').maxDropsPerCall
 
         if (count > MAX_DROPS_PER_CALL) {
             return err(`Can't drop more than ${MAX_DROPS_PER_CALL} at once.`)
@@ -94,7 +95,7 @@ class MinecraftToolExecutor {
                 return err(result.message ?? `Drop failed after ${i} of ${count} item(s).`)
             }
             if (i < count - 1) {
-                await new Promise(resolve => setTimeout(resolve, 250))
+                await new Promise(resolve => setTimeout(resolve, getSection('timeouts').dropDelayMs))
             }
         }
 
@@ -127,7 +128,7 @@ class MinecraftToolExecutor {
             : [args]
 
         const now = Date.now()
-        if (now - this.lastMineTime < 9000) {
+        if (now - this.lastMineTime < getSection('timeouts').mineCooldownMs) {
             return JSON.stringify({ status: "cooldown", message: "Mining too fast! Wait a moment." })
         }
         this.lastMineTime = now
@@ -135,7 +136,7 @@ class MinecraftToolExecutor {
         const stateController = this.getStateController?.()
         if (!stateController) return this._noController()
 
-        const MAX_AMOUNT = 32
+        const MAX_AMOUNT = getSection('toolLimits').maxAmount
         const summaries = []
 
         for (const req of requests) {
@@ -163,7 +164,7 @@ class MinecraftToolExecutor {
                 : `${block ?? label} failed: ${result.message ?? 'unknown error'}`)
 
             if (requests.indexOf(req) < requests.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1500))
+                await new Promise(resolve => setTimeout(resolve, getSection('timeouts').mineBatchDelayMs))
             }
         }
 
@@ -176,7 +177,7 @@ class MinecraftToolExecutor {
             return err("item required, in item_name format (e.g. 'iron_sword').")
         }
         const itemId = item.trim().toLowerCase().replace(/^minecraft:/, '')
-        const amount = Number.isInteger(quantity) && quantity > 0 ? Math.min(quantity, 64) : 1
+        const amount = Number.isInteger(quantity) && quantity > 0 ? Math.min(quantity, getSection('toolLimits').maxCraftQuantity) : 1
 
         Logger.info(`Lily is crafting ${itemId} x${amount}`, "MINECRAFT")
         const stateController = this.getStateController?.()
@@ -264,7 +265,7 @@ const MINECRAFT_TOOLS = [
                 type: "object",
                 properties: {
                     slot: { type: "number", minimum: 1, maximum: 36, description: "Hotbar slot to drop from." },
-                    amount: { type: "number", minimum: 1, maximum: 64, description: "How many to drop. Default 1 if unspecified." }
+                    amount: { type: "number", minimum: 1, maximum: getSection('toolLimits').maxDropsPerCall, description: "How many to drop. Default 1 if unspecified." }
                 },
                 required: ["slot", "amount"]
             }
@@ -315,7 +316,7 @@ const MINECRAFT_TOOLS = [
                     z: { type: "number" },
                     block: { type: "string", description: "Block name, alternative to x/y/z." },
                     radius: { type: "number" },
-                    amount: { type: "number", minimum: 1, maximum: 32, description: "How many blocks to mine. Extract the exact number from the player's request if one is given — do not default to 1. See tool description for defaults when no number is stated." },
+                    amount: { type: "number", minimum: 1, maximum: getSection('toolLimits').maxAmount, description: "How many blocks to mine. Extract the exact number from the player's request if one is given — do not default to 1. See tool description for defaults when no number is stated." },
                     blocks: {
                         type: "array",
                         description: "Use for multiple distinct block types in one request. Each entry is the same shape as the flat args (x/y/z or block, plus amount, following the same amount-extraction rule).",
@@ -324,7 +325,7 @@ const MINECRAFT_TOOLS = [
                             properties: {
                                 x: { type: "number" }, y: { type: "number" }, z: { type: "number" },
                                 block: { type: "string" }, radius: { type: "number" },
-                                amount: { type: "number", minimum: 1, maximum: 32 }
+                                amount: { type: "number", minimum: 1, maximum: getSection('toolLimits').maxAmount }
                             }
                         }
                     }
@@ -342,7 +343,7 @@ const MINECRAFT_TOOLS = [
                 type: "object",
                 properties: {
                     item: { type: "string", description: "Item id in item_name format, e.g. 'iron_sword', 'iron_chestplate', 'stick', 'crafting_table'. Required, never empty, never prefixed with 'minecraft:'." },
-                    quantity: { type: "number", minimum: 1, maximum: 64, description: "How many of the finished item to craft. Default 1 if unspecified." }
+                    quantity: { type: "number", minimum: 1, maximum: getSection('toolLimits').maxCraftQuantity, description: "How many of the finished item to craft. Default 1 if unspecified." }
                 },
                 required: ["item"]
             }

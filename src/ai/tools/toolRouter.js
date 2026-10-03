@@ -6,7 +6,7 @@ import { VtubeToolExecutor, VTUBE_TOOL_NAMES } from './vtubeTools.js'
 import { VrchatToolExecutor, VRCHAT_TOOL_NAMES } from './vrchatTools.js'
 import { SttsToolExecutor, STTS_TOOL_NAMES } from './sttsTools.js'
 import { BrowserToolExecutor, BROWSER_TOOL_NAMES } from './browserTools.js'
-import { getConfig } from '../config.js'
+import { getConfig, getOwnerId } from '../config.js'
 
 const VOICE_ASSISTANT_CHANNEL = 'voiceAssistant'
 
@@ -224,7 +224,7 @@ class ToolRouter {
             const isTrustedDM = opts.allowAnyToolViaDM
                 && context.isDM
                 && context.userId
-                && String(context.userId) === String(opts.discordUserID)
+                && String(context.userId) === String(getOwnerId())
 
             if (!inVoiceChannel && !isTrustedDM) {
                 Logger.warning(`Blocked "${name}" outside voiceAssistant channel (channelId=${context.channelId}, isDM=${context.isDM}, userId=${context.userId})`, "TOOL")

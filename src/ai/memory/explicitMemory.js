@@ -20,6 +20,7 @@
 // injected into the same turn so the model doesn't store a duplicate itself.
 
 import { Logger } from '../../utils/Logger.js'
+import { getSection } from '../config.js'
 
 const ADDRESS = String.raw`(?:<@!?\d+>|lily|@lily)[,\s]+`
 
@@ -41,8 +42,6 @@ const VAGUE = new Set([
 ])
 
 const FIRST_PERSON = /\b(i|i'm|im|i've|my|me|mine|myself)\b/i
-const MIN_WORDS = 2
-const MAX_LEN = 150
 
 function normalize(raw) {
     return (raw ?? '')
@@ -55,8 +54,8 @@ function normalize(raw) {
 function isUsable(payload) {
     if (!payload) return false
     if (VAGUE.has(payload.toLowerCase())) return false
-    if (payload.split(/\s+/).length < MIN_WORDS) return false
-    if (payload.length > MAX_LEN) return false
+    if (payload.split(/\s+/).length < getSection('memory').explicitMinWords) return false
+    if (payload.length > getSection('memory').explicitMaxLen) return false
     return true
 }
 

@@ -7,7 +7,7 @@ import { SYSTEM_PROMPT, SUMMARIZE_PROMPT, VTUBE_EXPRESSION_ADDENDUM } from './pr
 import { ToolRouter, ALL_TOOL_NAMES, VOICE_ASSISTANT_CHANNEL as VOICE_ASSISTANT_CHANNEL_ID } from './tools/toolRouter.js'
 import { Logger } from '../utils/Logger.js'
 import { saveFlawlessTurn } from './saveFlawlessTurns.js'
-import { getConfig } from './config.js'
+import { getConfig, getSection, getOwnerId } from './config.js'
 import { speakToStream } from '../vtubing/youtube/streamTTS.js'
 import { CODE_SYSTEM_PROMPT, stripCodeFence } from '../coding/codeEditShared.js'
 import { isSttsEnabled } from "../startUtils.js"
@@ -154,7 +154,7 @@ export class Lily {
         const isTrustedDM = opts.allowAnyToolViaDM
             && context.isDM
             && context.userId
-            && String(context.userId) === String(opts.discordUserID)
+            && String(context.userId) === String(getOwnerId())
 
         if (isTrustedDM) return this.tools.allTools   // ← was this.tools.voiceAssistantTools
 
@@ -162,7 +162,7 @@ export class Lily {
     }
 
     async withChannelLock(channelId, fn) {
-        while (this.channelLocks.get(channelId)) await new Promise(r => setTimeout(r, 50))
+        while (this.channelLocks.get(channelId)) await new Promise(r => setTimeout(r, getSection('timeouts').channelLockPollMs))
         this.channelLocks.set(channelId, true)
         try { return await fn() } finally { this.channelLocks.set(channelId, false) }
     }
@@ -196,7 +196,7 @@ export class Lily {
             { role: 'user', content: userPrompt },
         ]
 
-        const msg = await this.sendToOllama(messages, [], true, [], { max_tokens: 8000, temperature: 0.15 })
+        const msg = await this.sendToOllama(messages, [], true, [], { max_tokens: getSection('llm').agentMaxTokens, temperature: getSection('llm').agentTemperature })
         const content = msg?.content?.trim()
         return content ? stripCodeFence(content) : null
     }
@@ -291,7 +291,7 @@ export class Lily {
         return parts
     }
 
-    async summarizeAndStore(lines, { logPrefix, maxTokens = 300, memorySource = "conversation_batch", participants = [], emotions = [], importance = 0.5 }) {
+    async summarizeAndStore(lines, { logPrefix, maxTokens = getSection('llm').summaryMaxTokens, memorySource = "conversation_batch", participants = [], emotions = [], importance = 0.5 }) {
         if (lines.length < 2) return
         Logger.info(`Summarizing ${lines.length} entries...`, "SUMMARIZE")
         try {
@@ -302,7 +302,7 @@ export class Lily {
                     { role: "user", content: lines.join("\n") }
                 ],
                 stream: false,
-                temperature: 0.3,
+                temperature: getSection('llm').summaryTemperature,
                 max_tokens: maxTokens,
             }, { timeout: this.opts.ollamaTimeout })
 
@@ -373,6 +373,16 @@ export class Lily {
         }
     }
 
+    // Per-channel sampling overrides from config.json "llm" (Minecraft only for now).
+    _channelOverrides(channelId) {
+        if (channelId !== MINECRAFT_CHANNEL_ID) return {}
+        const llm = getSection('llm')
+        return {
+            presence_penalty: llm.presencePenaltyMinecraft,
+            repeat_last_n: llm.repeatLastNMinecraft,
+        }
+    }
+
     // ---------- UPDATED sendToOllama with image support ----------
     async sendToOllama(messages, foreignTools = [], noTools = false, baseTools = this.tools.tools, overrides = {}) {
         if (getStateController()?.currentStateName === 'DUELING') {
@@ -388,7 +398,7 @@ export class Lily {
             presence_penalty: overrides.presence_penalty ?? this.opts.presence_penalty,
             min_p: this.opts.min_p,
             repeat_penalty: overrides.repeat_penalty ?? this.opts.repeat_penalty,
-            repeat_last_n: this.opts.repeat_last_n,
+            repeat_last_n: overrides.repeat_last_n ?? this.opts.repeat_last_n,
             max_tokens: overrides.max_tokens ?? this.opts.max_tokens,
             stop: overrides.stop ?? ["</answer>", "<|user|>", "<|endoftext|>"],
             reasoning_effort: this.opts.think === false ? "none" : (this.opts.think ?? "none"),
@@ -532,11 +542,11 @@ export class Lily {
     async finishWithoutTools(channelId, systemPromptOverride, opts, scratch, pendingGifUrl) {
         const baseMessages = this.buildMessagesForOllama(channelId, systemPromptOverride, { ...opts, suppressActionReminder: true })
         let attemptScratch = [...scratch]
-        const MAX_RETRIES = 6
+        const MAX_RETRIES = getSection('llm').maxRetries
 
         const overrides = {
             stop: ["</answer>", "<|user|>", "<|endoftext|>", "<tool_call>"],
-            repeat_penalty: 1.3,
+            repeat_penalty: getSection('llm').budgetFallbackRepeatPenalty,
         }
 
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -550,7 +560,7 @@ export class Lily {
                 })
             }
 
-            const msg = await this.sendToOllama(messages, [], true, this.tools.tools, overrides)
+            const msg = await this.sendToOllama(messages, [], true, this.tools.tools, { ...this._channelOverrides(channelId), ...overrides })
             const raw = (msg?.content ?? "").trim()
             const content = raw.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim()
 
@@ -657,7 +667,7 @@ export class Lily {
                 }
             }
 
-            const msg = await this.sendToOllama(messages, foreignTools, false, baseTools)
+            const msg = await this.sendToOllama(messages, foreignTools, false, baseTools, this._channelOverrides(channelId))
             if (!msg) {
                 this._handleVoiceGif(channelId, pendingGifUrl)
                 return { text: "I'm having trouble thinking right now, sorry!", gifUrl: null }
@@ -809,7 +819,7 @@ export class Lily {
         axios.post(`${this.opts.blogUrl}/api/history`, {
             channelId,
             messages,
-        }, { timeout: 3000 }).catch(err => {
+        }, { timeout: getSection('timeouts').blogPushMs }).catch(err => {
             Logger.error(`Push failed (non-fatal): ${err.message}`, "BLOG HISTORY")
         })
     }

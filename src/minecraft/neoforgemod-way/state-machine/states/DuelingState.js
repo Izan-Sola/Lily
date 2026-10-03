@@ -7,11 +7,7 @@ import {
     abilityAsCombo,
 } from '../helpers/comboExecutor.js'
 import { Logger } from '../../../../utils/Logger.js';
-
-const MAX_BUSY_MS = 6000;
-const MAX_NEXT_PROMPT_DELAY = 8000;
-const MIN_PROMPT_DELAY = 2500;
-const DATA_REQUEST_INTERVAL = 500;
+import { getAppConfig } from '../../../config.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -37,6 +33,12 @@ function triggerCooldown(ctx, slot) {
 export class DuelingState {
     constructor(ctx) {
         this.ctx = ctx;
+
+        const duelCfg = getAppConfig().duel
+        this.maxBusyMs = duelCfg.maxBusyMs
+        this.maxNextPromptDelayMs = duelCfg.maxNextPromptDelayMs
+        this.minPromptDelayMs = duelCfg.minPromptDelayMs
+        this.dataRequestIntervalMs = duelCfg.dataRequestIntervalMs
 
         this.nextPromptAt = 0;
         this.lastRequest = 0;
@@ -111,8 +113,8 @@ export class DuelingState {
         const now = Date.now();
 
         // Watchdog: unstick fetchBusy if it has been held too long
-        if (this.fetchBusy && this._fetchBusySince && now - this._fetchBusySince > MAX_BUSY_MS) {
-            Logger.warning(`Fetch stuck for ${MAX_BUSY_MS}ms — force-resetting`, "DUELING");
+        if (this.fetchBusy && this._fetchBusySince && now - this._fetchBusySince > this.maxBusyMs) {
+            Logger.warning(`Fetch stuck for ${this.maxBusyMs}ms — force-resetting`, "DUELING");
             this.fetchBusy = false;
             this._fetchBusySince = null;
             this.nextPromptAt = 0;
@@ -133,7 +135,7 @@ export class DuelingState {
         }
 
         // Periodic duel data request
-        if (now - this.lastRequest >= DATA_REQUEST_INTERVAL) {
+        if (now - this.lastRequest >= this.dataRequestIntervalMs) {
             this.lastRequest = now;
             this.ctx.mcSend('get_duel_data', { opponent: targetName });
         }
@@ -192,13 +194,13 @@ export class DuelingState {
             || prompt === 'Opponent not found.'
             || prompt === 'Lily position unknown.') {
             Logger.warning('Prompt not ready: ' + prompt, "SURVIVAL");
-            this._setNextPromptAt(MIN_PROMPT_DELAY);
+            this._setNextPromptAt(this.minPromptDelayMs);
             return;
         }
 
         this.fetchBusy = true;
         this._fetchBusySince = Date.now();
-        this._setNextPromptAt(MIN_PROMPT_DELAY);
+        this._setNextPromptAt(this.minPromptDelayMs);
 
         this._fetchAction(prompt, targetName)
             .then(action => {
@@ -342,7 +344,7 @@ export class DuelingState {
             return;
         }
 
-        this._setNextPromptAt(comboDuration(combo) + MIN_PROMPT_DELAY);
+        this._setNextPromptAt(comboDuration(combo) + this.minPromptDelayMs);
         await executeCombo(combo, this.ctx.bindings, cleanName, this.ctx.mcSend, this._comboHandlers());
     }
 
@@ -483,7 +485,7 @@ export class DuelingState {
     }
 
     _setNextPromptAt(delay) {
-        const clamped = Math.min(Math.max(delay, 0), MAX_NEXT_PROMPT_DELAY);
+        const clamped = Math.min(Math.max(delay, 0), this.maxNextPromptDelayMs);
         this.nextPromptAt = Date.now() + clamped;
     }
 }
@@ -504,7 +506,7 @@ export class DuelingState {
  *     arrive faster than they can usefully be acted on.
  *
  * WATCHDOG:
- *   - fetchBusy is reset if stuck > MAX_BUSY_MS
+ *   - fetchBusy is reset if stuck > maxBusyMs
  *   - _drainQueue is re-entered on every .finally() so nothing stalls
  *
  * COMBO vs ABILITY SLOTS:

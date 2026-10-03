@@ -2,11 +2,7 @@ import { buildSurvivalPrompt } from '../prompt-builders/survivalPromptBuilder.js
 import { ToolRouter, ALL_TOOL_NAMES } from '../../../../ai/tools/toolRouter.js'
 import { Logger } from '../../../../utils/Logger.js'
 import { getToolConfig } from '../../../../startUtils.js'
-
-const ACTIONS_INTERVAL_MS = 10000
-const MSG_MIN_MS = 2 * 60 * 1000
-const MSG_MAX_MS = 6 * 60 * 1000
-const HISTORY_MAX_TURNS = 4
+import { resolveSurvivalConfig } from '../../../config.js'
 
 // ─── Tool Selection Based on Mode ────────────────────────────────────────────
 function getToolsForMode(router, mode) {
@@ -20,8 +16,6 @@ function getToolsForMode(router, mode) {
 
         // If bending is disabled, filter out bending-specific tools
         if (!config.includeBending) {
-            // Assuming bending tools have 'bending' in their name or description
-            // Adjust this filter based on your actual tool naming
             const filtered = tools.filter(t =>
                 !t.function.name.includes('bending') &&
                 !t.function.description?.toLowerCase().includes('bend')
@@ -44,15 +38,17 @@ function getToolsForMode(router, mode) {
 }
 
 // ─── Delay Calculation ──────────────────────────────────────────────────────
-function randomMsgDelay() {
-    const min = parseInt(process.env.SURVIVAL_MSG_MIN_MS || MSG_MIN_MS)
-    const max = parseInt(process.env.SURVIVAL_MSG_MAX_MS || MSG_MAX_MS)
+function randomMsgDelay(settings) {
+    const min = parseInt(process.env.SURVIVAL_MSG_MIN_MS ?? settings.msgMinMs)
+    const max = parseInt(process.env.SURVIVAL_MSG_MAX_MS ?? settings.msgMaxMs)
     return min + Math.random() * (max - min)
 }
 
 // ─── Main Survival Loop ─────────────────────────────────────────────────────
 export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaUrl, mode, vtsClient = null) {
-    let nextMessageAt = Date.now() + randomMsgDelay()
+    const settings = resolveSurvivalConfig(mode?.backend ?? null)
+
+    let nextMessageAt = Date.now() + randomMsgDelay(settings)
 
     // Create router with all executors wired up
     const toolRouter = new ToolRouter(mcSend, () => stateController, vtsClient)
@@ -71,7 +67,7 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
         return null
     }
 
-    Logger.info(`Starting survival loop with mode: ${mode}`, "SURVIVAL")
+    Logger.info(`Starting survival loop with mode: ${settings.backend} (interval ${settings.actionsIntervalMs}ms, history ${settings.historyMaxTurns})`, "SURVIVAL")
     Logger.info(`Available tools: ${survivalTools.map(t => t.function.name).join(', ')}`, "SURVIVAL")
 
     // Initialize history on stateController if needed
@@ -96,7 +92,7 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
         // Check if we should send a message
         const allowMessage = Date.now() >= nextMessageAt
         if (allowMessage) {
-            nextMessageAt = Date.now() + randomMsgDelay()
+            nextMessageAt = Date.now() + randomMsgDelay(settings)
         }
 
         // Build the prompt
@@ -109,7 +105,7 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
 
         // Prepare messages with history
         const messages = [
-            ...stateController.chatHistory.slice(-HISTORY_MAX_TURNS),
+            ...stateController.chatHistory.slice(-settings.historyMaxTurns),
             { role: "user", content: prompt }
         ]
 
@@ -162,8 +158,8 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
             })
 
             // Trim history if too long
-            if (stateController.chatHistory.length > HISTORY_MAX_TURNS * 2) {
-                stateController.chatHistory = stateController.chatHistory.slice(-HISTORY_MAX_TURNS * 2)
+            if (stateController.chatHistory.length > settings.historyMaxTurns * 2) {
+                stateController.chatHistory = stateController.chatHistory.slice(-settings.historyMaxTurns * 2)
             }
 
             // ─── Execute Tool Calls ──────────────────────────────────────
@@ -181,7 +177,7 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
     }
 
     // ─── Start the loop ──────────────────────────────────────────────────
-    const interval = setInterval(runTick, ACTIONS_INTERVAL_MS)
+    const interval = setInterval(runTick, settings.actionsIntervalMs)
 
     // Store interval for cleanup
     const loop = {

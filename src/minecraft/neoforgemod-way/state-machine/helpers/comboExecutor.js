@@ -2,14 +2,20 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { Logger } from '../../../../utils/Logger.js'
+import { getAppConfig } from '../../../config.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-const SWAP_LOCK_TIME = 100
-const DEFAULT_STEP_TIME = 200
-const POST_ACTION_GAP = 100
+function comboConfig() {
+    const cfg = getAppConfig().combo
+    return {
+        swapLockMs: cfg?.swapLockMs ?? 100,
+        defaultStepMs: cfg?.defaultStepMs ?? 200,
+        postActionGapMs: cfg?.postActionGapMs ?? 100,
+    }
+}
 
 let combosData = {}
 
@@ -101,6 +107,7 @@ function findSlot(abilityName, bindings, cleanName) {
  *   { type, mode?, direction?, ability?, blocking, duration, blocks?, distance?, degrees? }
  */
 export function parseComboSteps(combo) {
+    const { swapLockMs, defaultStepMs } = comboConfig()
     const actions = combo.actions ?? []
     const times = combo.actionsTime ?? []
     let timeIdx = 0
@@ -114,21 +121,21 @@ export function parseComboSteps(combo) {
 
             // swap:slot:<AbilityName>
             case 'swap': {
-                const duration = times[timeIdx++] ?? SWAP_LOCK_TIME
+                const duration = times[timeIdx++] ?? swapLockMs
                 steps.push({ type: 'swap', ability: parts[2], blocking: true, duration })
                 break
             }
 
             // locklook  (non-blocking)
             case 'locklook': {
-                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                const duration = times[timeIdx++] ?? defaultStepMs
                 steps.push({ type: 'locklook', blocking: false, duration })
                 break
             }
 
             // source:<block1,block2,...>:<distance>  (non-blocking)
             case 'source': {
-                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                const duration = times[timeIdx++] ?? defaultStepMs
                 const blocks = (parts[1] ?? '')
                     .split(',')
                     .map(b => b.trim().toLowerCase())
@@ -140,21 +147,21 @@ export function parseComboSteps(combo) {
 
             // stop  (non-blocking)
             case 'stop': {
-                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                const duration = times[timeIdx++] ?? defaultStepMs
                 steps.push({ type: 'stop', blocking: false, duration })
                 break
             }
 
             // wait  (blocking sleep)
             case 'wait': {
-                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                const duration = times[timeIdx++] ?? defaultStepMs
                 steps.push({ type: 'wait', blocking: true, duration })
                 break
             }
 
             // look:<direction>:<degrees>  (non-blocking)
             case 'look': {
-                const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                const duration = times[timeIdx++] ?? defaultStepMs
                 steps.push({
                     type: 'look',
                     direction: parts[1] ?? 'forward',
@@ -172,7 +179,7 @@ export function parseComboSteps(combo) {
                 const extra = parts[3]
 
                 for (let c = 0; c < count; c++) {
-                    const duration = times[timeIdx++] ?? DEFAULT_STEP_TIME
+                    const duration = times[timeIdx++] ?? defaultStepMs
 
                     switch (type) {
                         case 'click':
@@ -231,6 +238,8 @@ export async function executeCombo(combo, bindings, cleanName, mcSend, handlers 
  * Extracted so duelingState can route ability steps through the same logic.
  */
 export async function executeStep(step, { bindings, cleanName, mcSend, onSource, onLockLook, onForceMove, onStop, onLookDir }) {
+    const { postActionGapMs } = comboConfig()
+
     switch (step.type) {
 
         case 'swap': {
@@ -239,9 +248,9 @@ export async function executeStep(step, { bindings, cleanName, mcSend, onSource,
                 mcSend('hotbar', { slot })
                 await sleep(step.duration)
             } else {
-               Logger.warning(`[COMBOS] Cannot find slot for ability: ${step.ability}`)
+                Logger.warning(`[COMBOS] Cannot find slot for ability: ${step.ability}`)
             }
-            await sleep(POST_ACTION_GAP)
+            await sleep(postActionGapMs)
             break
         }
 
@@ -249,7 +258,7 @@ export async function executeStep(step, { bindings, cleanName, mcSend, onSource,
             if (step.mode === 'left') mcSend('attack', { mode: 'once' })
             else if (step.mode === 'right') mcSend('use', { mode: 'once' })
             await sleep(step.duration)
-            await sleep(POST_ACTION_GAP)
+            await sleep(postActionGapMs)
             break
         }
 
@@ -259,7 +268,7 @@ export async function executeStep(step, { bindings, cleanName, mcSend, onSource,
             setTimeout(() => mcSend('fire_pk_event', { event: 'unsneak' }), releaseAfter)
             if (step.blocking) {
                 await sleep(step.duration)
-                await sleep(POST_ACTION_GAP)
+                await sleep(postActionGapMs)
             }
             break
         }
@@ -267,7 +276,7 @@ export async function executeStep(step, { bindings, cleanName, mcSend, onSource,
         case 'jump': {
             mcSend('fire_pk_event', { event: 'jump' })
             await sleep(step.duration)
-            await sleep(POST_ACTION_GAP)
+            await sleep(postActionGapMs)
             break
         }
 

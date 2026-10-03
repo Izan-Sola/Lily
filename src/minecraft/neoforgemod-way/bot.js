@@ -9,11 +9,12 @@ import { startSurvivalLoop } from './state-machine/helpers/survivalLoop.js'
 import axios from "axios"
 import { buildMinecraftSystemPrompt } from '../../ai/prompts.js'
 import { getConfigFromFlags, describeConfig } from '../../startUtils.js'
+import { loadAppConfig, getAppConfig } from '../config.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 let triggerSurvivalTick = null
-let currentConfig = getConfigFromFlags() // Use the unified config system
+let currentConfig = getConfigFromFlags() // flag-based config (bending, backend, tool toggles...)
 let survivalLoopStarted = false
 let survivalLoopInstance = null
 
@@ -88,6 +89,9 @@ function requestAbilityData() {
 export function startMinecraftBot({ port, ai, vtsClient = null, runConfig = null }) {
     aiInstance = ai
 
+    // Load the runtime JSON config first so all downstream modules can read it.
+    loadAppConfig()
+
     // Use provided config or fallback to current config
     if (runConfig) {
         currentConfig = runConfig
@@ -116,12 +120,12 @@ function _connect(port, vtsClient) {
         clearTimeout(reconnectTimer)
 
         if (!stateController) {
+            // Note: attackRange and tickMs now come from the app config; only
+            // behavior-level overrides are passed here.
             stateController = new StateController(mcSend, {
                 followTarget: process.env.MC_FOLLOW_TARGET ?? "shinyshadow_",
                 followDistance: 3,
-                attackRange: 4,
                 lowHpThreshold: 6,
-                tickMs: 25,
                 ai: aiInstance
             })
 
@@ -203,9 +207,9 @@ async function _handleEvent(event) {
                     {
                         authorName: playerName,
                         temperature: 0.5,
-                        repeat_penalty: 1.0,   // was 1.15 — JSON tool calls are inherently repetitive, don't fight that
-                        presence_penalty: 0,   // was 1.0 — this was almost certainly suppressing { } " : tokens
-                        repeat_last_n: 64      // shrink the penalty window so tool-schema tokens age out fast, if you keep any penalty at all
+                        repeat_penalty: 1.0,
+                        presence_penalty: 0,
+                        repeat_last_n: 64
                     }
                 )
                 const text = aiReply?.text?.trim()
@@ -405,21 +409,6 @@ async function _handleEvent(event) {
         }
 
         case "set_mode": {
-            // The Java mod sends `event.mode` as a raw string over its own
-            // wire protocol - that's a different boundary than our CLI
-            // flags, and not something this file controls, so a string
-            // arriving here isn't the same bug as the old internal
-            // mode-string plumbing. It only ever toggles bending at
-            // runtime (the mod can't change backend or vtube - those are
-            // process-launch-time only), so this reads just that one bit
-            // out of the wire string rather than resurrecting the old
-            // hasBending(modeString) helper.
-            //
-            // NOTE: if the Java mod can be changed to send a boolean
-            // (e.g. { type: "set_mode", bending: true }) instead of a
-            // mode-suffix string, that removes the last string-parsing
-            // spot in this file. Flagging rather than silently guessing
-            // your mod's wire format.
             const newBending = typeof event.mode === 'string'
                 && event.mode.includes('bending')
                 && !event.mode.includes('nobending')
@@ -528,12 +517,13 @@ export function getStateController() {
     return stateController
 }
 
-function _splitMessage(text, limit = 250) {
+function _splitMessage(text, limit = null) {
+    const effectiveLimit = limit ?? (getAppConfig().messageSplitLength ?? 250)
     const words = text.split(" ")
     const chunks = []
     let current = ""
     for (const word of words) {
-        if ((current + " " + word).trim().length > limit) {
+        if ((current + " " + word).trim().length > effectiveLimit) {
             if (current) chunks.push(current.trim())
             current = word
         } else {

@@ -7,6 +7,7 @@ import { SneakHelper } from './helpers/sneak.js'
 import { MovementHelper } from './helpers/movement.js'
 import { MiningState } from './states/MiningState.js'
 import { Logger } from '../../../utils/Logger.js'
+import { getAppConfig } from '../../config.js'
 
 export const State = {
     IDLE: 'IDLE',
@@ -19,13 +20,16 @@ export const State = {
 
 export class StateController {
     constructor(mcSend, opts = {}) {
+        const appCfg = getAppConfig()
+        this.config = appCfg
+
         this.mcSend = mcSend
         this.opts = {
             followTarget: 'shinyshadow_',
             followDistance: 3,
-            attackRange: 4,
+            attackRange: appCfg.combat?.attackRange ?? 2.5,
             lowHpThreshold: 10,
-            tickMs: 25,
+            tickMs: appCfg.combat?.tickMs ?? 150,
             ...opts
         }
         this.lastUserMessage = null
@@ -67,7 +71,7 @@ export class StateController {
 
     start() {
         if (this.tickInterval) return
-        Logger.info('Controller started', "STATE")
+        Logger.info(`Controller started (tickMs=${this.opts.tickMs})`, "STATE")
         this.tickInterval = setInterval(() => this._tick(), this.opts.tickMs)
     }
 
@@ -132,8 +136,6 @@ export class StateController {
         const match = this.blocksOfInterest?.find(b => b.x === x && b.y === y && b.z === z)
         return match?.type ?? null
     }
-
-
 
     nearestHostileWithin(maxDist) {
         if (!this.lilyPos || !this.hostiles.length) return null
@@ -281,11 +283,6 @@ export class StateController {
         }
     }
 
-    // Java reports back here once a block it was mining is actually gone (or it
-    // gave up on a safety-net timeout) — see MiningManager.finish() on the Java
-    // side and MiningState.onBlockBroken() here. Needs wiring into whatever
-    // dispatches incoming WS messages, alongside handleSourceBlock above —
-    // something like: case 'block_broken': ctx.handleBlockBroken(msg); break
     handleBlockBroken(event) {
         console.log('[STATE] handleBlockBroken called with event:', JSON.stringify(event))
         if (this.currentStateName === State.MINING) {
@@ -343,9 +340,9 @@ export class StateController {
  * KEY OPTIONS (opts):
  *   followTarget    → username to follow, default "shinyshadow_"
  *   followDistance  → blocks before following kicks in, default 3
- *   attackRange     → blocks to scan for hostiles, default 4
- *   lowHpThreshold  → HP floor for recovering state, default 6
- *   tickMs          → tick interval in ms, default 25
+ *   attackRange     → blocks to scan for hostiles (from config.combat.attackRange)
+ *   lowHpThreshold  → HP floor for recovering state, default 10
+ *   tickMs          → tick interval in ms (from config.combat.tickMs)
  *
  * SHARED STATE:
  *   this.players         → { name: { x, y, z, hp } } updated every tick from mod

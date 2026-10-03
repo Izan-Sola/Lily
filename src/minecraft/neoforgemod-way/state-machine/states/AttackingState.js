@@ -1,8 +1,5 @@
 import { Logger } from "../../../../utils/Logger.js"
-
-const ATTACK_RANGE = 2.5
-const TICK_MS = 150          // fast enough for responsive look_at/retarget
-const ATTACK_COOLDOWN_MS = 625  // matches vanilla sword attack cooldown
+import { getAppConfig } from "../../../config.js"
 
 export class AttackingState {
   constructor(ctx) {
@@ -13,12 +10,17 @@ export class AttackingState {
   }
 
   onEnter(payload = {}) {
+    const combat = getAppConfig().combat
+    this.attackRange = combat.attackRange
+    this.attackCooldownMs = combat.moddedAttackCooldownMs
+    this.tickMs = combat.tickMs
+
     this.targetId = payload.entityId ?? null
     this.lastAttackAt = 0
     Logger.info(`Engaging ${this.targetId != null ? `target id:${this.targetId}` : 'nearest hostile (autonomous)'}`, "ATTACKING")
 
     if (this.attackInterval) clearInterval(this.attackInterval)
-    this.attackInterval = setInterval(() => this._tick(), TICK_MS)
+    this.attackInterval = setInterval(() => this._tick(), this.tickMs)
     this._tick()
   }
 
@@ -43,7 +45,7 @@ export class AttackingState {
 
     const dist = this.ctx._dist(this.ctx.lilyPos, target)
     const now = Date.now()
-    if (dist <= ATTACK_RANGE && now - this.lastAttackAt >= ATTACK_COOLDOWN_MS) {
+    if (dist <= this.attackRange && now - this.lastAttackAt >= this.attackCooldownMs) {
       this.ctx.mcSend('attack', { mode: 'once' })
       this.lastAttackAt = now
     }

@@ -9,7 +9,7 @@ import { Logger } from '../../utils/Logger.js'
 import { ok, err } from './toolHelpers.js'
 import { checkShrinkRatio, checkStubBodies } from '../../coding/codeEditShared.js'
 import { approvalStore } from '../../ai/tools/riskyActionsManagement/approvalStore.js'
-import { classifyRisk, withRiskAllowed } from './riskyActionsManagement/riskClassifier.js'
+import { classifyRisk } from './riskyActionsManagement/riskClassifier.js'
 
 const SUBMODULES = ['screenshot', 'pidev', 'coding']
 const execFileAsync = promisify(execFile)
@@ -19,7 +19,6 @@ const SCREENSHOT_TIMEOUT_MS = 15_000
 const FILE_APPEAR_TIMEOUT_MS = 3_000
 const FILE_APPEAR_POLL_MS = 100
 const COMPANION_REQUEST_TIMEOUT_MS = 5_000
-// Deliberately long: the user is typing, not us.
 const ASK_USER_TIMEOUT_MS = 120_000
 
 // ─── Desktop/session detection ───────────────────────────────────────────
@@ -58,7 +57,7 @@ async function waitForFile(filePath, timeoutMs = FILE_APPEAR_TIMEOUT_MS, pollMs 
     return false
 }
 
-// ─── Per-platform/per-DE screenshot capture strategies ───────────────────
+// ─── Screenshot capture strategies ───────────────────────────────────────
 
 async function captureWindows(outPath) {
     const psPath = outPath.replace(/\\/g, '\\\\')
@@ -120,19 +119,12 @@ async function captureImportMagick(outPath) {
 }
 
 // ─── Ask-the-user popup strategies ───────────────────────────────────────
-//
-// These show a modal text-input dialog and return whatever the user typed,
-// verbatim. Only for information that has to be exact (paths, exact names,
-// IDs, etc). If the tool was cancelled by the user we throw a tagged error
-// so the caller can distinguish "user cancelled" from "tool not installed",
-// which determines whether we fall through to the next strategy.
 
 function cancelError() {
     return Object.assign(new Error('cancelled'), { cancelled: true })
 }
 
 async function askWindows(prompt) {
-    // Prompt is passed via env var to sidestep PowerShell quoting hell.
     const script = [
         'Add-Type -AssemblyName Microsoft.VisualBasic',
         '$prompt = $env:LILY_ASK_PROMPT',
@@ -163,7 +155,6 @@ async function askKdialog(prompt) {
             { timeout: ASK_USER_TIMEOUT_MS },
         ))
     } catch (e) {
-        // kdialog exits 1 when the user hits Cancel/close.
         if (e.code === 1 && !e.killed) throw cancelError()
         throw e
     }
@@ -181,7 +172,6 @@ async function askZenity(prompt) {
             { timeout: ASK_USER_TIMEOUT_MS },
         ))
     } catch (e) {
-        // zenity exits 1 when the user hits Cancel/close.
         if (e.code === 1 && !e.killed) throw cancelError()
         throw e
     }
@@ -191,30 +181,7 @@ async function askZenity(prompt) {
 }
 
 // ─── STTS Tool Executor ──────────────────────────────────────────────────
-//
-// Tools that only make sense while Lily is being talked to via speech.
-// Which tools *exist at all* for this process is flag-conditional:
-//   - get_screenshot needs only the STTS module (sttsEnabled)
-//   - run_system_command and ask_user_for_input additionally need the
-//     pidev bridge (pidevEnabled)
-//   - edit_active_vscode_file additionally needs the coding bridge
-//     (codingEnabled) AND a companion VSCode extension reachable over
-//     HTTP AND an editCallback wired in from Lily (see Lily.generateFileEdit)
-// The channel restriction (voiceAssistant-only) is NOT enforced here -
-// that's toolRouter's job, since it's the one place that knows the
-// calling channel. This executor only decides which tools this process
-// is even capable of offering.
 class SttsToolExecutor {
-    /**
-     * @param {boolean} sttsEnabled
-     * @param {boolean} pidevEnabled
-     * @param {boolean} codingEnabled
-     * @param {(filePath: string, originalContent: string, instruction: string) => Promise<string>} [editCallback]
-     *   Called to actually generate the new file content for
-     *   edit_active_vscode_file. Wired in by Lily so this executor can
-     *   reach back into the model without importing Lily directly
-     *   (avoids a circular import — same pattern as mcSend).
-     */
     constructor(sttsEnabled = false, pidevEnabled = false, codingEnabled = false, editCallback = null) {
         this.sttsEnabled = !!sttsEnabled
         this.pidevEnabled = !!pidevEnabled
@@ -228,15 +195,9 @@ class SttsToolExecutor {
         }
         this._enabled = { screenshot: true, pidev: true, coding: true }
         this._onApprovalNeeded = null
-        this._onApprovalResult = null
-        approvalStore.on('resolved', (payload) => this._handleApprovalResolved(payload))
-        // Tool results are text-only, so a captured screenshot can't be
-        // returned inline. It's parked here as base64 instead; the tool
-        // loop should drain it after execution (takePendingImages()) and
-        // attach it to the next model call, the same way
-        // turnAutoMemoryBlocks gets drained per-turn in handleMessage.
         this._pendingImages = []
     }
+
     setSubmoduleEnabled(key, enabled) {
         if (!SUBMODULES.includes(key)) {
             return { ok: false, reason: `"${key}" isn't a toggleable STTS submodule.` }
@@ -248,6 +209,7 @@ class SttsToolExecutor {
         Logger.info(`${key} tools ${enabled ? 'ENABLED' : 'DISABLED'}`, "MODULE TOGGLE")
         return { ok: true }
     }
+
     getSubmoduleStatus() {
         const status = {}
         for (const key of SUBMODULES) {
@@ -255,6 +217,7 @@ class SttsToolExecutor {
         }
         return status
     }
+
     get toolNames() {
         return this._activeToolDefs().map(t => t.function.name)
     }
@@ -262,6 +225,7 @@ class SttsToolExecutor {
     get tools() {
         return this._activeToolDefs()
     }
+
     _activeToolDefs() {
         const defs = []
         if (this._active('screenshot')) defs.push(SCREENSHOT_TOOL)
@@ -270,13 +234,11 @@ class SttsToolExecutor {
         return defs
     }
 
-
     takePendingImages() {
         const images = this._pendingImages
         this._pendingImages = []
         return images
     }
-
 
     async getScreenshot() {
         if (!this._active('screenshot')) return err("Screenshot tool isn't enabled.")
@@ -300,26 +262,15 @@ class SttsToolExecutor {
             if (dir) await rm(dir, { recursive: true, force: true }).catch(() => { })
         }
     }
+
     setApprovalCallbacks({ onApprovalNeeded, onApprovalResult } = {}) {
         if (onApprovalNeeded) this._onApprovalNeeded = onApprovalNeeded
-        if (onApprovalResult) this._onApprovalResult = onApprovalResult
+        // onApprovalResult is no longer used — the tool call itself now blocks
+        // until the approval resolves, and its return value goes straight back
+        // to the model. Kept in the signature for backward compatibility with
+        // existing callers.
     }
 
-    async _handleApprovalResolved({ id, approved, reason, instruction, channelId }) {
-        if (!approved) {
-            Logger.warning(`Declined (${reason ?? 'manual deny'}): ${instruction.slice(0, 200)}`, "APPROVAL")
-            this._onApprovalResult?.({ channelId, instruction, approved: false, reason })
-            return
-        }
-        Logger.info(`Approved, running: ${instruction.slice(0, 200)}`, "APPROVAL")
-        try {
-            // FIX: Assign the result to `report` so it isn't undefined when passed to the callback
-            const report = await withRiskAllowed(() => this._runPi(instruction))
-            this._onApprovalResult?.({ channelId, instruction, approved: true, report })
-        } catch (e) {
-            this._onApprovalResult?.({ channelId, instruction, approved: true, error: e.message })
-        }
-    }
     _screenshotStrategies() {
         if (process.platform === 'win32') {
             return [['windows', captureWindows]]
@@ -386,6 +337,21 @@ class SttsToolExecutor {
         )
     }
 
+    // ─── run_system_command ─────────────────────────────────────────────
+    //
+    // Flow (this is the whole point of this method):
+    //   1. classifyRisk(prompt) against riskConfig.json.
+    //   2. NOT risky  -> hand straight to pi. Return pi's output.
+    //   3. Risky      -> create an entry in approvalStore, notify the control
+    //      panel via _onApprovalNeeded, and BLOCK until the user clicks
+    //      approve/deny (or the 10-min TTL auto-denies). Then:
+    //        - denied  -> return an error to the model, nothing runs.
+    //        - approved-> hand to pi, return pi's output.
+    //
+    // This makes approval work identically whether the request originated
+    // from a Discord voice turn, a DM, or any other channel that routes
+    // through this executor. The control panel is the single UI for
+    // resolving approvals because approvalStore is a module singleton.
     async runSystemCommand(args = {}, context = {}) {
         if (!this._active('pidev')) {
             return err("System command tool isn't enabled.")
@@ -397,31 +363,66 @@ class SttsToolExecutor {
         const { risky, matched } = classifyRisk(prompt)
 
         if (!risky) {
-            Logger.info(`Delegating to pi: ${prompt.slice(0, 200)}`, "STTS")
-            try {
-                const report = await this._runPi(prompt)
-                Logger.success(`pi finished: ${report.slice(0, 200)}`, "STTS")
-                return ok(report || "Done, no output.")
-            } catch (e) {
-                Logger.error(`pi failed: ${e.message}`, "STTS")
-                return err(e.message === 'timeout'
-                    ? "Pi took too long and was cut off."
-                    : "Pi ran into a problem executing that.")
-            }
+            Logger.info(`Not risky, delegating to pi: ${prompt.slice(0, 200)}`, "STTS")
+            return this._executeViaPi(prompt)
         }
 
-        // FIX: Guard against missing callback to prevent silent failure
-        if (!this._onApprovalNeeded) {
-            Logger.error("Risky command flagged, but no approval callback is registered!", "APPROVAL")
-            return err("Risky action detected, but the approval system isn't connected right now.")
+        Logger.warning(`Risky command flagged (matched "${matched}"): ${prompt.slice(0, 200)}`, "APPROVAL")
+
+        const approval = await this._requestApproval({
+            instruction: prompt,
+            channelId: context.channelId,
+            matched,
+        })
+
+        if (!approval.approved) {
+            Logger.warning(`Approval [${approval.id}] denied (${approval.reason ?? 'manual deny'})`, "APPROVAL")
+            return err(`Risky command was denied (${approval.reason ?? 'manual deny'}). Nothing was executed.`)
         }
 
-        const id = approvalStore.create({ instruction: prompt, channelId: context.channelId, matched })
-        Logger.warning(`Risky command flagged (matched "${matched}"), awaiting approval [${id}]: ${prompt.slice(0, 200)}`, "APPROVAL")
-        this._onApprovalNeeded({ id, instruction: prompt, channelId: context.channelId, matched })
-
-        return ok(`That looks like a risky action ("${matched}"), so I sent it for approval instead of just running it — I'll let you know once it's handled.`)
+        Logger.info(`Approval [${approval.id}] granted, running via pi: ${prompt.slice(0, 200)}`, "APPROVAL")
+        return this._executeViaPi(prompt)
     }
+
+    // Creates the approval entry, pings the control panel, and returns a
+    // promise that resolves with the {approved, reason} payload once the
+    // user (or the TTL) resolves it. Filtered by id so concurrent approval
+    // requests don't cross-resolve each other.
+    _requestApproval({ instruction, channelId, matched }) {
+        return new Promise((resolve) => {
+            const id = approvalStore.create({ instruction, channelId, matched })
+
+            try {
+                this._onApprovalNeeded?.({ id, instruction, channelId, matched })
+            } catch (e) {
+                // If the push callback explodes, we still want the approval
+                // visible in the control panel via its /api/approvals poll —
+                // so log and continue rather than rejecting.
+                Logger.error(`onApprovalNeeded callback threw: ${e.message}`, "APPROVAL")
+            }
+
+            const handler = (payload) => {
+                if (payload.id !== id) return
+                approvalStore.off('resolved', handler)
+                resolve(payload)
+            }
+            approvalStore.on('resolved', handler)
+        })
+    }
+
+    async _executeViaPi(prompt) {
+        try {
+            const report = await this._runPi(prompt)
+            Logger.success(`pi finished: ${report.slice(0, 200)}`, "STTS")
+            return ok(report || "Done, no output.")
+        } catch (e) {
+            Logger.error(`pi failed: ${e.message}`, "STTS")
+            return err(e.message === 'timeout'
+                ? "Pi took too long and was cut off."
+                : "Pi ran into a problem executing that.")
+        }
+    }
+
     _runPi(prompt) {
         return new Promise((resolve, reject) => {
             const child = spawn('pi', ['-p', prompt], {
@@ -451,11 +452,8 @@ class SttsToolExecutor {
         })
     }
 
-    // ─── Ask-the-user popup ──────────────────────────────────────────────
-    //
-    // For info that MUST be exact — paths, exact names, IDs, tokens, URLs.
-    // The user types it into a modal dialog and we get the string back
-    // verbatim. Same platform spread as screenshots: Windows / KDE / GNOME.
+    // ─── Ask-the-user popup ─────────────────────────────────────────────
+
     _askStrategies() {
         if (process.platform === 'win32') {
             return [['windows-inputbox', askWindows]]
@@ -470,8 +468,6 @@ class SttsToolExecutor {
             strategies.push([name, fn])
         }
 
-        // Prefer the native one for the current DE, fall back to the other.
-        // Both can be installed regardless of DE, and either works fine.
         if (isKde) {
             add('kdialog', askKdialog)
             add('zenity', askZenity)
@@ -518,14 +514,7 @@ class SttsToolExecutor {
         return err("Couldn't show the popup on this system.")
     }
 
-    // ─── Voice-triggered VSCode edit ─────────────────────────────────────
-    //
-    // Continue only executes tool calls in response to requests it starts
-    // itself, so a voice command can't reach through Continue. Instead this
-    // talks to a small companion VSCode extension (vscode-companion/) over
-    // localhost HTTP to read/write the active editor directly, and reuses
-    // the same generation + overwrite guard as continue-bridge.js's apply
-    // role (see src/coding/codeEditShared.js) rather than reimplementing it.
+    // ─── VSCode editing ─────────────────────────────────────────────────
 
     async editActiveFile(args = {}) {
         if (!this._active('coding')) {
@@ -588,6 +577,7 @@ class SttsToolExecutor {
         Logger.success(`Applied voice edit to ${fileName}`, "STTS")
         return ok(`Edited ${fileName}. It's applied in the editor as unsaved changes — check it over before saving.`)
     }
+
     async createFile(args = {}) {
         if (!this._active('coding')) {
             return err("VSCode file-creation tool isn't enabled.")
@@ -618,6 +608,7 @@ class SttsToolExecutor {
         Logger.success(`Created ${fileName}${data.overwritten ? ' (overwritten)' : ''}`, "STTS")
         return ok(`Created ${fileName}${content ? ' with the given content' : ' (empty)'}. It's open in the editor now.`)
     }
+
     async readActiveFile() {
         if (!this._active('coding')) {
             return err("VSCode reading tool isn't enabled.")
@@ -640,9 +631,11 @@ class SttsToolExecutor {
         Logger.info(`Read active file: ${active.path}`, "STTS")
         return ok(`File: ${active.path}\n\n${active.content}`)
     }
+
     _active(key) {
         return this._available[key] && this._enabled[key]
     }
+
     async execute(name, args, context = {}) {
         switch (name) {
             case "get_screenshot": return this.getScreenshot()
@@ -675,7 +668,7 @@ const RUN_COMMAND_TOOL = {
     function: {
         name: "run_system_command",
         description:
-            "Delegate an operating-system task to Pi, your terminal-savvy assistant, when the user asks for something that requires actually touching the system (running a command or script, finding/editing a file, cleaning something up, checking system state, fixing a bug in a project on disk). Pass EXACTLY what the user said to Pi — Pi figures out the actual commands. Only use this for real system/file actions, not things you can already answer yourself.",
+            "Delegate an operating-system task to Pi, your terminal-savvy assistant, when the user asks for something that requires actually touching the system (running a command or script, finding/editing a file, cleaning something up, checking system state, fixing a bug in a project on disk). Pass EXACTLY what the user said to Pi — Pi figures out the actual commands. Only use this for real system/file actions, not things you can already answer yourself. Note: if the request matches a risky pattern, it will be paused for the user's approval before Pi runs it — that's expected, not a failure. Don't retry it or rephrase it.",
         parameters: {
             type: "object",
             properties: {
@@ -726,6 +719,7 @@ const EDIT_ACTIVE_FILE_TOOL = {
         },
     },
 }
+
 const CREATE_FILE_TOOL = {
     type: "function",
     function: {
@@ -752,6 +746,7 @@ const CREATE_FILE_TOOL = {
         },
     },
 }
+
 const READ_ACTIVE_FILE_TOOL = {
     type: "function",
     function: {
@@ -761,7 +756,9 @@ const READ_ACTIVE_FILE_TOOL = {
         parameters: { type: "object", properties: {} },
     },
 }
+
 const STTS_TOOL_NAMES = new Set(
     [SCREENSHOT_TOOL, RUN_COMMAND_TOOL, ASK_USER_TOOL, EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL, CREATE_FILE_TOOL].map(t => t.function.name)
 )
+
 export { SttsToolExecutor, STTS_TOOL_NAMES }

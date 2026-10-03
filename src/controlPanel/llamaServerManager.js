@@ -29,10 +29,7 @@ const LLAMA_ARGS = [
     '--flash-attn', 'on',
     '--cache-reuse', '256',
     '--cache-ram', '4096',
-    '--threads', '8',
-    '--threads-batch', '16',
-    '--cpu-range', '0-7',
-    '--prio', '2'
+
 ]
 const LLAMA_ENV = { ...process.env, CUDA_VISIBLE_DEVICES: '0' }
 const LLAMA_HEALTH_URL = 'http://localhost:11435/health'

@@ -28,7 +28,7 @@
     "ollamaUrl": "http://localhost:11435",
     "memoryDbUrl": "http://localhost:8002",
     "blogUrl": "http://localhost:1234",
-    "ollamaTimeout": 120000,
+    "ollamaTimeout": 300000,
     "dbTimeout": 30000,
     "trainingTurnWindow": 200000,
     "memoryAutoInjectEnabled": true,

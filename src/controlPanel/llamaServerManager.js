@@ -12,7 +12,7 @@ const LLAMA_BIN = '/home/izansola/llama.cpp/build/bin/llama-server'
 
 /*const LLAMA_ARGS = [
     '--model', '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf',
-    '--mmproj', '/home/izansola/mmproj-Qwen3.5-9B-Q8_0.gguf',
+    '--mmproj', '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf',
     '--jinja',
     '--parallel', '1',
     '--cache-type-k', 'q8_0',
@@ -34,7 +34,7 @@ const LLAMA_BIN = '/home/izansola/llama.cpp/build/bin/llama-server'
 
 const LLAMA_ARGS = [
     '--model', '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf',
-    // '--mmproj', '/home/izansola/mmproj-Qwen3.5-9B-Q8_0.gguf', // not supported with MTP
+    '--mmproj', '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf',
     '--jinja',
     '--parallel', '1',
     '--cache-type-k', 'q8_0',

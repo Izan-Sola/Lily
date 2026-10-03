@@ -10,11 +10,8 @@ import {
 } from './auth.js'
 import { isRunning, restartLlamaServer, startLlamaServer, stopLlamaServer } from './llamaServerManager.js'
 import { TOGGLEABLE_MODULES } from '../ai/tools/toolRouter.js'
-import { REMOTE_HOSTS } from './remoteHosts.js'   // NEW
-
-// NEW: where the n8n webhook lives. Override via env if needed.
-const N8N_HEALTH_WEBHOOK =
-    process.env.N8N_HEALTH_WEBHOOK || 'http://localhost:5678/webhook/health-check'
+import { REMOTE_HOSTS } from './remoteHosts.js'
+import { REMOTE_ACTIONS, listActions } from './remoteActions.js'   // NEW
 
 function requireAuth(req, res, next) {
     if (req.session?.authed) return next()
@@ -113,16 +110,18 @@ function dashboardPage(csrfToken) {
         #llamaStatus { display:flex; align-items:center; margin-bottom: 1rem; }
         .toast { position: fixed; bottom: 1rem; right: 1rem; background: #1c1c28; padding: 0.8rem 1.2rem; border-radius: 8px; border-left: 4px solid #7c5cff; display:none; z-index: 100; }
 
-        /* NEW: styles for the remote health row */
-        .health-row { display: flex; gap: 0.5rem; align-items: center; }
-        .health-row select {
-            flex: 1 1 auto;
+        /* Remote actions card: two selects + run button */
+        .remote-row { display: flex; gap: 0.5rem; align-items: center; }
+        .remote-row select {
+            flex: 1 1 0;
+            min-width: 0;
             padding: 0.5rem 0.6rem;
             border-radius: 8px;
             border: 1px solid #333;
             background: #0f0f16;
             color: #eee;
         }
+        .remote-row button { flex: 0 0 auto; margin-right: 0; }
 
         .logpanel .card {
             flex: 1 1 auto;
@@ -206,12 +205,13 @@ function dashboardPage(csrfToken) {
             <button class="action danger" onclick="llamaAction('stop')">Stop</button>
         </div>
 
-        <!-- NEW: Remote Health Check card -->
+        <!-- NEW: Device + Action selectors -->
         <div class="card">
-            <h3>Remote Health Check</h3>
-            <div class="health-row">
-                <select id="healthHost"><option>Loading...</option></select>
-                <button class="action" onclick="runHealth()">Run</button>
+            <h3>Remote Actions</h3>
+            <div class="remote-row">
+                <select id="remoteHost"><option>Loading...</option></select>
+                <select id="remoteAction"><option>Loading...</option></select>
+                <button class="action" onclick="runRemote()">Run</button>
             </div>
             <div class="unavailable" style="margin-top:0.5rem;">Report will arrive as a Discord DM.</div>
         </div>
@@ -328,25 +328,46 @@ function dashboardPage(csrfToken) {
         }
     }
 
-    // ---- NEW: Remote health check ----
-    async function loadHealthHosts() {
-        const hosts = await api('/api/health/hosts')
-        const sel = document.getElementById('healthHost')
+    // ---- Remote actions (device + action) ----
+    async function loadRemoteOptions() {
+        const [hosts, actions] = await Promise.all([
+            api('/api/remote/hosts'),
+            api('/api/remote/actions'),
+        ])
+
+        const hostSel = document.getElementById('remoteHost')
         if (!hosts.length) {
-            sel.innerHTML = '<option value="">No hosts configured</option>'
-            return
+            hostSel.innerHTML = '<option value="">No hosts configured</option>'
+        } else {
+            hostSel.innerHTML = hosts.map(h =>
+                \`<option value="\${h.name}">\${h.name}\${h.tailscaleIp === 'local' ? ' (local)' : ''}</option>\`
+            ).join('')
         }
-        sel.innerHTML = hosts.map(h =>
-            \`<option value="\${h.name}">\${h.name}\${h.tailscaleIp === 'local' ? ' (local)' : ''}</option>\`
-        ).join('')
+
+        const actSel = document.getElementById('remoteAction')
+        if (!actions.length) {
+            actSel.innerHTML = '<option value="">No actions</option>'
+        } else {
+            actSel.innerHTML = actions.map(a =>
+                \`<option value="\${a.id}" title="\${a.description || ''}">\${a.label}</option>\`
+            ).join('')
+        }
     }
 
-    async function runHealth() {
-        const host = document.getElementById('healthHost').value
-        if (!host) return toast('No host selected')
-        toast(\`Triggering health check on \${host}...\`)
+    async function runRemote() {
+        const host = document.getElementById('remoteHost').value
+        const action = document.getElementById('remoteAction').value
+        if (!host || !action) return toast('Select a device and an action')
+
+        const actionLabel = document.getElementById('remoteAction')
+            .selectedOptions[0]?.textContent || action
+
+        toast(\`Triggering "\${actionLabel}" on \${host}...\`)
         try {
-            await api('/api/health/run', { method: 'POST', body: JSON.stringify({ host }) })
+            await api('/api/remote/run', {
+                method: 'POST',
+                body: JSON.stringify({ host, action }),
+            })
             toast(\`Triggered on \${host} — check Discord for the report\`)
         } catch (e) {
             toast('Error: ' + e.message)
@@ -387,7 +408,7 @@ function dashboardPage(csrfToken) {
     setInterval(loadApprovals, 5000)
     loadLlamaStatus()
     setInterval(loadLlamaStatus, 8000)
-    loadHealthHosts()
+    loadRemoteOptions()
     </script>
     </body></html>`
 }
@@ -527,8 +548,8 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
         res.json({ ok: true })
     })
 
-    // ---- NEW: Remote health check endpoints ----
-    app.get('/api/health/hosts', (req, res) => {
+    // ---- Device + Action endpoints ----
+    app.get('/api/remote/hosts', (req, res) => {
         res.json(
             Object.entries(REMOTE_HOSTS).map(([name, info]) => ({
                 name,
@@ -537,26 +558,34 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
         )
     })
 
-    app.post('/api/health/run', requireCsrf, async (req, res) => {
-        const { host } = req.body || {}
-        const info = REMOTE_HOSTS[host]
-        if (!info) return res.status(400).json({ error: 'Unknown host' })
+    app.get('/api/remote/actions', (req, res) => {
+        res.json(listActions())
+    })
+
+    app.post('/api/remote/run', requireCsrf, async (req, res) => {
+        const { host, action } = req.body || {}
+        const hostInfo = REMOTE_HOSTS[host]
+        if (!hostInfo) return res.status(400).json({ error: 'Unknown host' })
+
+        const actionInfo = REMOTE_ACTIONS[action]
+        if (!actionInfo) return res.status(400).json({ error: 'Unknown action' })
 
         try {
             const { data } = await axios.post(
-                N8N_HEALTH_WEBHOOK,
+                actionInfo.webhook,
                 {
-                    tailscaleIp: info.tailscaleIp,
-                    discordId: info.discordId,
-                    sshUser: info.sshUser || '',
-                    scriptMode: info.scriptMode || 'stdin',
+                    tailscaleIp: hostInfo.tailscaleIp,
+                    discordId: hostInfo.discordId,
+                    sshUser: hostInfo.sshUser || '',
+                    scriptMode: hostInfo.scriptMode || 'stdin',
                     hostName: host,
+                    action,
                 },
-                { timeout: 15000 }
+                { timeout: actionInfo.timeoutMs || 15 * 60 * 1000 }
             )
             res.json({ ok: true, n8n: data })
         } catch (e) {
-            Logger.error(`Health trigger failed: ${e.message}`, 'CONTROL PANEL')
+            Logger.error(`Remote action "${action}" on "${host}" failed: ${e.message}`, 'CONTROL PANEL')
             res.status(500).json({ error: e.message })
         }
     })

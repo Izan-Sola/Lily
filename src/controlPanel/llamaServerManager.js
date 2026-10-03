@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile)
 
 const LLAMA_BIN = '/home/izansola/llama.cpp/build/bin/llama-server'
 
-const LLAMA_ARGS = [
+/*const LLAMA_ARGS = [
     '--model', '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf',
     '--mmproj', '/home/izansola/mmproj-Qwen3.5-9B-Q8_0.gguf',
     '--jinja',
@@ -30,7 +30,35 @@ const LLAMA_ARGS = [
     '--cache-reuse', '256',
     '--cache-ram', '4096',
 
-]
+]*/
+
+const LLAMA_ARGS = [
+    '--model', '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf',
+    // '--mmproj', '/home/izansola/mmproj-Qwen3.5-9B-Q8_0.gguf', // not supported with MTP
+    '--jinja',
+    '--parallel', '1',
+    '--cache-type-k', 'q8_0',
+    '--cache-type-v', 'q8_0',
+    '--no-kv-unified',
+    '--port', '11435',
+    '-c', '64000',
+    '--context-shift',
+    '--host', '0.0.0.0',
+    '--reasoning', 'off',
+    '--reasoning-budget', '0',
+    '--reasoning-format', 'none',
+    '-ngl', '999',
+    '--flash-attn', 'on',
+    '--cache-reuse', '256',
+    '--cache-ram', '4096',
+
+    // --- Speculative decoding (MTP, uses the head inside the model) ---
+    '--spec-type', 'draft-mtp',
+    '--spec-draft-p-min', '0.4',
+    '--spec-draft-n-max', '4',
+    '--spec-draft-n-min', '1',
+];
+
 const LLAMA_ENV = { ...process.env, CUDA_VISIBLE_DEVICES: '0' }
 const LLAMA_HEALTH_URL = 'http://localhost:11435/health'
 const LOG_PATH = path.join(process.cwd(), 'logs', 'llama-server.log')

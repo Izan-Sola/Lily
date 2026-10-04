@@ -2,8 +2,9 @@
 import { Logger } from '../../utils/Logger.js'
 import { ok, err } from './toolHelpers.js'
 import { checkShrinkRatio, checkStubBodies } from '../../coding/codeEditShared.js'
-import { approvalStore } from '../../ai/tools/riskyActionsManagement/approvalStore.js'
-import { classifyRisk } from './riskyActionsManagement/riskClassifier.js'
+import { approvalStore } from './riskyActionsManagement/approvalStore.js'
+import { LOCAL_GATE_TOKEN } from './riskyActionsManagement/approvalRoutes.js'
+import { fileURLToPath } from 'node:url'
 import { getSection } from '../config.js'
 import { createLocalDevice } from './deviceLocal.js'
 import { getDevice, deviceContext } from './remoteDevices.js'
@@ -28,6 +29,13 @@ class SttsToolExecutor {
         this._local = createLocalDevice({
             timeouts: T,
             companionUrl: process.env.VSCODE_COMPANION_URL || 'http://localhost:8768',
+            // pi on this machine calls back into the brain's /approval routes (see approvalRoutes.js).
+            gate: {
+                url: process.env.LILY_BRAIN_URL || `http://127.0.0.1:${process.env.PORT || 8770}`,
+                token: LOCAL_GATE_TOKEN,
+                deviceId: 'local',
+                extensionPath: fileURLToPath(new URL('../pidev-bridge/lily-gate.ts', import.meta.url)),
+            },
         })
         this._available = {
             screenshot: !!sttsEnabled,
@@ -35,7 +43,7 @@ class SttsToolExecutor {
             coding: !!(sttsEnabled && codingEnabled),
         }
         this._enabled = { screenshot: true, pidev: true, coding: true }
-        this._onApprovalNeeded = null
+        this._onCreated = null
         this._pendingImages = []
     }
 
@@ -82,8 +90,14 @@ class SttsToolExecutor {
     }
 
     setApprovalCallbacks({ onApprovalNeeded } = {}) {
-        if (onApprovalNeeded) this._onApprovalNeeded = onApprovalNeeded
-        // The tool call blocks until the approval resolves, so no result callback is needed.
+        // 'created' fires from the /approval/request route whenever pi asks for something risky.
+        if (this._onCreated) approvalStore.off('created', this._onCreated)
+        if (!onApprovalNeeded) return
+        this._onCreated = (entry) => {
+            try { onApprovalNeeded(entry) }
+            catch (e) { Logger.error(`onApprovalNeeded callback threw: ${e.message}`, "APPROVAL") }
+        }
+        approvalStore.on('created', this._onCreated)
     }
 
     _active(key) {
@@ -107,62 +121,18 @@ class SttsToolExecutor {
 
     // ─── run_system_command ─────────────────────────────────────────────
     //
-    //   1. classifyRisk(prompt) against riskConfig.json.
-    //   2. NOT risky  -> hand straight to pi (on the target device).
-    //   3. Risky      -> create an entry in approvalStore, notify the control
-    //      panel via _onApprovalNeeded, and BLOCK until approve/deny (or the
-    //      10-min TTL auto-denies). Denied -> error to the model, nothing runs.
+    // Hands the request to pi as-is. Safety does NOT live here: pi runs with
+    // --yolo plus the lily-gate extension, which asks the brain (/approval/request)
+    // before every real bash/write/edit. Safe calls auto-approve, everything else
+    // waits in the control panel and fails closed on deny/timeout.
     async runSystemCommand(args = {}, context = {}, dev) {
         if (!this._active('pidev')) return err("System command tool isn't enabled.")
 
         const { prompt } = args
         if (!prompt?.trim()) return err("prompt required.")
 
-        const { risky, matched } = classifyRisk(prompt)
-
-        if (!risky) {
-            Logger.info(`Not risky, delegating to pi: ${prompt.slice(0, 200)}`, "STTS")
-            return this._executeViaPi(prompt, dev)
-        }
-
-        Logger.warning(`Risky command flagged (matched "${matched}"): ${prompt.slice(0, 200)}`, "APPROVAL")
-
-        const approval = await this._requestApproval({
-            // The control panel should show which machine this will run on.
-            instruction: context.deviceId ? `[on ${context.deviceId}] ${prompt}` : prompt,
-            channelId: context.channelId,
-            matched,
-        })
-
-        if (!approval.approved) {
-            Logger.warning(`Approval [${approval.id}] denied (${approval.reason ?? 'manual deny'})`, "APPROVAL")
-            return err(`Risky command was denied (${approval.reason ?? 'manual deny'}). Nothing was executed.`)
-        }
-
-        Logger.info(`Approval [${approval.id}] granted, running via pi: ${prompt.slice(0, 200)}`, "APPROVAL")
+        Logger.info(`Delegating to pi: ${prompt.slice(0, 200)}`, "STTS")
         return this._executeViaPi(prompt, dev)
-    }
-
-    // Creates the approval entry, pings the control panel, and resolves once the
-    // user (or the TTL) resolves it. Filtered by id so concurrent requests don't cross.
-    _requestApproval({ instruction, channelId, matched }) {
-        return new Promise((resolve) => {
-            const id = approvalStore.create({ instruction, channelId, matched })
-
-            try {
-                this._onApprovalNeeded?.({ id, instruction, channelId, matched })
-            } catch (e) {
-                // Still visible in the control panel via its /api/approvals poll.
-                Logger.error(`onApprovalNeeded callback threw: ${e.message}`, "APPROVAL")
-            }
-
-            const handler = (payload) => {
-                if (payload.id !== id) return
-                approvalStore.off('resolved', handler)
-                resolve(payload)
-            }
-            approvalStore.on('resolved', handler)
-        })
     }
 
     async _executeViaPi(prompt, dev) {
@@ -332,7 +302,7 @@ const RUN_COMMAND_TOOL = {
     function: {
         name: "run_system_command",
         description:
-            "Delegate an operating-system task to Pi, your terminal-savvy assistant, when the user asks for something that requires actually touching the system (running a command or script, finding/editing a file, cleaning something up, checking system state, fixing a bug in a project on disk). Pass EXACTLY what the user said to Pi — Pi figures out the actual commands. Only use this for real system/file actions, not things you can already answer yourself. Note: if the request matches a risky pattern, it will be paused for the user's approval before Pi runs it — that's expected, not a failure. Don't retry it or rephrase it.",
+            "Delegate an operating-system task to Pi, your terminal-savvy assistant, when the user asks for something that requires actually touching the system (running a command or script, finding/editing a file, cleaning something up, checking system state, fixing a bug in a project on disk). Pass EXACTLY what the user said to Pi — Pi figures out the actual commands. Only use this for real system/file actions, not things you can already answer yourself. Note: individual commands Pi wants to run may be paused for the user's approval, or denied. That's expected, not a failure. If Pi reports something was denied or not allowed, don't retry it or rephrase it.",
         parameters: {
             type: "object",
             properties: {

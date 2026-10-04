@@ -9,14 +9,20 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const run = promisify(execFile)
 
+// Default gate extension location: lily-gate.ts next to this file.
+const DEFAULT_GATE_EXT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'lily-gate.ts')
+
 const DEFAULTS = {
     screenshotMs: 10_000, fileAppearMs: 3000, fileAppearPollMs: 100,
-    askUserMs: 120_000, piMs: 180_000, companionRequestMs: 10_000,
+    askUserMs: 120_000, piMs: 180_000, companionRequestMs: 10_000, gateLoadMs: 8000,
 }
 
 const isWin = process.platform === 'win32'
@@ -102,8 +108,12 @@ async function companion(base, ms, method, route, body) {
 
 // ─── the device ──────────────────────────────────────────────────────────
 // timeouts: object (or live Proxy) with the keys in DEFAULTS; missing keys fall back.
-export function createLocalDevice({ timeouts = {}, companionUrl = 'http://localhost:8768' } = {}) {
+// gate: { url, token, deviceId, extensionPath? } -> brain approval endpoint + lily-gate.ts.
+//   extensionPath is optional and defaults to ./lily-gate.ts next to this file.
+//   Without it runPi refuses to run (pi runs with --perm yolo, so it must never run ungated).
+export function createLocalDevice({ timeouts = {}, companionUrl = 'http://localhost:8768', gate = null } = {}) {
     const t = k => timeouts[k] ?? DEFAULTS[k]
+    if (gate) gate = { ...gate, extensionPath: gate.extensionPath ?? DEFAULT_GATE_EXT }
     const ext = (method, route, body) => companion(companionUrl, t('companionRequestMs'), method, route, body)
 
     return {
@@ -157,14 +167,41 @@ export function createLocalDevice({ timeouts = {}, companionUrl = 'http://localh
 
         runPi(prompt) {
             return new Promise((resolve, reject) => {
-                const child = spawn('pi', ['-p', prompt], { stdio: ['ignore', 'pipe', 'pipe'] })
-                let out = '', err = ''
+                if (!gate?.url || !gate?.token || !gate?.deviceId || !gate?.extensionPath) return reject(new Error('approval gate not configured, refusing to run pi'))
+                if (!existsSync(gate.extensionPath)) return reject(new Error(`approval gate extension missing: ${gate.extensionPath}`))
+
+                const sentinel = path.join(tmpdir(), `lily-gate-${randomUUID()}`)
+                const child = spawn('pi', ['--perm', 'yolo', '-e', gate.extensionPath, '-p', prompt], {
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                    env: {
+                        ...process.env,
+                        LILY_GATE_URL: gate.url,
+                        LILY_GATE_TOKEN: gate.token,
+                        LILY_GATE_DEVICE: gate.deviceId,
+                        LILY_GATE_SENTINEL: sentinel,
+                    },
+                })
+                let out = '', err = '', gateFailed = false
                 child.stdout.on('data', d => { out += d })
                 child.stderr.on('data', d => { err += d })
+
+                // --perm yolo + a gate that silently failed to load = ungated shell. Kill pi if the handshake never shows up.
+                const started = Date.now()
+                const watchdog = setInterval(() => {
+                    if (existsSync(sentinel)) return clearInterval(watchdog)
+                    if (Date.now() - started > t('gateLoadMs')) {
+                        clearInterval(watchdog)
+                        gateFailed = true
+                        child.kill('SIGKILL')
+                    }
+                }, 200)
+
+                const cleanup = () => { clearTimeout(timer); clearInterval(watchdog); rm(sentinel, { force: true }).catch(() => { }) }
                 const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('timeout')) }, t('piMs'))
-                child.on('error', e => { clearTimeout(timer); reject(e) })
+                child.on('error', e => { cleanup(); reject(e) })
                 child.on('close', code => {
-                    clearTimeout(timer)
+                    cleanup()
+                    if (gateFailed) return reject(new Error('approval gate failed to load, pi was stopped'))
                     if (code === 0) resolve(out.trim() || err.trim())
                     else reject(new Error(err.trim() || `pi exited with code ${code}`))
                 })

@@ -7,14 +7,21 @@ import { getConfig } from '../ai/config.js';     // for discordUserID
 import { VOICE_ASSISTANT_CHANNEL_ID } from '../ai/Lily.js';
 import { Logger } from '../../src/utils/Logger.js'; // optional, but consistent
 import { createTurnRouter } from '../ai/tools/remoteDevices.js'; // adjust path to where you put it
-
+import { createApprovalRouter } from '../ai/tools/riskyActionsManagement/approvalRoutes.js';
 const ASSISTANT_ENABLED = true;
 const REMOTE_PORT = Number(process.env.STTS_REMOTE_PORT) || 8770;
 let started = false;
 
 // One turn: the same call for local mic and remote devices.
 const runTurn = (text) => ai.chat(VOICE_ASSISTANT_CHANNEL_ID, text, SYSTEM_PROMPT, {}, []);
-
+const remote = express();
+remote.use('/stts', createTurnRouter(async (text) => {
+    const result = await runTurn(text);
+    await sendGif(result);
+    return result?.text ?? '';
+}));
+remote.use(createApprovalRouter());   // <- new, no path prefix
+remote.listen(REMOTE_PORT, '0.0.0.0', () => Logger.info(`Remote STTS turns on :${REMOTE_PORT}/stts`, 'VOICE'));
 // --- Handle GIF if present ---
 async function sendGif(result) {
     if (!result?.gifUrl) return;

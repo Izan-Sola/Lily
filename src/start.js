@@ -351,7 +351,7 @@ async function setupDiscordBot() {
             })
             if (isN8nEnabled) {
                 const { startNotifyServer } = await import('./n8n/discordNotify.js')
-                notifyServerHandle = startNotifyServer(client, getConfig().discordUserID, 3300)
+                notifyServerHandle = startNotifyServer(client, getConfig().discord.discordUserID, 3300)
                 Logger.success('Notify server started', "NOTIFY")
             }
         } catch (err) {

@@ -24,8 +24,8 @@ export function startVoiceAssistant() {
 
                 // --- Handle GIF if present ---
                 if (result.gifUrl) {
-                    const config = getConfig();
-                    const userId = config.discordUserID;
+                    const userId = getConfig().discord.discordUserID;
+                    
                     if (!userId) {
                         Logger.warning('No discordUserID configured – cannot send GIF DM', 'VOICE GIF');
                     } else if (!client) {

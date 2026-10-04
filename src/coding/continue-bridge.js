@@ -1,303 +1,309 @@
-// continue-bridge.js
+// src/coding/continue-bridge.js
 //
-// Started conditionally from start.js when the 'coding' flag is passed —
-// see startContinueBridge() at the bottom. `ai` is no longer imported
-// directly; it's handed in by the caller so this module shares the exact
-// same Lily instance as every other backend (Discord, Minecraft, VRChat)
-// rather than spinning up a second one.
+// Stateless OpenAI-compatible bridge between Continue.dev and the local
+// llama-server running Qwen 3.5 9B.
+//
+// Why this works for remote use: Continue executes tools (read_file,
+// edit_existing_file, create_new_file, run_terminal_command, ...) on the
+// machine where VS Code runs, and re-sends the full conversation on every
+// request. So the bridge only has to (1) forward messages + tool schemas to
+// the model, and (2) hand structured tool_calls back. No server-side session
+// state, no channel history, and the minipc never touches the client's files.
+//
+// Env:
+//   BRAIN_PORT        listen port                      (default 8767)
+//   BRAIN_HOST        listen address                   (default 0.0.0.0)
+//   BRIDGE_API_KEY    OPTIONAL bearer token; leave unset for no auth (like before)
+//   UPSTREAM_URL      llama-server OpenAI base URL     (default http://127.0.0.1:8080/v1)
+//   UPSTREAM_MODEL    model name sent upstream         (default qwen3.5-9b; ignored by llama-server)
+//   UPSTREAM_API_KEY  key for upstream, if any
+//   BRIDGE_THINKING   "on" to let Qwen think           (default off: faster, cleaner tool calls)
+//   BRIDGE_GUARD      "off" to disable apply placeholder check
+//
+// start.js can keep calling startContinueBridge(ai); the argument is ignored.
 import express from "express"
-import fs from "fs"
-import { fileURLToPath } from "url"
+import crypto from "node:crypto"
+import { Readable } from "node:stream"
 import { Logger } from "../utils/Logger.js"
+import { CODE_SYSTEM_PROMPT, stripCodeFence, stripThinking, checkStubBodies } from "./codeEditShared.js"
+import { parseToolCalls } from "./xmlToolCalls.js"
 
-const PORT = process.env.BRAIN_PORT || 8767
-const CHAT_CHANNEL_ID = "vscode-continue-chat"
-const CODE_CHANNEL_ID = "vscode-continue-code"
+const warn = (...a) => (Logger.warn ?? Logger.info).call(Logger, ...a)
 
-// This is the ONLY prompt the apply-role model ever sees (Continue's own
-// system message, if any, rides along as an addendum via continueExtra
-// below — but the hard rules live HERE, server-side, so they don't depend
-// on Continue's config actually getting sent through correctly).
-//
-// IMPORTANT: apply-role output is written to disk directly by Continue —
-// there is no tool call in between, so the catastrophic-overwrite guard
-// further down CANNOT block a bad apply response the way it blocks a bad
-// edit_existing_file/single_find_and_replace call. These rules are the
-// only line of defense for this path; treat them as load-bearing.
-import {
-    CODE_SYSTEM_PROMPT,
-    OVERWRITE_GUARD,
-    STUB_BODY_PATTERN,
-    checkShrinkRatio,
-    checkStubBodies,
-} from "./codeEditShared.js"
-// Suffix appended to Lily's normal persona ONLY for the chat/agent model
-// (the one with tool_use). Never used on the apply-role model above.
-const AGENT_SUFFIX = ``
-
-function extractUserText(messages) {
-    const lastUser = [...messages].reverse().find(m => m.role === "user")
-    return typeof lastUser?.content === "string"
-        ? lastUser.content
-        : (lastUser?.content ?? []).map(p => p.text ?? "").join("\n")
-}
-
-// Pull any trailing role:"tool" messages off the end of the array. Their
-// presence means Continue already executed a tool call Lily asked for last
-// turn and is reporting the result back — this is a *continuation*, not a
-// fresh user prompt, and must NOT push a new user message into history.
-function extractTrailingToolResults(messages) {
-    const results = []
-    for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "tool") {
-            results.unshift({
-                tool_call_id: messages[i].tool_call_id,
-                content: typeof messages[i].content === "string"
-                    ? messages[i].content
-                    : JSON.stringify(messages[i].content)
-            })
-        } else break
+function loadConfig(overrides = {}) {
+    return {
+        port: Number(process.env.BRAIN_PORT) || 8767,
+        host: process.env.BRAIN_HOST || "0.0.0.0",
+        apiKey: process.env.BRIDGE_API_KEY || "",
+        upstream: (process.env.UPSTREAM_URL || "http://127.0.0.1:11435/v1").replace(/\/+$/, ""),
+        upstreamKey: process.env.UPSTREAM_API_KEY || "",
+        upstreamModel: process.env.UPSTREAM_MODEL || "qwen3.5-9b",
+        thinking: process.env.BRIDGE_THINKING === "on",
+        guard: process.env.BRIDGE_GUARD !== "off",
+        keepaliveMs: 10_000,
+        ...overrides,
     }
-    return results
 }
 
-// ─── Catastrophic-overwrite guard (agent/tool-call path only) ─────────
-// Two independent, code-level checks (not prompt-dependent) that run
-// before any file-writing TOOL CALL is forwarded to Continue.
-//
-// 1) SIZE-RATIO CHECK — for tools where the argument is genuinely meant to
-//    be the ENTIRE file (single_find_and_replace, create_new_file). If the
-//    proposed content is drastically smaller than the real file on disk,
-//    that's a classic sign of a hallucinated "simplified" rewrite.
-//
-// 2) STUB-BODY CHECK — for edit_existing_file, where the argument is a
-//    small PATCH by design, so size comparison against the full file isn't
-//    meaningful (a legit tiny patch is always "small"). Instead this scans
-//    for the literal pattern `{ ... }` used as a function/method body —
-//    which is never valid real code — a near-unambiguous sign she's
-//    generated a skeleton of empty stubs instead of an actual patch.
-//
-// NOTE: this guard only runs against result.tool_calls. The apply-role
-// path never produces a tool_call (see checkApplyShrink below for its
-// much weaker, non-blocking equivalent).
+// ---------- message normalisation ----------
 
-
-function findFilePathArg(args) {
-    for (const key of ["filepath", "path", "file", "filePath", "target_file"]) {
-        if (typeof args?.[key] === "string") return args[key]
-    }
-    return null
-}
-
-function findLargestStringArg(args) {
-    let best = ""
-    for (const val of Object.values(args ?? {})) {
-        if (typeof val === "string" && val.length > best.length) best = val
-    }
-    return best
-}
-
-function toLocalPath(filepath) {
-    if (!filepath) return null
-    try {
-        if (filepath.startsWith("file://")) return fileURLToPath(filepath)
-    } catch { /* fall through */ }
-    return filepath
-}
-
-/**
- * Returns null if the tool call is fine to forward as-is, or a string
- * rejection reason if it should be blocked.
- */
-function checkForCatastrophicOverwrite(toolCall) {
-    const name = toolCall?.function?.name
-    if (!["edit_existing_file", "single_find_and_replace", "create_new_file"].includes(name)) return null
-
-    let args
-    try { args = JSON.parse(toolCall.function.arguments ?? "{}") } catch { return null }
-
-    const filepath = toLocalPath(findFilePathArg(args))
-    if (!filepath) return null
-
-    let originalContent
-    try {
-        originalContent = fs.readFileSync(filepath, "utf8")
-    } catch {
-        return null // file doesn't exist yet (a real create) or unreadable — not our concern here
-    }
-
-    if (name === "edit_existing_file") {
-        const changes = args.changes ?? ""
-        const stubReason = checkStubBodies(changes, filepath)
-        if (stubReason) {
-            Logger.warning(`BLOCKED stub-body patch: ${filepath}`)
-            return (
-                `${stubReason} The edit was NOT applied. Remember: "// ... existing ` +
-                `code ..." is a comment placeholder for sections you're NOT touching — every ` +
-                `function you actually include in a patch must have its complete, real body. ` +
-                `Re-read the file, then retry with a precise patch containing only the lines ` +
-                `that truly change, each with its full real implementation.`
-            )
+function flattenContent(content) {
+    if (typeof content === "string") return content
+    if (content == null) return ""
+    if (Array.isArray(content)) {
+        // Text-only part arrays become plain strings (safest for the chat template).
+        // Anything with images is left as-is for the multimodal path.
+        if (content.every(p => p?.type === "text" || typeof p === "string")) {
+            return content.map(p => (typeof p === "string" ? p : p.text ?? "")).join("\n")
         }
-        return null
+        return content
     }
-
-    const newContent = findLargestStringArg(args)
-    const shrinkReason = checkShrinkRatio(originalContent, newContent, filepath)
-    if (shrinkReason) {
-        Logger.warning(`[BRIDGE] 🚫 ${shrinkReason}`)
-        return (
-            `${shrinkReason} The edit was NOT applied. Call the read tool on this exact ` +
-            `file right now to see its real current content, then retry with a precise ` +
-            `change based on what's actually there.`
-        )
-    }
-    return null
+    return JSON.stringify(content)
 }
 
-// ─── Apply-path sanity check (NON-BLOCKING) ────────────────────────────
-// Apply-role responses are written straight to disk by Continue — there's
-// no tool call to intercept, so unlike the guard above, this can only warn
-// in the console after the fact. It's a heuristic: the apply request's
-// user message normally contains the original file content, so if the
-// returned text is drastically shorter than that, it's worth a look.
-function warnIfApplyLooksShrunk(messages, resultText) {
-    if (!resultText) return
-    const userText = extractUserText(messages)
-    if (userText.length < 200) return // too short to be a real file-merge prompt, skip
-
-    const ratio = resultText.length / userText.length
-    if (ratio < 0.35) {
-        Logger.warning(
-            `[BRIDGE] ⚠️ APPLY OUTPUT LOOKS SHRUNK — this was NOT blocked (apply writes ` +
-            `directly to disk, no tool call to intercept). Input context: ${userText.length} ` +
-            `chars, output: ${resultText.length} chars (ratio ${ratio.toFixed(2)}). ` +
-            `Check the file Continue just wrote if this looks wrong.`
-        )
+// Qwen's template rejects system messages that aren't first, so merge them all.
+function normalizeMessages(messages, extraSystem = []) {
+    const systems = [...extraSystem]
+    const rest = []
+    for (const m of messages ?? []) {
+        if (m.role === "system" || m.role === "developer") {
+            const c = flattenContent(m.content)
+            if (c) systems.push(typeof c === "string" ? c : JSON.stringify(c))
+            continue
+        }
+        const out = { ...m, content: flattenContent(m.content) }
+        if (m.role === "tool" && typeof out.content !== "string") out.content = JSON.stringify(out.content)
+        rest.push(out)
     }
+    const merged = systems.filter(Boolean).join("\n\n")
+    return merged ? [{ role: "system", content: merged }, ...rest] : rest
 }
 
-function formatResponse(res, { model, stream, text, tool_calls }) {
-    const message = { role: "assistant", content: text || null, tool_calls }
-    const finish_reason = tool_calls ? "tool_calls" : "stop"
+// ---------- upstream ----------
 
-    if (stream) {
-        res.setHeader("Content-Type", "text/event-stream")
-        res.setHeader("Cache-Control", "no-cache")
-        res.setHeader("Connection", "keep-alive")
-        const chunk = (payload) => res.write(`data: ${JSON.stringify({
-            id: "chatcmpl-lily", object: "chat.completion.chunk",
-            created: Math.floor(Date.now() / 1000), model,
-            choices: [{ index: 0, ...payload }]
-        })}\n\n`)
-        chunk({ delta: { role: "assistant", content: text ?? "", tool_calls }, finish_reason: null })
-        chunk({ delta: {}, finish_reason })
-        res.write("data: [DONE]\n\n")
-        res.end()
-    } else {
-        res.json({
+function buildUpstreamBody(reqBody, cfg, { isApply, stream, messages }) {
+    const body = { ...reqBody, model: cfg.upstreamModel, messages, stream }
+    if (!Array.isArray(body.tools) || !body.tools.length) {
+        delete body.tools
+        delete body.tool_choice
+    }
+    if (!stream) delete body.stream_options
+    body.max_tokens ??= 8192
+    if (isApply) body.temperature = 0
+    // Qwen 3.5 template switch. Unknown fields are ignored by servers that don't support it.
+    body.chat_template_kwargs = { enable_thinking: cfg.thinking, ...(reqBody.chat_template_kwargs ?? {}) }
+    return body
+}
+
+async function callUpstream(cfg, body, signal) {
+    const headers = { "Content-Type": "application/json" }
+    if (cfg.upstreamKey) headers.Authorization = `Bearer ${cfg.upstreamKey}`
+    const r = await fetch(`${cfg.upstream}/chat/completions`, {
+        method: "POST", headers, body: JSON.stringify(body), signal,
+    })
+    if (!r.ok) {
+        const detail = await r.text().catch(() => "")
+        const err = new Error(`upstream ${r.status}: ${detail.slice(0, 500)}`)
+        err.status = r.status
+        throw err
+    }
+    return r
+}
+
+// ---------- response shaping ----------
+
+function normalizeToolCalls(calls) {
+    if (!calls?.length) return null
+    return calls.map(tc => ({
+        id: tc.id || `call_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`,
+        type: "function",
+        function: {
+            name: tc.function?.name,
+            arguments: typeof tc.function?.arguments === "string"
+                ? tc.function.arguments
+                : JSON.stringify(tc.function?.arguments ?? {}),
+        },
+    }))
+}
+
+function extractResult(data, tools, isApply) {
+    const choice = data.choices?.[0] ?? {}
+    const msg = choice.message ?? {}
+    let text = stripThinking(typeof msg.content === "string" ? msg.content : "") ?? ""
+    let toolCalls = normalizeToolCalls(msg.tool_calls)
+
+    if (!toolCalls && text.includes("<tool_call>")) {
+        const parsed = parseToolCalls(text, tools)
+        if (parsed.calls.length) {
+            Logger.info("[BRIDGE] recovered tool calls from text:", parsed.calls.map(c => c.function.name))
+            toolCalls = parsed.calls
+            text = parsed.text
+        } else {
+            warn("[BRIDGE] <tool_call> in output but nothing parsed (truncated?). finish_reason:", choice.finish_reason)
+        }
+    }
+    if (isApply && !toolCalls) text = stripCodeFence(text)
+
+    const finish = toolCalls ? "tool_calls" : choice.finish_reason === "length" ? "length" : "stop"
+    return { text, toolCalls, finish, usage: data.usage }
+}
+
+function sseChunk(res, model, delta, finish_reason = null, extra = {}) {
+    res.write(`data: ${JSON.stringify({
+        id: "chatcmpl-lily", object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000), model,
+        choices: [{ index: 0, delta, finish_reason }], ...extra,
+    })}\n\n`)
+}
+
+function sendBuffered(res, model, stream, { text, toolCalls, finish, usage }) {
+    if (!stream) {
+        return res.json({
             id: "chatcmpl-lily", object: "chat.completion",
             created: Math.floor(Date.now() / 1000), model,
-            choices: [{ index: 0, message, finish_reason }],
-            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+            choices: [{ index: 0, message: { role: "assistant", content: text || null, ...(toolCalls ? { tool_calls: toolCalls } : {}) }, finish_reason: finish }],
+            usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         })
+    }
+    // Headers were already sent by beginSse(); just write the events.
+    sseChunk(res, model, { role: "assistant", content: text ?? "" })
+    if (toolCalls) {
+        sseChunk(res, model, { tool_calls: toolCalls.map((tc, index) => ({ index, ...tc })) })
+    }
+    sseChunk(res, model, {}, finish)
+    res.write("data: [DONE]\n\n")
+    res.end()
+}
+
+function beginSse(res, cfg) {
+    res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+    })
+    res.flushHeaders?.()
+    // A 9B model can take a while to produce a whole file edit; comments keep
+    // proxies and Continue's HTTP client from timing out the idle connection.
+    const timer = setInterval(() => res.write(": keepalive\n\n"), cfg.keepaliveMs)
+    res.on("close", () => clearInterval(timer))
+    return () => clearInterval(timer)
+}
+
+// ---------- auth ----------
+
+function authMiddleware(cfg) {
+    const expected = Buffer.from(cfg.apiKey)
+    return (req, res, next) => {
+        if (!cfg.apiKey) return next()
+        const given = Buffer.from((req.headers.authorization ?? "").replace(/^Bearer\s+/i, ""))
+        if (given.length === expected.length && crypto.timingSafeEqual(given, expected)) return next()
+        res.status(401).json({ error: { message: "invalid api key", type: "auth_error" } })
     }
 }
 
-// Brings up the Continue.dev bridge on BRAIN_PORT. `ai` is the shared Lily
-// instance (same one Discord/Minecraft/VRChat all use), passed in by
-// start.js rather than imported, so this stays a plain function you can
-// choose to call — no more auto-starting just from importing the file.
-// Returns the http.Server handle so callers can close() it on shutdown.
-export function startContinueBridge(ai) {
+// ---------- server ----------
+
+export function startContinueBridge(_ai, overrides = {}) {
+    const cfg = loadConfig(overrides)
     const app = express()
-    app.use(express.json({ limit: "10mb" }))
+    app.use(express.json({ limit: "50mb" }))
+
+    app.get("/health", (_req, res) => res.json({ ok: true, upstream: cfg.upstream, thinking: cfg.thinking }))
+
+    app.use("/v1", authMiddleware(cfg))
+
+    app.get("/v1/models", (_req, res) => {
+        const now = Math.floor(Date.now() / 1000)
+        res.json({
+            object: "list",
+            data: ["lily-agent", "lily-apply"].map(id => ({ id, object: "model", created: now, owned_by: "lily" })),
+        })
+    })
 
     app.post("/v1/chat/completions", async (req, res) => {
-        const { messages, stream, model, tools } = req.body
-        const isCodeRequest = model?.includes("code")
+        const { messages, model, tools } = req.body ?? {}
+        const stream = req.body?.stream === true
+        const isApply = /apply|code/i.test(model ?? "")
         const hasTools = Array.isArray(tools) && tools.length > 0
-        const channelId = isCodeRequest ? CODE_CHANNEL_ID : CHAT_CHANNEL_ID
+        // Anything that needs post-processing (tool recovery, think stripping,
+        // fence stripping, placeholder checks) is buffered. Plain chat streams
+        // straight through token by token.
+        const mustBuffer = hasTools || isApply || cfg.thinking
 
-        Logger.info("[BRIDGE] model:", model, "| continueTools:", hasTools ? tools.map(t => t.function?.name) : "none")
+        Logger.info(`[BRIDGE] model=${model} stream=${stream} msgs=${messages?.length ?? 0} tools=${hasTools ? tools.map(t => t.function?.name).join(",") : "none"} mode=${isApply ? "apply" : hasTools ? "agent" : "chat"}`)
+
+        const abort = new AbortController()
+        res.on("close", () => { if (!res.writableEnded) abort.abort() })
+        let stopKeepalive = () => { }
 
         try {
-            const continueSystemMsgs = messages.filter(m => m.role === "system").map(m => m.content)
-            const continueExtra = continueSystemMsgs.join("\n\n")
-
-            let systemOverride = null
-            if (isCodeRequest) {
-                // Apply role. Intentionally persona-free, and intentionally NOT
-                // dependent on AGENT_SUFFIX being forwarded correctly — the hard
-                // rules live directly in CODE_SYSTEM_PROMPT above. This model
-                // should never receive tools; if it somehow does, we still don't
-                // route it into the tool-use branch below.
-                systemOverride = [CODE_SYSTEM_PROMPT, continueExtra].filter(Boolean).join("\n\n")
-            } else if (hasTools) {
-                // Agent mode: keep Lily's persona as the base, Continue's own
-                // instructions + tool-use guidance ride along as an addendum —
-                // NOT a replacement. This is what keeps her in character while
-                // she has tool access.
-                const editTool = tools.find(t => t.function?.name === "edit_existing_file")
-                if (editTool) Logger.info("[BRIDGE] edit_existing_file schema:", JSON.stringify(editTool.function.parameters, null, 2))
-
-                systemOverride = ai.buildSystemPrompt([continueExtra, AGENT_SUFFIX].filter(Boolean).join("\n\n"))
+            if (!Array.isArray(messages) || !messages.length) {
+                return res.status(400).json({ error: { message: "messages required" } })
             }
-            // else: plain chat, no tools -> systemOverride stays null -> Lily's
-            // normal persona is used as-is via buildMessagesForOllama's default.
+            const normalized = normalizeMessages(messages, isApply ? [CODE_SYSTEM_PROMPT] : [])
 
-            // Tool calls that write/edit files need room for a whole file's
-            // content as the argument string — 200 tokens (Lily's normal chat
-            // budget) truncates mid-JSON and the tool call fails to parse.
-            // Apply-role responses also need this, since they return a full
-            // file as plain text. Lower temperature too: high temp makes her
-            // narrate a plausible "I did it" in prose instead of reliably
-            // emitting the tool call (agent mode), or improvise/shrink content
-            // instead of copying it exactly (apply mode).
-            const opts = (hasTools || isCodeRequest) ? { tools, max_tokens: 8000, temperature: 0.15 } : {}
-            const toolResults = extractTrailingToolResults(messages)
+            // ----- plain chat: pipe SSE straight through -----
+            if (stream && !mustBuffer) {
+                const up = await callUpstream(cfg, buildUpstreamBody(req.body, cfg, { isApply, stream: true, messages: normalized }), abort.signal)
+                res.writeHead(200, {
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    Connection: "keep-alive",
+                    "X-Accel-Buffering": "no",
+                })
+                Readable.fromWeb(up.body).pipe(res)
+                return
+            }
 
+            if (stream) stopKeepalive = beginSse(res, cfg)
+
+            // ----- buffered path (agent / apply / thinking) -----
+            let msgs = normalized
             let result
-            if (toolResults.length) {
-                Logger.info("[BRIDGE] resuming after tool result(s):", toolResults.map(t => ({
-                    id: t.tool_call_id,
-                    content: t.content?.slice(0, 300)
-                })))
-                result = await ai.resumeToolLoop(channelId, toolResults, systemOverride, opts, [])
-            } else {
-                const userText = extractUserText(messages)
-                result = await ai.chat(channelId, userText, systemOverride, opts, [])
-            }
+            const maxAttempts = isApply && cfg.guard ? 2 : 1
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                const up = await callUpstream(cfg, buildUpstreamBody(req.body, cfg, { isApply, stream: false, messages: msgs }), abort.signal)
+                result = extractResult(await up.json(), tools, isApply)
 
-            // ── Safety net #1: block bad TOOL-CALL edits before Continue
-            // executes them (agent mode only — see function docblock).
-            if (result?.tool_calls?.length) {
-                for (const tc of result.tool_calls) {
-                    const blockReason = checkForCatastrophicOverwrite(tc)
-                    if (blockReason) {
-                        formatResponse(res, { model, stream, text: blockReason, tool_calls: undefined })
-                        return
-                    }
+                if (!isApply || !cfg.guard) break
+                const problem = checkStubBodies(result.text, "the apply output")
+                if (!problem) break
+                warn(`[BRIDGE] apply attempt ${attempt}: ${problem}`)
+                if (attempt < maxAttempts) {
+                    msgs = [...normalized,
+                    { role: "assistant", content: result.text },
+                    { role: "user", content: "Your output contained placeholders instead of real code. Output the COMPLETE file again with every line written out in full, and nothing else." }]
+                } else {
+                    // Refuse instead of letting Continue write a gutted file.
+                    const err = new Error(problem)
+                    err.status = 422
+                    throw err
                 }
             }
 
-            // ── Safety net #2 (weaker): apply-role output goes straight to
-            // disk with no tool call to intercept, so this can only warn.
-            if (isCodeRequest && !result?.tool_calls?.length) {
-                warnIfApplyLooksShrunk(messages, result?.text)
-            }
-
-            Logger.info(
-                "[BRIDGE] reply:", result?.text?.slice(0, 200),
-                "| tool_calls:", result?.tool_calls?.map(tc => tc.function?.name)
-            )
-
-            formatResponse(res, { model, stream, text: result?.text, tool_calls: result?.tool_calls })
+            Logger.info("[BRIDGE] reply:", JSON.stringify((result.text ?? "").slice(0, 160)), "| tool_calls:", result.toolCalls?.map(t => t.function.name) ?? "none", "| finish:", result.finish)
+            stopKeepalive()
+            sendBuffered(res, model, stream, result)
         } catch (err) {
-            Logger.error("[BRIDGE] error:", err.response?.data ?? err.message)
-            res.status(500).json({ error: err.message })
+            stopKeepalive()
+            if (abort.signal.aborted) return
+            Logger.error("[BRIDGE] error:", err.message)
+            if (res.headersSent) {
+                // Mid-SSE: surface the failure as visible text, then close cleanly.
+                sseChunk(res, model, { content: `\n\n[bridge error: ${err.message}]` }, "stop")
+                res.write("data: [DONE]\n\n")
+                res.end()
+            } else {
+                res.status(err.status && err.status >= 400 && err.status < 600 ? err.status : 502)
+                    .json({ error: { message: err.message, type: "bridge_error" } })
+            }
         }
     })
 
-    return app.listen(PORT, () => Logger.info(`🧠 Lily bridge on http://localhost:${PORT}/v1`))
+    const server = app.listen(cfg.port, cfg.host, () =>
+        Logger.info(`🧠 Lily bridge on http://${cfg.host}:${cfg.port}/v1 -> ${cfg.upstream}`))
+    server.requestTimeout = 0       // long generations must not be cut off
+    server.headersTimeout = 60_000
+    return server
 }

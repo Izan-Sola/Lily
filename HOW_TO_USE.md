@@ -64,7 +64,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - There's a bunch of flags you can combine to enable each functionality. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
 
-- All the available flags are : `modded`, `stts`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, `vtube`, `browser`, `n8n`.
+- All the available flags are : `modded`, ``, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, `vtube`, `browser`, `n8n`.
 
 All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the flags you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
 
@@ -157,6 +157,54 @@ All modes are configured through a unified start file (`src/start.js`) that auto
   * **tts.sinkName**: The audio output sink/device used for Lily's voice. This is important if the assistant's voice should be routed to a specific virtual or physical audio device. Example: `lily_voice`
   * **enableWakeWord**: Set this depending on whether you want STTS to wait for a wake word before processing speech.
 
+#### Remote devices
+
+* By default STTS only works on the machine running the brain. [This](https://github.com/Izan-Sola/STTS-Remote-Module) lets any other device (your laptop, for example) talk to the brain through the STTS web app and still use the tools **on that device**. If you ask her to look at your screen from the laptop, she screenshots the laptop, not the server. Same for the VSC tools, the popup and `pi`.
+
+* Nothing changes for local use. If `brain.url` is left empty in the web app, it keeps working on its own with a local `pi`.
+
+* How it works: the web app records and sends the audio to whisper, then sends the text to the brain (`/stts/turn`). The brain runs the turn like it always does, and whenever a tool needs the device it calls back into the web app (`/device/*`). Edit generation, risk checks and approvals stay on the brain, so the control panel is still where you approve risky commands (they show up as `[on laptop] ...`).
+
+* Remote tools use the same flags as local ones, so the brain needs to be started with `stts`, plus `pidev` and/or `coding` if you want those tools.
+
+##### Brain side
+
+* Run `npm install express` if it isn't already a dependency.
+* Add the devices you want to allow in the brain's `config.json`:
+
+```json
+  "devices": {
+    "laptop": { "url": "http://laptop-ip:3131", "token": "a-long-random-secret" }
+  }
+```
+
+  * **devices.\<id\>.url**: Where the web app is reachable from the brain (Tailscale/LAN IP and its port).
+  * **devices.\<id\>.token**: Shared secret, must match the one in the web app. Use something long and random. Requests with a wrong/missing token are rejected, and unknown device ids never fall back to the server.
+
+* The brain listens for remote turns on port `8770`. Change it with the **STTS_REMOTE_PORT** environment variable.
+
+##### Device side
+
+* Run the STTS web app on the device **inside your desktop session** (not as a system service), otherwise screenshots won't work. Open it as `http://localhost:3131`, not by IP, or the browser will block the mic.
+* The device also needs the VS Code companion extension installed (see [VSC integration](#vsc-integration)) if you want the file tools.
+* Edit the web app's `config.json`:
+
+  * **whisper.url**: URL of the Whisper server on the brain machine. Example: `http://100.98.234.114:8775/transcribe`
+  * **brain.url**: URL of the brain's remote endpoint. Example: `http://100.98.234.114:8770/stts`. Leave it as `null` to run standalone with a local `pi`.
+  * **brain.deviceId**: Name of this device. Must match the key used in the brain's `devices`.
+  * **brain.token**: The same secret you put in the brain's config. If it's empty, the `/device/*` endpoints stay closed.
+  * **brain.timeoutMs**: How long to wait for the brain's reply before giving up. Default `660000`.
+  * **companionUrl**: Where the VS Code companion is listening on this device. Default `http://localhost:8768`.
+  * **timeouts**: Per-tool timeouts (`screenshotMs`, `askUserMs`, `piMs`, `companionRequestMs`...). Edits apply without a restart.
+
+* Screenshots on Linux try the tool for your desktop first (GNOME, KDE, grim on Wayland) and then fall back to `scrot`, `maim` and ImageMagick's `import`, so have at least one installed. The input popup needs `zenity` or `kdialog`. Windows works too.
+
+##### Ports
+
+* **8770** on the brain (the device connects to it) and **3131** on the device (the brain connects to it). Both directions need to work. Whisper (**8775**) stays as it was. The companion's port (8768) is localhost only, don't open it.
+* If you use Tailscale, allow them only on that interface, i.e `sudo ufw allow in on tailscale0 to any port 8770 proto tcp`.
+
+> **Note:** Remote turns are processed one at a time, but they aren't coordinated with a turn from the brain's own mic. If you talk to both at the exact same time, screenshots may get mixed up.
 
 
 ### VSC integration

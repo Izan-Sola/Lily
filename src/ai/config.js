@@ -54,5 +54,5 @@ export function getSection(name) {
 
 // Owner Discord ID, used for the trusted-DM check.
 export function getOwnerId() {
-    return getSection("discord").ownerUserId
+    return getSection("discord").discordUserID
 }

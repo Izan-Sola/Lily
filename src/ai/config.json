@@ -49,7 +49,7 @@
     "memoryAutoInjectPersonEnabled": true,
     "memoryAutoInjectPersonLimit": 6,
     "discord": {
-        "ownerUserId": "572121744253386792",
+        "discordUserID": "572121744253386792",
         "mentionRoleId": "1473317878785773684",
         "relayBotName": "Coolade",
         "logChannelName": "hylily-livechat-logs",

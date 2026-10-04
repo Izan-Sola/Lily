@@ -38,7 +38,7 @@ function loadConfig(overrides = {}) {
         upstream: (process.env.UPSTREAM_URL || "http://127.0.0.1:11435/v1").replace(/\/+$/, ""),
         upstreamKey: process.env.UPSTREAM_API_KEY || "",
         upstreamModel: process.env.UPSTREAM_MODEL || "qwen3.5-9b",
-        thinking: process.env.BRIDGE_THINKING === "off",
+        thinking: process.env.BRIDGE_THINKING === "on",
         guard: process.env.BRIDGE_GUARD !== "off",
         keepaliveMs: 10_000,
         ...overrides,
@@ -126,6 +126,35 @@ function normalizeToolCalls(calls) {
     }))
 }
 
+// The model sometimes names or drops an argument (e.g. `path` instead of
+// `filepath`). Map near-miss keys onto the tool's real parameter names so
+// Continue doesn't receive `filepath: undefined` ("Failed to edit undefined").
+const normKey = k => k.toLowerCase().replace(/[^a-z0-9]/g, "")
+const FILEPATH_ALIASES = ["path", "file", "filename", "filepath", "file_path", "targetfile", "target"].map(normKey)
+
+function repairToolCalls(calls, tools) {
+    if (!calls) return calls
+    return calls.map(tc => {
+        const schema = (tools ?? []).find(t => t.function?.name === tc.function.name)?.function?.parameters
+        if (!schema?.properties) return tc
+        let args
+        try { args = JSON.parse(tc.function.arguments) } catch { return tc }
+
+        const byNorm = Object.fromEntries(Object.keys(schema.properties).map(k => [normKey(k), k]))
+        const fixed = {}
+        for (const [k, v] of Object.entries(args)) fixed[byNorm[normKey(k)] ?? k] = v
+
+        if ("filepath" in schema.properties && fixed.filepath === undefined) {
+            const alias = Object.keys(fixed).find(k => FILEPATH_ALIASES.includes(normKey(k)) && !(k in schema.properties))
+            if (alias) { fixed.filepath = fixed[alias]; delete fixed[alias] }
+        }
+
+        const missing = (schema.required ?? []).filter(r => fixed[r] === undefined)
+        if (missing.length) warn(`[BRIDGE] ${tc.function.name} is missing required args: ${missing.join(", ")} (got: ${Object.keys(fixed).join(", ")})`)
+        return { ...tc, function: { ...tc.function, arguments: JSON.stringify(fixed) } }
+    })
+}
+
 function extractResult(data, tools, isApply) {
     const choice = data.choices?.[0] ?? {}
     const msg = choice.message ?? {}
@@ -142,13 +171,21 @@ function extractResult(data, tools, isApply) {
             warn("[BRIDGE] <tool_call> in output but nothing parsed (truncated?). finish_reason:", choice.finish_reason)
         }
     }
+    toolCalls = repairToolCalls(toolCalls, tools)
     if (isApply && !toolCalls) text = stripCodeFence(text)
 
     const finish = toolCalls ? "tool_calls" : choice.finish_reason === "length" ? "length" : "stop"
-    return { text, toolCalls, finish, usage: data.usage }
+    return { text, toolCalls, finish, usage: data.usage, raw: JSON.stringify(msg).slice(0, 600) }
 }
 
 function sseChunk(res, model, delta, finish_reason = null, extra = {}) {
+    if (res.locals.asCompletion) {
+        return res.write(`data: ${JSON.stringify({
+            id: "cmpl-lily", object: "text_completion",
+            created: Math.floor(Date.now() / 1000), model,
+            choices: [{ index: 0, text: delta.content ?? "", finish_reason, logprobs: null }],
+        })}\n\n`)
+    }
     res.write(`data: ${JSON.stringify({
         id: "chatcmpl-lily", object: "chat.completion.chunk",
         created: Math.floor(Date.now() / 1000), model,
@@ -157,6 +194,14 @@ function sseChunk(res, model, delta, finish_reason = null, extra = {}) {
 }
 
 function sendBuffered(res, model, stream, { text, toolCalls, finish, usage }) {
+    if (!stream && res.locals.asCompletion) {
+        return res.json({
+            id: "cmpl-lily", object: "text_completion",
+            created: Math.floor(Date.now() / 1000), model,
+            choices: [{ index: 0, text: text ?? "", finish_reason: finish === "tool_calls" ? "stop" : finish, logprobs: null }],
+            usage: usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        })
+    }
     if (!stream) {
         return res.json({
             id: "chatcmpl-lily", object: "chat.completion",
@@ -207,6 +252,10 @@ function authMiddleware(cfg) {
 export function startContinueBridge(_ai, overrides = {}) {
     const cfg = loadConfig(overrides)
     const app = express()
+    app.use((req, _res, next) => {
+        Logger.info(`[BRIDGE] ${req.method} ${req.originalUrl} from=${req.socket.remoteAddress}`)
+        next()
+    })
     app.use(express.json({ limit: "50mb" }))
 
     app.get("/health", (_req, res) => res.json({ ok: true, upstream: cfg.upstream, thinking: cfg.thinking }))
@@ -221,10 +270,11 @@ export function startContinueBridge(_ai, overrides = {}) {
         })
     })
 
-    app.post("/v1/chat/completions", async (req, res) => {
+    const handleChat = async (req, res) => {
         const { messages, model, tools } = req.body ?? {}
         const stream = req.body?.stream === true
-        const isApply = /apply|code/i.test(model ?? "")
+        // Legacy /v1/completions is what Continue uses for apply/edit, so treat it as apply.
+        const isApply = res.locals.asCompletion === true || /apply|code/i.test(model ?? "")
         const hasTools = Array.isArray(tools) && tools.length > 0
         // Anything that needs post-processing (tool recovery, think stripping,
         // fence stripping, placeholder checks) is buffered. Plain chat streams
@@ -232,6 +282,11 @@ export function startContinueBridge(_ai, overrides = {}) {
         const mustBuffer = hasTools || isApply || cfg.thinking
 
         Logger.info(`[BRIDGE] from=${req.socket.remoteAddress} model=${model} stream=${stream} msgs=${messages?.length ?? 0} tools=${hasTools ? tools.map(t => t.function?.name).join(",") : "none"} mode=${isApply ? "apply" : hasTools ? "agent" : "chat"}`)
+        if (Array.isArray(messages) && messages.length) {
+            const last = messages[messages.length - 1]
+            const lt = typeof last.content === "string" ? last.content : JSON.stringify(last.content)
+            Logger.info(`[BRIDGE] last=${last.role}: ${JSON.stringify((lt ?? "").slice(0, 300))}`)
+        }
 
         const abort = new AbortController()
         res.on("close", () => { if (!res.writableEnded) abort.abort() })
@@ -282,7 +337,13 @@ export function startContinueBridge(_ai, overrides = {}) {
                 }
             }
 
-            Logger.info("[BRIDGE] reply:", JSON.stringify((result.text ?? "").slice(0, 160)), "| tool_calls:", result.toolCalls?.map(t => `${t.function.name}(${t.function.arguments.slice(0, 200)})`) ?? "none", "| finish:", result.finish)
+            const calls = result.toolCalls?.map(t => {
+                let a = {}
+                try { a = JSON.parse(t.function.arguments) } catch { }
+                return `${t.function.name}{keys=${Object.keys(a).join(",")} filepath=${JSON.stringify(a.filepath)} len=${t.function.arguments.length}}`
+            }).join(" ") ?? "none"
+            Logger.info(`[BRIDGE] reply finish=${result.finish} text=${JSON.stringify((result.text ?? "").slice(0, 160))} tool_calls=${calls}`)
+            if (!result.text && !result.toolCalls) warn(`[BRIDGE] EMPTY reply from upstream, raw message: ${result.raw}`)
             stopKeepalive()
             sendBuffered(res, model, stream, result)
         } catch (err) {
@@ -299,6 +360,50 @@ export function startContinueBridge(_ai, overrides = {}) {
                     .json({ error: { message: err.message, type: "bridge_error" } })
             }
         }
+    }
+
+    app.post("/v1/chat/completions", handleChat)
+
+    // Continue calls this legacy endpoint for apply/edit. Convert the raw
+    // prompt into a chat message and answer in text_completion format.
+    app.post("/v1/completions", (req, res) => {
+        const b = req.body ?? {}
+        const prompt = Array.isArray(b.prompt) ? b.prompt.join("\n") : b.prompt
+        if (typeof prompt !== "string" || !prompt) {
+            return res.status(400).json({ error: { message: "prompt required" } })
+        }
+        res.locals.asCompletion = true
+        if (b.suffix) {
+            // Fill-in-the-middle autocomplete isn't supported by a chat-tuned 9B model.
+            warn("[BRIDGE] FIM/autocomplete request ignored (suffix present)")
+            if (b.stream === true) {
+                res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" })
+                sseChunk(res, b.model, { content: "" }, "stop")
+                res.write("data: [DONE]\n\n")
+                return res.end()
+            }
+            return sendBuffered(res, b.model, false, { text: "", finish: "stop" })
+        }
+        req.body = {
+            model: b.model,
+            messages: [{ role: "user", content: prompt }],
+            stream: b.stream === true,
+            max_tokens: b.max_tokens,
+            temperature: b.temperature,
+            top_p: b.top_p,
+            stop: b.stop,
+        }
+        return handleChat(req, res)
+    })
+
+    app.use((req, res) => {
+        warn(`[BRIDGE] 404 ${req.method} ${req.originalUrl}`)
+        res.status(404).json({ error: { message: `not found: ${req.method} ${req.originalUrl}` } })
+    })
+    // eslint-disable-next-line no-unused-vars
+    app.use((err, req, res, _next) => {
+        Logger.error(`[BRIDGE] request failed before handler: ${err.message}`)
+        res.status(err.status || 400).json({ error: { message: err.message } })
     })
 
     const server = app.listen(cfg.port, cfg.host, () =>

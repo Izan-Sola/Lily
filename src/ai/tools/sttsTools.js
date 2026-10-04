@@ -1,190 +1,34 @@
 // discord/tools/sttsTools.js
-import { execFile, spawn } from 'node:child_process'
-import { promisify } from 'node:util'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import path from 'node:path'
-import axios from 'axios'
 import { Logger } from '../../utils/Logger.js'
 import { ok, err } from './toolHelpers.js'
 import { checkShrinkRatio, checkStubBodies } from '../../coding/codeEditShared.js'
 import { approvalStore } from '../../ai/tools/riskyActionsManagement/approvalStore.js'
 import { classifyRisk } from './riskyActionsManagement/riskClassifier.js'
 import { getSection } from '../config.js'
+import { createLocalDevice } from './deviceLocal.js'
+import { getDevice, deviceContext } from './remoteDevices.js'
 
 const SUBMODULES = ['screenshot', 'pidev', 'coding']
-const execFileAsync = promisify(execFile)
 
 // Timeouts come from config.json "timeouts"; read on each access so edits apply live.
 const T = new Proxy({}, { get: (_, key) => getSection('timeouts')[key] })
 
-// ─── Desktop/session detection ───────────────────────────────────────────
-
-function detectDesktop() {
-    const de = (process.env.XDG_CURRENT_DESKTOP || process.env.DESKTOP_SESSION || '').toLowerCase()
-    const sessionType = (process.env.XDG_SESSION_TYPE || '').toLowerCase()
-    return {
-        isGnome: de.includes('gnome'),
-        isKde: de.includes('kde') || de.includes('plasma'),
-        isWayland: sessionType === 'wayland',
-        de,
-        sessionType,
-    }
-}
-
-async function waitForFile(filePath, timeoutMs = T.fileAppearMs, pollMs = T.fileAppearPollMs) {
-    const deadline = Date.now() + timeoutMs
-    let lastSize = -1
-    let stableCount = 0
-    while (Date.now() < deadline) {
-        try {
-            const s = await stat(filePath)
-            if (s.size > 0) {
-                if (s.size === lastSize) {
-                    stableCount++
-                    if (stableCount >= 2) return true
-                } else {
-                    stableCount = 0
-                    lastSize = s.size
-                }
-            }
-        } catch { /* not there yet */ }
-        await new Promise(resolve => setTimeout(resolve, pollMs))
-    }
-    return false
-}
-
-// ─── Screenshot capture strategies ───────────────────────────────────────
-
-async function captureWindows(outPath) {
-    const psPath = outPath.replace(/\\/g, '\\\\')
-    const script = [
-        'Add-Type -AssemblyName System.Windows.Forms',
-        'Add-Type -AssemblyName System.Drawing',
-        '$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen',
-        '$bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height',
-        '$graphics = [System.Drawing.Graphics]::FromImage($bmp)',
-        '$graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)',
-        `$bmp.Save('${psPath}', [System.Drawing.Imaging.ImageFormat]::Png)`,
-        '$graphics.Dispose()',
-        '$bmp.Dispose()',
-    ].join('\n')
-
-    await execFileAsync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', script],
-        { timeout: T.screenshotMs },
-    )
-}
-
-async function captureGnomeDbus(outPath) {
-    const { stdout } = await execFileAsync('gdbus', [
-        'call', '--session',
-        '--dest', 'org.gnome.Shell.Screenshot',
-        '--object-path', '/org/gnome/Shell/Screenshot',
-        '--method', 'org.gnome.Shell.Screenshot.Screenshot',
-        'false', 'false', outPath,
-    ], { timeout: T.screenshotMs })
-
-    if (!/^\(true,/.test(stdout.trim())) {
-        throw new Error(`gnome-shell reported failure: ${stdout.trim()}`)
-    }
-}
-
-async function captureGnomeScreenshotCli(outPath) {
-    await execFileAsync('gnome-screenshot', ['-f', outPath], { timeout: T.screenshotMs })
-}
-
-async function captureSpectacle(outPath) {
-    await execFileAsync('spectacle', ['-b', '-n', '-o', outPath], { timeout: T.screenshotMs })
-}
-
-async function captureGrim(outPath) {
-    await execFileAsync('grim', [outPath], { timeout: T.screenshotMs })
-}
-
-async function captureScrot(outPath) {
-    await execFileAsync('scrot', ['-o', outPath], { timeout: T.screenshotMs })
-}
-
-async function captureMaim(outPath) {
-    await execFileAsync('maim', [outPath], { timeout: T.screenshotMs })
-}
-
-async function captureImportMagick(outPath) {
-    await execFileAsync('import', ['-window', 'root', outPath], { timeout: T.screenshotMs })
-}
-
-// ─── Ask-the-user popup strategies ───────────────────────────────────────
-
-function cancelError() {
-    return Object.assign(new Error('cancelled'), { cancelled: true })
-}
-
-async function askWindows(prompt) {
-    const script = [
-        'Add-Type -AssemblyName Microsoft.VisualBasic',
-        '$prompt = $env:LILY_ASK_PROMPT',
-        '$result = [Microsoft.VisualBasic.Interaction]::InputBox($prompt, "Lily needs your input", "")',
-        'Write-Output $result',
-    ].join('\n')
-
-    const { stdout } = await execFileAsync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', script],
-        {
-            timeout: T.askUserMs,
-            env: { ...process.env, LILY_ASK_PROMPT: prompt },
-        },
-    )
-
-    const value = stdout.replace(/\r?\n$/, '').trim()
-    if (!value) throw cancelError()
-    return value
-}
-
-async function askKdialog(prompt) {
-    let stdout
-    try {
-        ({ stdout } = await execFileAsync(
-            'kdialog',
-            ['--title', 'Lily needs your input', '--inputbox', prompt],
-            { timeout: T.askUserMs },
-        ))
-    } catch (e) {
-        if (e.code === 1 && !e.killed) throw cancelError()
-        throw e
-    }
-    const value = stdout.trim()
-    if (!value) throw cancelError()
-    return value
-}
-
-async function askZenity(prompt) {
-    let stdout
-    try {
-        ({ stdout } = await execFileAsync(
-            'zenity',
-            ['--entry', '--title=Lily needs your input', `--text=${prompt}`],
-            { timeout: T.askUserMs },
-        ))
-    } catch (e) {
-        if (e.code === 1 && !e.killed) throw cancelError()
-        throw e
-    }
-    const value = stdout.trim()
-    if (!value) throw cancelError()
-    return value
-}
-
 // ─── STTS Tool Executor ──────────────────────────────────────────────────
+//
+// Anything that touches "the user's machine" (screen, VS Code, popup, pi)
+// goes through a device. context.deviceId picks it: unset → this machine
+// (local voice, unchanged); "laptop" etc. → that remote web app.
+// Edit generation, risk classification and approvals always stay on the brain.
 class SttsToolExecutor {
     constructor(sttsEnabled = false, pidevEnabled = false, codingEnabled = false, editCallback = null) {
         this.sttsEnabled = !!sttsEnabled
         this.pidevEnabled = !!pidevEnabled
         this.codingEnabled = !!codingEnabled
         this._editCallback = editCallback
-        this._vscodeCompanionUrl = process.env.VSCODE_COMPANION_URL || 'http://localhost:8768'
+        this._local = createLocalDevice({
+            timeouts: T,
+            companionUrl: process.env.VSCODE_COMPANION_URL || 'http://localhost:8768',
+        })
         this._available = {
             screenshot: !!sttsEnabled,
             pidev: !!(sttsEnabled && pidevEnabled),
@@ -237,122 +81,39 @@ class SttsToolExecutor {
         return images
     }
 
-    async getScreenshot() {
+    setApprovalCallbacks({ onApprovalNeeded } = {}) {
+        if (onApprovalNeeded) this._onApprovalNeeded = onApprovalNeeded
+        // The tool call blocks until the approval resolves, so no result callback is needed.
+    }
+
+    _active(key) {
+        return this._available[key] && this._enabled[key]
+    }
+
+    // ─── screenshot ─────────────────────────────────────────────────────
+
+    async getScreenshot(dev) {
         if (!this._active('screenshot')) return err("Screenshot tool isn't enabled.")
-
-        let dir
         try {
-            dir = await mkdtemp(path.join(tmpdir(), 'lily-shot-'))
-            const file = path.join(dir, 'screenshot.png')
-
-            const usedStrategy = await this._captureScreenshot(file)
-
-            const buf = await readFile(file)
-            this._pendingImages.push({ base64: buf.toString('base64'), mediaType: 'image/png' })
-
-            Logger.info(`Captured screenshot via ${usedStrategy} (${(buf.length / 1024).toFixed(0)} KB)`, "STTS")
+            const { buffer, via } = await dev.screenshot()
+            this._pendingImages.push({ base64: buffer.toString('base64'), mediaType: 'image/png' })
+            Logger.info(`Captured screenshot via ${via} (${(buffer.length / 1024).toFixed(0)} KB)`, "STTS")
             return ok("Screenshot captured, it'll be attached to the conversation for you to see.")
         } catch (e) {
             Logger.error(`Screenshot failed: ${e.message}`, "STTS")
             return err("Couldn't capture the screen.")
-        } finally {
-            if (dir) await rm(dir, { recursive: true, force: true }).catch(() => { })
         }
-    }
-
-    setApprovalCallbacks({ onApprovalNeeded, onApprovalResult } = {}) {
-        if (onApprovalNeeded) this._onApprovalNeeded = onApprovalNeeded
-        // onApprovalResult is no longer used — the tool call itself now blocks
-        // until the approval resolves, and its return value goes straight back
-        // to the model. Kept in the signature for backward compatibility with
-        // existing callers.
-    }
-
-    _screenshotStrategies() {
-        if (process.platform === 'win32') {
-            return [['windows', captureWindows]]
-        }
-
-        const { isGnome, isKde, isWayland } = detectDesktop()
-        const strategies = []
-        const seen = new Set()
-        const add = (name, fn) => {
-            if (seen.has(name)) return
-            seen.add(name)
-            strategies.push([name, fn])
-        }
-
-        if (isGnome) {
-            add('gnome-dbus', captureGnomeDbus)
-            add('gnome-screenshot', captureGnomeScreenshotCli)
-        }
-        if (isKde) {
-            add('spectacle', captureSpectacle)
-        }
-        if (isWayland && !isGnome) {
-            add('grim', captureGrim)
-        }
-        if (!isGnome) {
-            add('gnome-dbus', captureGnomeDbus)
-            add('gnome-screenshot', captureGnomeScreenshotCli)
-        }
-        if (!isKde) {
-            add('spectacle', captureSpectacle)
-        }
-        if (isWayland) {
-            add('grim', captureGrim)
-        }
-        add('scrot', captureScrot)
-        add('maim', captureMaim)
-        add('import', captureImportMagick)
-
-        return strategies
-    }
-
-    async _captureScreenshot(outPath) {
-        const strategies = this._screenshotStrategies()
-        const failures = []
-
-        for (const [name, run] of strategies) {
-            try {
-                await run(outPath)
-            } catch (e) {
-                failures.push(`${name}: ${e.message}`)
-                continue
-            }
-
-            if (await waitForFile(outPath)) {
-                return name
-            }
-            failures.push(`${name}: exited cleanly but no file appeared`)
-        }
-
-        throw new Error(
-            failures.length
-                ? `No screenshot tool available. Tried: ${failures.join(' | ')}`
-                : 'No screenshot tool available'
-        )
     }
 
     // ─── run_system_command ─────────────────────────────────────────────
     //
-    // Flow (this is the whole point of this method):
     //   1. classifyRisk(prompt) against riskConfig.json.
-    //   2. NOT risky  -> hand straight to pi. Return pi's output.
+    //   2. NOT risky  -> hand straight to pi (on the target device).
     //   3. Risky      -> create an entry in approvalStore, notify the control
-    //      panel via _onApprovalNeeded, and BLOCK until the user clicks
-    //      approve/deny (or the 10-min TTL auto-denies). Then:
-    //        - denied  -> return an error to the model, nothing runs.
-    //        - approved-> hand to pi, return pi's output.
-    //
-    // This makes approval work identically whether the request originated
-    // from a Discord voice turn, a DM, or any other channel that routes
-    // through this executor. The control panel is the single UI for
-    // resolving approvals because approvalStore is a module singleton.
-    async runSystemCommand(args = {}, context = {}) {
-        if (!this._active('pidev')) {
-            return err("System command tool isn't enabled.")
-        }
+    //      panel via _onApprovalNeeded, and BLOCK until approve/deny (or the
+    //      10-min TTL auto-denies). Denied -> error to the model, nothing runs.
+    async runSystemCommand(args = {}, context = {}, dev) {
+        if (!this._active('pidev')) return err("System command tool isn't enabled.")
 
         const { prompt } = args
         if (!prompt?.trim()) return err("prompt required.")
@@ -361,13 +122,14 @@ class SttsToolExecutor {
 
         if (!risky) {
             Logger.info(`Not risky, delegating to pi: ${prompt.slice(0, 200)}`, "STTS")
-            return this._executeViaPi(prompt)
+            return this._executeViaPi(prompt, dev)
         }
 
         Logger.warning(`Risky command flagged (matched "${matched}"): ${prompt.slice(0, 200)}`, "APPROVAL")
 
         const approval = await this._requestApproval({
-            instruction: prompt,
+            // The control panel should show which machine this will run on.
+            instruction: context.deviceId ? `[on ${context.deviceId}] ${prompt}` : prompt,
             channelId: context.channelId,
             matched,
         })
@@ -378,13 +140,11 @@ class SttsToolExecutor {
         }
 
         Logger.info(`Approval [${approval.id}] granted, running via pi: ${prompt.slice(0, 200)}`, "APPROVAL")
-        return this._executeViaPi(prompt)
+        return this._executeViaPi(prompt, dev)
     }
 
-    // Creates the approval entry, pings the control panel, and returns a
-    // promise that resolves with the {approved, reason} payload once the
-    // user (or the TTL) resolves it. Filtered by id so concurrent approval
-    // requests don't cross-resolve each other.
+    // Creates the approval entry, pings the control panel, and resolves once the
+    // user (or the TTL) resolves it. Filtered by id so concurrent requests don't cross.
     _requestApproval({ instruction, channelId, matched }) {
         return new Promise((resolve) => {
             const id = approvalStore.create({ instruction, channelId, matched })
@@ -392,9 +152,7 @@ class SttsToolExecutor {
             try {
                 this._onApprovalNeeded?.({ id, instruction, channelId, matched })
             } catch (e) {
-                // If the push callback explodes, we still want the approval
-                // visible in the control panel via its /api/approvals poll —
-                // so log and continue rather than rejecting.
+                // Still visible in the control panel via its /api/approvals poll.
                 Logger.error(`onApprovalNeeded callback threw: ${e.message}`, "APPROVAL")
             }
 
@@ -407,9 +165,9 @@ class SttsToolExecutor {
         })
     }
 
-    async _executeViaPi(prompt) {
+    async _executeViaPi(prompt, dev) {
         try {
-            const report = await this._runPi(prompt)
+            const report = await dev.runPi(prompt)
             Logger.success(`pi finished: ${report.slice(0, 200)}`, "STTS")
             return ok(report || "Done, no output.")
         } catch (e) {
@@ -420,117 +178,41 @@ class SttsToolExecutor {
         }
     }
 
-    _runPi(prompt) {
-        return new Promise((resolve, reject) => {
-            const child = spawn('pi', ['-p', prompt], {
-                stdio: ['ignore', 'pipe', 'pipe'],
-            })
+    // ─── ask-the-user popup ─────────────────────────────────────────────
 
-            let stdout = ''
-            let stderr = ''
-            child.stdout.on('data', d => { stdout += d })
-            child.stderr.on('data', d => { stderr += d })
-
-            const timer = setTimeout(() => {
-                child.kill('SIGTERM')
-                reject(new Error('timeout'))
-            }, T.piMs)
-
-            child.on('error', e => {
-                clearTimeout(timer)
-                reject(e)
-            })
-
-            child.on('close', (code) => {
-                clearTimeout(timer)
-                if (code === 0) resolve(stdout.trim() || stderr.trim())
-                else reject(new Error(stderr.trim() || `pi exited with code ${code}`))
-            })
-        })
-    }
-
-    // ─── Ask-the-user popup ─────────────────────────────────────────────
-
-    _askStrategies() {
-        if (process.platform === 'win32') {
-            return [['windows-inputbox', askWindows]]
-        }
-
-        const { isGnome, isKde } = detectDesktop()
-        const strategies = []
-        const seen = new Set()
-        const add = (name, fn) => {
-            if (seen.has(name)) return
-            seen.add(name)
-            strategies.push([name, fn])
-        }
-
-        if (isKde) {
-            add('kdialog', askKdialog)
-            add('zenity', askZenity)
-        } else if (isGnome) {
-            add('zenity', askZenity)
-            add('kdialog', askKdialog)
-        } else {
-            add('zenity', askZenity)
-            add('kdialog', askKdialog)
-        }
-
-        return strategies
-    }
-
-    async askUserForInput(args = {}) {
-        if (!this._active('pidev')) {
-            return err("Ask-user tool isn't enabled.")
-        }
+    async askUserForInput(args = {}, dev) {
+        if (!this._active('pidev')) return err("Ask-user tool isn't enabled.")
 
         const { prompt } = args
         if (!prompt?.trim()) return err("prompt required.")
 
         Logger.info(`Asking user for exact input: ${prompt.slice(0, 200)}`, "STTS")
-
-        const strategies = this._askStrategies()
-        const failures = []
-
-        for (const [name, run] of strategies) {
-            try {
-                const value = await run(prompt)
-                Logger.success(`User supplied via ${name}: ${value.slice(0, 200)}`, "STTS")
-                return ok(`The user typed exactly: ${value}`)
-            } catch (e) {
-                if (e.cancelled) {
-                    Logger.warning(`User cancelled the ${name} popup`, "STTS")
-                    return err("The user closed the popup without typing anything. Don't ask again this turn — carry on with what you have, or ask out loud.")
-                }
-                failures.push(`${name}: ${e.message}`)
-                continue
+        try {
+            const value = await dev.askUser(prompt)
+            Logger.success(`User supplied: ${value.slice(0, 200)}`, "STTS")
+            return ok(`The user typed exactly: ${value}`)
+        } catch (e) {
+            if (e.cancelled) {
+                Logger.warning("User cancelled the popup", "STTS")
+                return err("The user closed the popup without typing anything. Don't ask again this turn — carry on with what you have, or ask out loud.")
             }
+            Logger.error(`Ask popup failed: ${e.message}`, "STTS")
+            return err("Couldn't show the popup on this system.")
         }
-
-        Logger.error(`No input-popup tool available. Tried: ${failures.join(' | ')}`, "STTS")
-        return err("Couldn't show the popup on this system.")
     }
 
     // ─── VSCode editing ─────────────────────────────────────────────────
 
-    async editActiveFile(args = {}) {
-        if (!this._active('coding')) {
-            return err("VSCode editing tool isn't enabled.")
-        }
-        if (!this._editCallback) {
-            return err("Editing isn't wired up right now.")
-        }
+    async editActiveFile(args = {}, dev) {
+        if (!this._active('coding')) return err("VSCode editing tool isn't enabled.")
+        if (!this._editCallback) return err("Editing isn't wired up right now.")
 
         const { instruction } = args
         if (!instruction?.trim()) return err("instruction required.")
 
         let active
         try {
-            const { data } = await axios.get(
-                `${this._vscodeCompanionUrl}/active-file`,
-                { timeout: T.companionRequestMs }
-            )
-            active = data
+            active = await dev.activeFile()
         } catch (e) {
             Logger.error(`Couldn't reach VSCode companion: ${e.message}`, "STTS")
             return err("Couldn't reach VSCode — is it open with the companion extension installed?")
@@ -560,11 +242,7 @@ class SttsToolExecutor {
         }
 
         try {
-            await axios.post(
-                `${this._vscodeCompanionUrl}/apply-edit`,
-                { path: active.path, content: newContent },
-                { timeout: T.companionRequestMs }
-            )
+            await dev.applyEdit(active.path, newContent)
         } catch (e) {
             Logger.error(`Apply failed: ${e.message}`, "STTS")
             return err("Generated the edit but couldn't apply it in VSCode.")
@@ -575,10 +253,8 @@ class SttsToolExecutor {
         return ok(`Edited ${fileName}. It's applied in the editor as unsaved changes — check it over before saving.`)
     }
 
-    async createFile(args = {}) {
-        if (!this._active('coding')) {
-            return err("VSCode file-creation tool isn't enabled.")
-        }
+    async createFile(args = {}, dev) {
+        if (!this._active('coding')) return err("VSCode file-creation tool isn't enabled.")
 
         const { path: filePath, content, overwrite } = args
         if (!filePath?.trim()) return err("path required.")
@@ -587,14 +263,9 @@ class SttsToolExecutor {
 
         let data
         try {
-            const { data: resData } = await axios.post(
-                `${this._vscodeCompanionUrl}/create-file`,
-                { path: filePath, content: content ?? '', overwrite: !!overwrite },
-                { timeout: T.companionRequestMs }
-            )
-            data = resData
+            data = await dev.createFile(filePath, content, overwrite)
         } catch (e) {
-            if (e.response?.status === 409) {
+            if (e.status === 409) {
                 return err(`A file already exists at ${filePath}. Ask the user if they want it overwritten, then retry with overwrite set to true.`)
             }
             Logger.error(`Couldn't reach VSCode companion: ${e.message}`, "STTS")
@@ -606,18 +277,12 @@ class SttsToolExecutor {
         return ok(`Created ${fileName}${content ? ' with the given content' : ' (empty)'}. It's open in the editor now.`)
     }
 
-    async readActiveFile() {
-        if (!this._active('coding')) {
-            return err("VSCode reading tool isn't enabled.")
-        }
+    async readActiveFile(dev) {
+        if (!this._active('coding')) return err("VSCode reading tool isn't enabled.")
 
         let active
         try {
-            const { data } = await axios.get(
-                `${this._vscodeCompanionUrl}/active-file`,
-                { timeout: T.companionRequestMs }
-            )
-            active = data
+            active = await dev.activeFile()
         } catch (e) {
             Logger.error(`Couldn't reach VSCode companion: ${e.message}`, "STTS")
             return err("Couldn't reach VSCode — is it open with the companion extension installed?")
@@ -629,18 +294,20 @@ class SttsToolExecutor {
         return ok(`File: ${active.path}\n\n${active.content}`)
     }
 
-    _active(key) {
-        return this._available[key] && this._enabled[key]
-    }
-
     async execute(name, args, context = {}) {
+        // Set by the remote /turn route (AsyncLocalStorage); unset for local voice.
+        const deviceId = context.deviceId ?? deviceContext.getStore()?.deviceId
+        context = { ...context, deviceId }
+        const dev = getDevice(deviceId, this._local)
+        if (!dev) return err(`Unknown device "${deviceId}" — nothing was done.`)
+
         switch (name) {
-            case "get_screenshot": return this.getScreenshot()
-            case "run_system_command": return this.runSystemCommand(args, context)
-            case "ask_user_for_input": return this.askUserForInput(args)
-            case "edit_active_vscode_file": return this.editActiveFile(args)
-            case "read_active_vscode_file": return this.readActiveFile()
-            case "create_vscode_file": return this.createFile(args)
+            case "get_screenshot": return this.getScreenshot(dev)
+            case "run_system_command": return this.runSystemCommand(args, context, dev)
+            case "ask_user_for_input": return this.askUserForInput(args, dev)
+            case "edit_active_vscode_file": return this.editActiveFile(args, dev)
+            case "read_active_vscode_file": return this.readActiveFile(dev)
+            case "create_vscode_file": return this.createFile(args, dev)
             default:
                 Logger.warning(`Unknown: ${name}`, "TOOL")
                 return err(`Unknown tool: ${name}`)

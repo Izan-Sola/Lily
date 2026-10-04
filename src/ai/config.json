@@ -197,5 +197,11 @@
             "sshUser": "healthssh",
             "scriptMode": "stdin"
         }
+    },
+    "devices": {
+        "laptop": {
+            "url": "http://100.79.58.32:3131",
+            "token": "526e785f9f24de85322a632d67e367eeda4ecf5e04ffd3f2acec10b07b784afc"
+        }
     }
 }

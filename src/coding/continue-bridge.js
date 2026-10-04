@@ -38,7 +38,7 @@ function loadConfig(overrides = {}) {
         upstream: (process.env.UPSTREAM_URL || "http://127.0.0.1:11435/v1").replace(/\/+$/, ""),
         upstreamKey: process.env.UPSTREAM_API_KEY || "",
         upstreamModel: process.env.UPSTREAM_MODEL || "qwen3.5-9b",
-        thinking: process.env.BRIDGE_THINKING === "on",
+        thinking: process.env.BRIDGE_THINKING === "off",
         guard: process.env.BRIDGE_GUARD !== "off",
         keepaliveMs: 10_000,
         ...overrides,
@@ -231,7 +231,7 @@ export function startContinueBridge(_ai, overrides = {}) {
         // straight through token by token.
         const mustBuffer = hasTools || isApply || cfg.thinking
 
-        Logger.info(`[BRIDGE] model=${model} stream=${stream} msgs=${messages?.length ?? 0} tools=${hasTools ? tools.map(t => t.function?.name).join(",") : "none"} mode=${isApply ? "apply" : hasTools ? "agent" : "chat"}`)
+        Logger.info(`[BRIDGE] from=${req.socket.remoteAddress} model=${model} stream=${stream} msgs=${messages?.length ?? 0} tools=${hasTools ? tools.map(t => t.function?.name).join(",") : "none"} mode=${isApply ? "apply" : hasTools ? "agent" : "chat"}`)
 
         const abort = new AbortController()
         res.on("close", () => { if (!res.writableEnded) abort.abort() })
@@ -282,7 +282,7 @@ export function startContinueBridge(_ai, overrides = {}) {
                 }
             }
 
-            Logger.info("[BRIDGE] reply:", JSON.stringify((result.text ?? "").slice(0, 160)), "| tool_calls:", result.toolCalls?.map(t => t.function.name) ?? "none", "| finish:", result.finish)
+            Logger.info("[BRIDGE] reply:", JSON.stringify((result.text ?? "").slice(0, 160)), "| tool_calls:", result.toolCalls?.map(t => `${t.function.name}(${t.function.arguments.slice(0, 200)})`) ?? "none", "| finish:", result.finish)
             stopKeepalive()
             sendBuffered(res, model, stream, result)
         } catch (err) {

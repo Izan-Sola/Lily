@@ -1,3 +1,16 @@
+// start.js
+import 'dotenv/config'
+import { createBot } from "./discord/bot.js"
+import { config } from "./utils/config.js"
+import { getConfig } from './ai/config.js'
+import { Logger } from "./utils/Logger.js"
+import { parseFlags, getConfigFromFlags, describeConfig, isVtubeEnabled, isModdedEnabled, isMineflayerEnabled } from "./startUtils.js"
+import * as stts from './STTS/index.js'
+import { startVoiceAssistant, stopVoiceAssistant } from './voiceAssistant/index.js'
+import { Lily } from './ai/Lily.js'
+import { loadAllTriggers } from './n8n/loadTriggers.js'
+import { startControlPanel } from './controlPanel/server.js'
+
 // ---------- 1. Parse flags & build config ----------
 const flags = parseFlags()
 let runConfig

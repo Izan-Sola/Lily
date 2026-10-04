@@ -12,7 +12,7 @@
 - still cant bend water and chi.
 - no idea when I will bother working on the mineflayer implementation
 - should test more the vtubing on youtube
-- Thinking of reworking memory? Maybe make a database divided in categories? System, People, Lily (herself), Events... idk
+- ~~Thinking of reworking memory? Maybe make a database divided in categories? System, People, Lily (herself), Events... idk~~ kinda did some stuff
 
 
 - am i ever gonna start that mc series playing with my AI daughter?

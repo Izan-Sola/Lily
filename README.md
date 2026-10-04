@@ -4,7 +4,7 @@
 
 ### So whats the main point of this project? Make a modular brain for a small AI model to do a bunch of stuff.
 
-- Related: https://github.com/Izan-Sola/Lily-Minecraft , https://github.com/Izan-Sola/LilyBlog , https://github.com/Izan-Sola/LilyGnomeWidget , https://github.com/Izan-Sola/LilyVrchat
+- Related: https://github.com/Izan-Sola/Lily-Minecraft, https://github.com/Izan-Sola/STTS-Remote-Module https://github.com/Izan-Sola/LilyBlog, https://github.com/Izan-Sola/LilyGnomeWidget , https://github.com/Izan-Sola/LilyVrchat
 
 
 ##### Notes or todos 

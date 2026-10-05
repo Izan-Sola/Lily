@@ -159,7 +159,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 #### Remote devices
 
-* By default STTS only works on the machine running the brain. [This](https://github.com/Izan-Sola/STTS-Remote-Module) lets any other device (your laptop, for example) talk to the brain through the STTS web app and still use the tools **on that device**. If you ask her to look at your screen from the laptop, she screenshots the laptop, not the server. Same for the VSC tools, the popup and `pi`.
+* By default STTS only works on the machine running the brain. [This](https://github.com/Izan-Sola/STTS-Remote-Module) lets any other device (your laptop, for example) talk to the brain through the STTS web app and still use the tools **on that device**. If you ask her to look at your screen from the laptop, she screenshots the laptop, not the server. Same for the VSC tools, the popup and `pi`. Oh, and you also need to install the VSC extension located in `src/ai/coding/`.
 
 * Nothing changes for local use. If `brain.url` is left empty in the web app, it keeps working on its own with a local `pi`.
 

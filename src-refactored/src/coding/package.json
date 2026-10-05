@@ -1,0 +1,40 @@
+{
+    "name": "lily-companion",
+    "displayName": "Lily Companion",
+    "description": "Local HTTP bridge so Lily can read and edit the active VS Code file by voice.",
+    "version": "0.2.0",
+    "publisher": "izan",
+    "license": "UNLICENSED",
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "main": "./extension.js",
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "contributes": {
+        "configuration": {
+            "title": "Lily Companion",
+            "properties": {
+                "lilyCompanion.port": {
+                    "type": "number",
+                    "default": 8768,
+                    "description": "Localhost port the companion listens on."
+                },
+                "lilyCompanion.token": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional shared secret. If set, callers must send it as a Bearer token."
+                },
+                "lilyCompanion.allowOutsideWorkspace": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Allow edits and file creation outside the open workspace folders."
+                }
+            }
+        }
+    }
+}

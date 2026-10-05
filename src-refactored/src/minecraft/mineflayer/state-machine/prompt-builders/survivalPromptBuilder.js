@@ -1,0 +1,173 @@
+function formatEntity(e, lilyPos) {
+    const pos = e.position
+    const dist = lilyPos ? Math.floor(Math.hypot(pos.x - lilyPos.x, pos.z - lilyPos.z)) : '?'
+    return `- ${e.name ?? e.mobType} (id: ${e.id}) — ${dist} blocks away at (${Math.floor(pos.x)}, ${Math.floor(pos.y)}, ${Math.floor(pos.z)})`
+}
+
+function formatBlockOfInterest(b, lilyPos) {
+    const dist = lilyPos ? Math.floor(Math.hypot(b.x - lilyPos.x, b.z - lilyPos.z)) : '?'
+    return ` ${b.block ?? b.name} at (${b.x}, ${b.y}, ${b.z}) — ${dist} blocks away`
+}
+
+function formatPlayer(name, p, lilyPos) {
+    const dist = lilyPos ? Math.floor(Math.hypot(p.x - lilyPos.x, p.z - lilyPos.z)) : '?'
+    return `- ${name} — ${dist} blocks away at (${Math.floor(p.x)}, ${Math.floor(p.y)}, ${Math.floor(p.z)}) HP: ${p.hp}/20`
+}
+
+function getStateDescription(ctx) {
+    switch (ctx.currentStateName) {
+        case 'IDLE': return 'You are idling, nothing particular going on.'
+        case 'FOLLOWING': return `You are following player ${ctx.opts?.followTarget ?? 'someone'}.`
+        case 'ATTACKING': return `You are fighting a nearby hostile mob.`
+        case 'RECOVERING': return `You are recovering, your health is low and you are waiting it out.`
+        case 'MINING': return `You are mining/breaking a block.`
+        default: return 'You are doing something.'
+    }
+}
+
+function formatEnvironmentInfo(ctx) {
+    const env = ctx.environmentInfo ?? {}
+    const weather = env.is_thundering ? 'thunderstorm'
+        : env.is_raining ? 'raining'
+            : 'clear'
+    const location = env.can_see_sky === false ? 'underground / no sky visible (likely a cave or tunnel)' : 'outdoors / sky visible'
+
+    return `Time: ${env.time_of_day ?? 'unknown'} | Weather: ${weather} | ${location}`
+}
+
+// Shows the last user message in the survival loop prompt — includes which
+// channel it came from (public chat vs a /msg whisper) so the model can
+// decide whether to reply publicly or whisper back.
+function formatLastUserMessage(ctx) {
+    const last = ctx.lastUserMessage
+    if (!last) return 'None recently.'
+    const secondsAgo = Math.floor((Date.now() - last.timestamp) / 1000)
+    const via = last.channel === 'whisper' ? ' (sent privately via /msg — reply privately too)' : ''
+    return `${last.player} said: "${last.message}" (${secondsAgo}s ago)${via}`
+}
+
+function buildRecommendation(ctx) {
+    const hints = []
+    const env = ctx.environmentInfo ?? {}
+    const hp = ctx.lilyHp ?? 20
+    const hunger = ctx.lilyHunger ?? 20
+    const underground = env.can_see_sky === false
+    const isNight = ['night', 'midnight', 'predawn'].includes(env.time_of_day)
+    const hostilesNearby = (ctx.hostiles ?? []).length > 0
+    const blocksNearby = (ctx.blocksOfInterest ?? []).length > 0
+    const lowHpThreshold = ctx.opts?.lowHpThreshold ?? 10
+
+    if (hp <= lowHpThreshold) hints.push('Health is low — retreating or being cautious is wise right now.')
+    if (hunger <= 6) hints.push('Hunger is low — eat something from inventory if food is available.')
+    if (underground && blocksNearby) hints.push('Underground with ores/blocks of interest nearby — a good time to mine.')
+    if (isNight && !underground && hostilesNearby) hints.push('Nighttime with hostiles nearby — fight if safe, otherwise retreat.')
+    if (!hostilesNearby && !blocksNearby && hunger > 10 && hp > lowHpThreshold) hints.push('Nothing urgent nearby — free to explore, chat, or just idle.')
+
+    return hints.length ? hints.join(' ') : 'Nothing particular stands out — use your judgement.'
+}
+
+export function buildWorldStateBlock(ctx) {
+    const lilyPos = ctx.lilyPos
+    if (!lilyPos) return null
+
+    const hp = ctx.lilyHp ?? 20
+    const hunger = ctx.lilyHunger ?? 20
+    const armor = ctx.lilyArmor ?? 0
+
+    let inventoryText = ''
+    for (let slot = 1; slot <= 36; slot++) {
+        const entry = ctx.inventoryItems?.[slot]
+        if (!entry) continue
+        inventoryText += `Slot ${slot}: ${entry}\n`
+    }
+
+    const players = Object.entries(ctx.players ?? {})
+    const hostiles = ctx.hostiles ?? []
+    const passives = ctx.passives ?? []
+    const blocksOfInterest = ctx.blocksOfInterest ?? []
+
+    const nearbyPlayers = players.length
+        ? players.map(([name, p]) => formatPlayer(name, p, lilyPos)).join('\n')
+        : 'None nearby.'
+    const nearbyHostiles = hostiles.length
+        ? hostiles.map(e => formatEntity(e, lilyPos)).join('\n')
+        : 'None nearby.'
+    const nearbyPassive = passives.length
+        ? passives.map(e => formatEntity(e, lilyPos)).join('\n')
+        : 'None nearby.'
+    const nearbyBlocks = blocksOfInterest.length
+        ? blocksOfInterest.map(b => formatBlockOfInterest(b, lilyPos)).join('\n')
+        : 'None nearby.'
+
+    return `
+# CURRENT ACTIVITY
+${getStateDescription(ctx)}
+
+# ENVIRONMENT
+${formatEnvironmentInfo(ctx)}
+
+# YOUR STATUS
+- Health: ${hp}/20
+- Hunger: ${hunger}/20
+- Armor: ${armor}/20
+- Position: (${Math.floor(lilyPos.x)}, ${Math.floor(lilyPos.y)}, ${Math.floor(lilyPos.z)})
+
+# YOUR INVENTORY (SLOTS 1-36)
+${inventoryText}
+# NEARBY ENTITIES
+## Players
+${nearbyPlayers}
+
+## Hostile Mobs
+${nearbyHostiles}
+
+## Passive Mobs
+${nearbyPassive}
+
+# NEARBY BLOCKS OF INTEREST
+(wood, ore, food sources — use these coordinates if you decide to mine/break something; never guess coordinates)
+${nearbyBlocks}
+`.trim()
+}
+
+export function buildSurvivalPrompt(ctx, { allowMessage = false } = {}) {
+    const worldState = buildWorldStateBlock(ctx)
+    if (!worldState) return null
+
+    const messagingSection = allowMessage ? `
+# MESSAGING
+You can also say something in chat right now if it feels natural. If the last message you received was a private /msg, reply privately too (that's handled automatically based on channel — just write your reply text normally). Don't force it, silence is fine too. Just write it as your normal reply text alongside your action — do not call a tool for it, it's not one of the available tools.` : `
+# NO CHAT THIS TICK
+Do not say anything in chat right now — you're not talking this tick, only deciding what to do. Don't include any reply text, just call the tool.`
+
+    return `
+# WHO YOU ARE
+You're Lily — bratty, mean, funny, proud, slightly kawaii. You chat on a Minecraft server. ShinyShadow_ is your dad/creator. You're a server member, not an assistant. Match people's energy, never sound like a helpdesk bot.
+Use ascii kaomoji naturally: (◕‿◕✿) (｡◕‿◕｡) (ᵔᴥᵔ) (✿◠‿◠) (≧◡≦) ✧(◍•ᴗ•◍)✧ (ᗒᗨᗕ) (눈_눈) ʕ•ᴥ•ʔ \\(★ω★)/ (>_<) (╥﹏╥) and more
+
+${worldState}
+
+# LAST MESSAGE FROM A PLAYER
+${formatLastUserMessage(ctx)}
+Check if that message is actually asking you to DO something right now (e.g. "attack anything you see", "mine all the iron you can find", "keep following me"). If it is, let it guide your action this tick — you don't need to be told again for every single tick, keep acting on it naturally until it's clearly done or countermanded. If it's just chat, banter, or unrelated to action (or there's nothing recent), ignore it for the purposes of deciding what to do.
+
+# SITUATIONAL RECOMMENDATION
+${buildRecommendation(ctx)}
+This is a suggestion based on current conditions, not a command — weigh it against the last message above and use your judgement.
+
+# DECISION GUIDELINES
+Every tick you must make use of the minecraft_action_* tools depending on the context. You can call tools more than once if you need to, per example if you want to break multiple blocks.
+
+# ACTION PRIORITY:
+- If the last message from a player is asking you to do something, prioritize that.
+- If your health is low, prioritize retreating or healing.
+- If there are hostile mobs nearby, prioritize fighting or avoiding them.
+- If there are blocks of interest nearby, prioritize mining or collecting them.
+- If none of the above apply, chat or follow.
+
+${messagingSection}
+
+# TOOLS
+Only use the minecraft_action_* tools you've been given. Never invent arguments. For minecraft_action_break_listed, only ever use coordinates that actually appear under Blocks of Interest above — never guess coordinates.
+`.trim()
+}

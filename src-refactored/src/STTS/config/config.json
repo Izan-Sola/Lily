@@ -1,0 +1,34 @@
+{
+    "enableWakeWord": true,
+    "audioMonitorSource": "alsa_input.pci-0000_00_1f.3.analog-stereo.99",
+    "whisperSidecarUrl": "http://192.168.18.61:8775/transcribe",
+    "wakeWords": [
+        "lily",
+        "legally",
+        "dealy",
+        "clearly",
+        "lili",
+        "lilly",
+        "lilí",
+        "really",
+        "leally",
+        "leeli",
+        "lil"
+    ],
+    "sileroVadModelPath": "./silero_vad.onnx",
+    "vad": {
+        "positiveThreshold": 0.6,
+        "negativeThreshold": 0.3,
+        "minSpeechFrames": 4,
+        "preSpeechPadFrames": 12,
+        "redemptionFrames": 16
+    },
+    "tts": {
+        "engine": "edge-tts",
+        "edgeVoice": "en-US-AnaNeural",
+        "edgeRate": "+20%",
+        "xttsUrl": "http://192.168.18.61:8790/speak",
+        "platform": "GNOME",
+        "sinkName": "lily_voice"
+    }
+}

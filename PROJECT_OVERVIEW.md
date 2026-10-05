@@ -429,4 +429,4 @@
 - Deliberately spins up its **own fresh `Lily` instance** (`new Lily()`, not the shared `ai` built in `start.js`), on its own channel id (`"pi-dev"`), so Pi gets an isolated memory/history lane instead of bleeding into Discord/Minecraft context.
 
 - A persona-only excerpt of the main system prompt (no tool defs, no Minecraft-specific instructions) is appended after Pi's own system prompt, so Pi's built-in tool/dev instructions stay fully intact and Lily just rides on top as a personality layer, replies get wrapped in-character but the actual file/OS operations are handled entirely by Pi's own tools, the bridge never calls into Pi directly.
-</document_content>
+

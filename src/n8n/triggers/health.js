@@ -1,58 +1,15 @@
-import http from 'node:http'
-import { execFile, spawn, execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import fs from 'node:fs'
 import path from 'node:path'
+import { runPi, runSshStdin, sshBaseArgs } from '../triggerUtils.js'
 
 const execFileAsync = promisify(execFile)
 
 const LOCAL_AGENT = '/srv/n8n/system-health/bin/run-agent.sh'
 const REMOTE_COLLECT = '/srv/n8n/system-health/bin/collect.py'  // also the local source when piping
 const REPORTS_DIR = '/srv/n8n/system-health/reports'
-const SSH_KEY = process.env.HEALTH_SSH_KEY || `${process.env.HOME}/.ssh/health_ed25519`
-const DEFAULT_SSH_USER = process.env.HEALTH_SSH_USER || 'healthssh'
 const TIMEOUT_MS = 1000 * 60 * 10
-
-// Resolve pi's absolute path once at startup, using a login shell so PATH is correct.
-function resolveBinary(bin) {
-    try {
-        const out = execFileSync('bash', ['-lc', `command -v ${bin}`], { encoding: 'utf8' }).trim()
-        return out || null
-    } catch {
-        return null
-    }
-}
-const PI_BIN = process.env.PI_BIN || resolveBinary('pi') || 'pi'
-console.log(`[health trigger] using pi: ${PI_BIN}`)
-
-// Cache collect.py content for stdin-piping. Reloaded per-run so edits on minipc
-// take effect immediately without restarting the panel.
-function readCollectScript() {
-    return fs.readFileSync(REMOTE_COLLECT, 'utf8')
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Process-group isolation
-//
-// Every external process we launch here (pi, ssh, run-agent.sh) must
-// run in its OWN process group. Without `detached: true` they share
-// LilyBrain's group, and a child that calls kill(0, SIGINT) or
-// kill(-pgid, SIGINT) — which some CLIs do on cleanup — will signal
-// us too. Node has no SIGINT handler by default, so we die cleanly
-// and PM2 restarts us. This is the "no error, just restart" symptom.
-//
-// With `detached: true`, the child is in a fresh process group. Its
-// signals stay inside that group.
-//
-// `killGroup(pid, sig)` sends a signal to the whole group of a
-// detached child. Use that (not proc.kill) for timeouts, so orphans
-// (llama-server, shell wrappers, etc.) get cleaned up too.
-// ─────────────────────────────────────────────────────────────────
-function killGroup(pid, signal = 'SIGKILL') {
-    if (!pid) return
-    try { process.kill(-pid, signal) }
-    catch { /* group may already be gone */ }
-}
 
 const PROMPT = `
 You are a Linux system reliability analyst.
@@ -143,141 +100,41 @@ Finally state:
 Here is the diagnostic JSON:
 `
 
-function readJsonBody(req) {
-    return new Promise((resolve) => {
-        let data = ''
-        req.on('data', (c) => (data += c))
-        req.on('end', () => {
-            if (!data) return resolve({})
-            try { resolve(JSON.parse(data)) } catch { resolve({}) }
-        })
-    })
-}
-
-// Run pi on the minipc with JSON piped to stdin. Detached so a
-// misbehaving pi subprocess can't signal LilyBrain.
-function runPiWithJson(json) {
-    return new Promise((resolve, reject) => {
-        const proc = spawn(PI_BIN, ['--no-tools', '--no-session', '-p', PROMPT], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            detached: true,
-        })
-        let out = '', err = ''
-        proc.stdout.on('data', (d) => (out += d))
-        proc.stderr.on('data', (d) => (err += d))
-        proc.on('error', reject)
-
-        const t = setTimeout(() => {
-            killGroup(proc.pid, 'SIGKILL')
-            reject(new Error('pi timed out'))
-        }, TIMEOUT_MS)
-
-        proc.on('close', (code) => {
-            clearTimeout(t)
-            if (code === 0) resolve({ stdout: out, stderr: err })
-            else reject(new Error(`pi exited ${code}: ${err.slice(0, 500)}`))
-        })
-
-        proc.stdin.write(json)
-        proc.stdin.end()
-    })
-}
-
-// Local run-agent.sh (which itself calls collect.py and pi). Detached
-// for the same reason.
-function runLocal() {
-    return execFileAsync(LOCAL_AGENT, [], {
-        maxBuffer: 1024 * 1024 * 50,
-        timeout: TIMEOUT_MS,
-        detached: true,
-    })
-}
-
 // ---- REMOTE MODE: file ---------------------------------------------------
-// Old behavior. SSH the target, run collect.py from disk, get JSON back.
+// SSH the target, run collect.py from its disk, get JSON back.
 async function runRemoteFile(ip, sshUser) {
-    const user = sshUser || DEFAULT_SSH_USER
-    console.log(`[health trigger] remote ssh (file mode) → ${user}@${ip}`)
-
-    const { stdout: json } = await execFileAsync('ssh', [
-        '-i', SSH_KEY,
-        '-o', 'IdentitiesOnly=yes',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', 'BatchMode=yes',
-        '-o', 'ConnectTimeout=15',
-        `${user}@${ip}`,
-        'python3', REMOTE_COLLECT,
-    ], {
+    console.log(`[health trigger] remote ssh (file mode) → ${ip}`)
+    const { stdout } = await execFileAsync('ssh', [...sshBaseArgs(ip, sshUser), 'python3', REMOTE_COLLECT], {
         maxBuffer: 1024 * 1024 * 50,
         timeout: TIMEOUT_MS,
         detached: true,
     })
-
-    return json
+    return stdout
 }
 
 // ---- REMOTE MODE: stdin --------------------------------------------------
-// Pipe collect.py into `python3 -` on the remote. Requires on the
-// remote's sshd_config:
+// Pipe collect.py into `python3 -` on the remote. Requires on the remote's sshd_config:
 //     Match User healthssh
 //         ForceCommand /usr/bin/python3 -
 //         PermitTTY no
 //         X11Forwarding no
 //         AllowTcpForwarding no
 //         AllowAgentForwarding no
-//
-// The remote needs NOTHING on disk. No collect.py, no exec bit, no shebang.
+// The remote needs NOTHING on disk. Script is re-read per run so edits apply immediately.
 async function runRemoteStdin(ip, sshUser) {
-    const user = sshUser || DEFAULT_SSH_USER
-    console.log(`[health trigger] remote ssh (stdin mode) → ${user}@${ip}`)
-
-    const script = readCollectScript()
-
-    return new Promise((resolve, reject) => {
-        const proc = spawn('ssh', [
-            '-i', SSH_KEY,
-            '-o', 'IdentitiesOnly=yes',
-            '-o', 'StrictHostKeyChecking=accept-new',
-            '-o', 'BatchMode=yes',
-            '-o', 'ConnectTimeout=15',
-            `${user}@${ip}`,
-            // NO command argument — sshd's ForceCommand runs `python3 -`
-        ], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            detached: true,
-        })
-
-        let out = '', err = ''
-        proc.stdout.on('data', (d) => (out += d))
-        proc.stderr.on('data', (d) => (err += d))
-        proc.on('error', reject)
-
-        const t = setTimeout(() => {
-            killGroup(proc.pid, 'SIGKILL')
-            reject(new Error('remote ssh (stdin) timed out'))
-        }, TIMEOUT_MS)
-
-        proc.on('close', (code) => {
-            clearTimeout(t)
-            if (code === 0) resolve(out)
-            else reject(new Error(`remote exited ${code}: ${err.slice(0, 500)}`))
-        })
-
-        proc.stdin.write(script)
-        proc.stdin.end()
+    console.log(`[health trigger] remote ssh (stdin mode) → ${ip}`)
+    const { stdout } = await runSshStdin({
+        ip, sshUser,
+        input: fs.readFileSync(REMOTE_COLLECT, 'utf8'),
+        timeoutMs: TIMEOUT_MS,
+        label: 'remote ssh (stdin)',
     })
+    return stdout
 }
 
-// ---- REMOTE dispatch -----------------------------------------------------
 async function runRemote(ip, sshUser, scriptMode) {
     const mode = (scriptMode || 'stdin').toLowerCase()
-    let json
-
-    if (mode === 'file') {
-        json = await runRemoteFile(ip, sshUser)
-    } else {
-        json = await runRemoteStdin(ip, sshUser)
-    }
+    const json = mode === 'file' ? await runRemoteFile(ip, sshUser) : await runRemoteStdin(ip, sshUser)
 
     console.log(`[health trigger] got ${json.length} bytes from ${ip}, first 80: ${json.slice(0, 80).replace(/\n/g, ' ')}`)
 
@@ -294,7 +151,7 @@ async function runRemote(ip, sshUser, scriptMode) {
         fs.writeFileSync(path.join(REPORTS_DIR, 'last-remote-raw.json'), json)
     } catch { }
 
-    const { stdout, stderr } = await runPiWithJson(json)
+    const { stdout, stderr } = await runPi(PROMPT, json, TIMEOUT_MS)
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const outPath = path.join(REPORTS_DIR, `${stamp}.md`)
@@ -305,38 +162,31 @@ async function runRemote(ip, sshUser, scriptMode) {
         console.error(`[health trigger] failed to write ${outPath}: ${e.message}`)
     }
 
-    const finalStdout = stdout + '\nReport saved to:\n' + outPath + '\n'
-    return { stdout: finalStdout, stderr }
+    return { stdout: stdout + '\nReport saved to:\n' + outPath + '\n', stderr }
 }
 
-export default function start(port = 3400) {
-    const server = http.createServer(async (req, res) => {
-        if (req.method !== 'POST' || req.url !== '/run-health-check') {
-            res.writeHead(404, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ error: 'not found' }))
-            return
-        }
+// run-agent.sh calls collect.py and pi itself. Detached so it can't signal LilyBrain.
+function runLocal() {
+    return execFileAsync(LOCAL_AGENT, [], {
+        maxBuffer: 1024 * 1024 * 50,
+        timeout: TIMEOUT_MS,
+        detached: true,
+    })
+}
 
-        const payload = await readJsonBody(req)
-        const { tailscaleIp, sshUser, scriptMode } = payload
-        const isLocal = !tailscaleIp || tailscaleIp === 'local'
+export const routes = [
+    {
+        method: 'POST',
+        path: '/run-health-check',
+        async handler({ body }) {
+            const { tailscaleIp, sshUser, scriptMode } = body
+            const isLocal = !tailscaleIp || tailscaleIp === 'local'
+            console.log(`[health trigger] payload=${JSON.stringify(body)} → ${isLocal ? 'LOCAL' : 'REMOTE ' + tailscaleIp}`)
 
-        console.log(`[health trigger] payload=${JSON.stringify(payload)} → ${isLocal ? 'LOCAL' : 'REMOTE ' + tailscaleIp}`)
-
-        try {
             const { stdout, stderr } = isLocal
                 ? await runLocal()
                 : await runRemote(tailscaleIp, sshUser, scriptMode)
-
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ stdout, stderr, target: isLocal ? 'local' : tailscaleIp }))
-        } catch (err) {
-            console.error('health check failed:', err.message)
-            res.writeHead(500, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ error: err.message, stderr: err.stderr || '' }))
-        }
-    })
-
-    server.listen(port, () => console.log(`Health trigger listening on ${port}`))
-    return server
-}
+            return { stdout, stderr, target: isLocal ? 'local' : tailscaleIp }
+        },
+    },
+]

@@ -8,7 +8,7 @@ import { parseFlags, getRunConfig, lilyOptionsFor } from './startUtils.js'
 import * as stts from './STTS/index.js'
 import { startVoiceAssistant } from './voiceAssistant/index.js'
 import { Lily } from './ai/Lily.js'
-import { loadAllTriggers } from './n8n/loadTriggers.js'
+import { startTriggerServer } from './n8n/loadTriggers.js'
 import { startControlPanel } from './controlPanel/server.js'
 
 let runConfig
@@ -155,14 +155,8 @@ const SERVICES = [
     {
         name: 'N8N TRIGGERS', phase: 'ready',
         enabled: rc => rc.n8n,
-        start: () => loadAllTriggers(),
-        stop: async triggers => {
-            for (const { file, handle } of triggers) {
-                if (!handle?.close) continue
-                await closeServer(handle)
-                Logger.info(`Closed trigger: ${file}`, "SHUTDOWN")
-            }
-        },
+        start: () => startTriggerServer(),
+        stop: closeServer,
     },
     {
         name: 'VRCHAT', label: 'VRChat', phase: 'ready',

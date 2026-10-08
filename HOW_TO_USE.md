@@ -240,8 +240,6 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 - Also add this tool with this config: <br><br> <img width="577" height="277" alt="image" src="https://github.com/user-attachments/assets/85b52a00-d5fe-4273-9982-adf34dd28677" /> <br>
 
-- And preferably disable `Continue`'s own web search tool, since the brain already includes one.
-
 ### VRChat
 
 ###### I'm gonna assume you are going to run this on a separate machine and play with the bot, since the program is made for the bot to follow you.

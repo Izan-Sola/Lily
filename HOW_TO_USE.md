@@ -248,7 +248,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 * If you have been linked here directly, you may also want to check this: [Prerequisites](#prerequisites). And remember to change the prompts in `bot/prompts.js`
   
-* If you want to run this separately (not connected to the main brain) downlaod this: https://github.com/Izan-Sola/LilyVrchat on the machine where your bot's game is gonna be running. Start it by running: `node index.js` and `node vrchatBridge.js`. For testing that the custom OSC parameters are working, you can use `node osc-test.js`, walk near your bot and check if the console logs anything. If you are gonna run it connected to the main brain, just run it with the `vrchat` flag.
+* Download this: https://github.com/Izan-Sola/LilyVrchat on the machine where your bot's game is gonna be running. Start it by running: `node index.js` and `node vrchatBridge.js`. For testing that the custom OSC parameters are working, you can use `node osc-test.js`, walk near your bot and check if the console logs anything. If you are gonna run it connected to the main brain, just run it with the `vrchat` flag.
 
 * This thingy exposes a website in port 3030 as an alternative for talking to her through there via text (she will still respond in game), with an option to append a screenshot of what she sees. This is not necessary, but if you wanted to make it publicly accesible, then you would need to register a sub-domain with DuckDNS and reverse proxy.
 

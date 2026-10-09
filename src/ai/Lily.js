@@ -36,18 +36,13 @@ export class Lily {
     /**
      * @param {object} [o]
      * @param {object} [o.overrides]          config.json overrides for this instance (e.g. { model })
-     * @param {Function} [o.mcSend]           Minecraft action sender
-     * @param {object} [o.vtsClient]
-     * @param {{ stts?: boolean, minecraft?: boolean, vtube?: boolean, vrchat?: boolean, browser?: boolean }} [o.modules]
-     *        which tool executors to build
-     * @param {{ enabled?: boolean, pidevEnabled?: boolean, codingEnabled?: boolean }} [o.stts]
      * @param {Function} [o.onVoiceGif]
      * @param {() => object|null} [o.getStateController]  Minecraft state controller accessor
      * @param {() => string|null} [o.replyGate]            returns a canned reply to short-circuit the model, or null
+     * Tool executors are not built here: modules attach them to `this.tools` while they run.
      */
-    constructor({ overrides = {}, mcSend = null, vtsClient = null, modules = {}, stts = {}, onVoiceGif = null, getStateController = null, replyGate = null } = {}) {
+    constructor({ overrides = {}, onVoiceGif = null, getStateController = null, replyGate = null } = {}) {
         this.overrides = overrides
-        this.mcSend = mcSend
         this._getStateController = getStateController
         this._replyGate = replyGate
         this._onVoiceGif = onVoiceGif
@@ -61,16 +56,9 @@ export class Lily {
         this._resumedIds = new Map()    // tool_call_id -> result, dedupes repeated Continue resumes
 
         this.tools = new ToolRouter({
-            mcSend,
-            getStateController: () => this._getStateController?.() ?? null,
-            vtsClient,
-            sttsConfig: {
-                ...stts,
-                editCallback: (filePath, originalContent, instruction) =>
-                    this.generateFileEdit(filePath, originalContent, instruction),
-                completeCallback: (system, user) => this.generateText(system, user),
-            },
-            flags: modules,
+            editCallback: (filePath, originalContent, instruction) =>
+                this.generateFileEdit(filePath, originalContent, instruction),
+            completeCallback: (system, user) => this.generateText(system, user),
         })
 
         this.summarizer = new Summarizer(
@@ -85,14 +73,8 @@ export class Lily {
     }
 
     // ---------- late-bound wiring ----------
-    setMcSend(mcSend) { this.mcSend = mcSend; this.tools.setMcSend(mcSend) }
-    setVtsClient(vtsClient) { this.tools.setVtsClient(vtsClient) }
-    setBrowserClient(client) { this.tools.setBrowserClient(client) }
     setStateController(getter) { this._getStateController = getter }
     setReplyGate(gate) { this._replyGate = gate }
-    setModuleEnabled(moduleName, enabled) { return this.tools.setEnabled(moduleName, enabled) }
-    getModuleStatus() { return this.tools.getStatus() }
-    setApprovalCallbacks(callbacks) { this.tools.setApprovalCallbacks(callbacks) }
 
     _voiceGif(channelId, gifUrl) {
         if (channelId !== VOICE_ASSISTANT_CHANNEL_ID || !gifUrl || !this._onVoiceGif) return
@@ -127,15 +109,15 @@ export class Lily {
     }
 
     getToolsForChannel(channelId, context = {}) {
-        if (channelId === MINECRAFT_CHANNEL_ID) return this.tools.tools
-        if (channelId === VRCHAT_CHANNEL_ID) return this.tools.vrchatTools
-        if (channelId === VOICE_ASSISTANT_CHANNEL_ID) return this.tools.voiceAssistantTools
+        if ([MINECRAFT_CHANNEL_ID, VRCHAT_CHANNEL_ID, VOICE_ASSISTANT_CHANNEL_ID].includes(channelId)) {
+            return this.tools.toolsFor(channelId)
+        }
 
         const trustedDM = this.opts.allowAnyToolViaDM
             && context.isDM
             && context.userId
             && String(context.userId) === String(getOwnerId())
-        return trustedDM ? this.tools.allTools : this.tools.nonMinecraftTools
+        return trustedDM ? this.tools.allTools : this.tools.toolsFor(channelId)
     }
 
     // ---------- prompt building ----------

@@ -55,7 +55,7 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
     let nextMessageAt = Date.now() + randomMsgDelay()
 
 
-    const toolRouter = new ToolRouter(mcSend, () => stateController, vtsClient)
+    const toolRouter = ToolRouter.forMinecraft(() => stateController, vtsClient)
 
     await toolRouter.refreshExpressions()
 

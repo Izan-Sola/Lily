@@ -1,128 +1,63 @@
 // toolRouter.js
 import { Logger } from '../../utils/Logger.js'
-import { ChatToolExecutor, CHAT_TOOLS, CHAT_TOOL_NAMES } from './chatTools.js'
+import { ChatToolExecutor, CHAT_TOOL_NAMES } from './chatTools.js'
 import { MinecraftToolExecutor, MINECRAFT_TOOL_NAMES } from './minecraftTools.js'
 import { VtubeToolExecutor, VTUBE_TOOL_NAMES } from './vtubeTools.js'
-import { VrchatToolExecutor, VRCHAT_TOOL_NAMES } from './vrchatTools.js'
+import { VRCHAT_TOOL_NAMES } from './vrchatTools.js'
 import { SttsToolExecutor, STTS_TOOL_NAMES } from './stts/sttsTools.js'
-import { BrowserToolExecutor, BROWSER_TOOL_NAMES } from './browserTools.js'
+import { BROWSER_TOOL_NAMES } from './browserTools.js'
 import { INPUT_TOOL_NAMES } from './stts/inputTools.js'
 import { getConfig, getOwnerId } from '../config.js'
 
 const VOICE_ASSISTANT_CHANNEL = 'voiceAssistant'
+const MINECRAFT_CHANNEL = 'minecraft'
 
-// Whole-executor toggles (on/off as a unit) vs. STTS's own submodule
-// toggles (screenshot / pidev / coding / input), which are delegated to the
-// executor itself since it already tracks available+enabled per submodule.
-const WHOLE_EXECUTOR_MODULES = ['minecraft', 'vtube', 'vrchat', 'browser']
-const STTS_SUBMODULES = ['screenshot', 'pidev', 'coding', 'input']
-const TOGGLEABLE_MODULES = [...WHOLE_EXECUTOR_MODULES, ...STTS_SUBMODULES]
-
+// Executors are attached by modules when they start and detached when they stop,
+// so the tool lists (and what execute() accepts) always mirror what is running.
+//   channels:  '*' (every channel) or an array of channel ids that see the tools
+//   voiceOnly: calls are refused outside the voice channel / trusted owner DMs
 class ToolRouter {
-    constructor({ mcSend = null, getStateController = null, vtsClient = null, sttsConfig = {}, flags = {} }) {
-        const {
-            minecraft = false,
-            vtube = false,
-            vrchat = false,
-            stts = false,
-            browser = false,
-        } = flags
-
+    constructor({ editCallback = null, completeCallback = null } = {}) {
+        this._mods = new Map() // name -> { exec, channels, voiceOnly }
+        this._sttsCallbacks = { editCallback, completeCallback }
         this.chat = new ChatToolExecutor()
-
-        this.minecraft = minecraft ? new MinecraftToolExecutor(mcSend, getStateController) : null
-        this.vtube = vtube ? new VtubeToolExecutor(vtsClient) : null
-        this.vrchat = vrchat ? new VrchatToolExecutor() : null
-        this.stts = stts ? new SttsToolExecutor(
-            sttsConfig.enabled,
-            sttsConfig.pidevEnabled,
-            sttsConfig.codingEnabled,
-            sttsConfig.editCallback,
-            sttsConfig.completeCallback,
-        ) : null
-        this.browser = browser ? new BrowserToolExecutor() : null
-
-        // Runtime on/off switch for the four whole-executor modules.
-        // STTS's own submodules track their state inside SttsToolExecutor.
-        this._enabled = {
-            minecraft: true,
-            vtube: true,
-            vrchat: true,
-            browser: true,
-        }
-
-        this._byName = new Map()
-        this._moduleByName = new Map() // toolName -> module key (only for whole-executor modules), or null
-
-        const register = (executor, moduleKey) => {
-            for (const name of executor.toolNames) {
-                this._byName.set(name, executor)
-                this._moduleByName.set(name, moduleKey)
-            }
-        }
-
-        // chat and stts pass null: chat is never toggleable, stts gates
-        // itself internally per-submodule so the router doesn't double-check it.
-        register(this.chat, null)
-        if (this.minecraft) register(this.minecraft, 'minecraft')
-        if (this.vtube) register(this.vtube, 'vtube')
-        if (this.vrchat) register(this.vrchat, 'vrchat')
-        if (this.stts) register(this.stts, null)
-        if (this.browser) register(this.browser, 'browser')
+        this.attach('chat', this.chat)
     }
 
-    // ---- setters (preserved) ----
-    get mcSend() { return this.minecraft?.mcSend ?? null }
-    set mcSend(fn) { if (this.minecraft) this.minecraft.setMcSend(fn) }
-    setMcSend(fn) { this.mcSend = fn }
-
-    setVtsClient(vtsClient) { if (this.vtube) this.vtube.setVtsClient(vtsClient) }
-    setBrowserClient(client) { if (this.browser) this.browser.setClient(client) }
-    refreshExpressions() { return this.vtube ? this.vtube.refreshExpressions() : Promise.resolve() }
-    get vtubeEnabled() { return !!this.vtube && this._enabled.vtube }
-
-    // ---- runtime module toggle ----
-    setEnabled(moduleName, enabled) {
-        if (STTS_SUBMODULES.includes(moduleName)) {
-            if (!this.stts) {
-                return { ok: false, reason: `STTS bridge wasn't started at boot, so ${moduleName} can't be toggled.` }
-            }
-            return this.stts.setSubmoduleEnabled(moduleName, enabled)
-        }
-
-        if (!WHOLE_EXECUTOR_MODULES.includes(moduleName)) {
-            return { ok: false, reason: `"${moduleName}" isn't a toggleable module.` }
-        }
-        if (!this[moduleName]) {
-            return { ok: false, reason: `${moduleName} wasn't started with its flag at boot, so there's no bridge to toggle. Restart the process with that flag to make it available.` }
-        }
-        this._enabled[moduleName] = !!enabled
-        Logger.info(`${moduleName} tools ${enabled ? 'ENABLED' : 'DISABLED'}`, "MODULE TOGGLE")
-        return { ok: true }
+    // Router for the in-process survival loops: Minecraft tools (+ VTube when a client is given).
+    static forMinecraft(getStateController, vtsClient = null) {
+        const router = new ToolRouter()
+        router.attach('minecraft', new MinecraftToolExecutor(null, getStateController), { channels: [MINECRAFT_CHANNEL] })
+        if (vtsClient) router.attach('vtube', new VtubeToolExecutor(vtsClient))
+        return router
     }
-    setApprovalCallbacks(callbacks) {
-        if (this.stts) this.stts.setApprovalCallbacks(callbacks)
+
+    // ---- module attach / detach ----
+    attach(name, exec, { channels = '*', voiceOnly = false } = {}) {
+        if (this._mods.get(name)?.exec !== exec) Logger.info(`${name} tools attached`, "TOOLS")
+        this._mods.set(name, { exec, channels, voiceOnly })
     }
-    // Status for every toggleable module, for the control panel.
-    getStatus() {
-        const status = {}
-        for (const key of WHOLE_EXECUTOR_MODULES) {
-            status[key] = {
-                available: !!this[key],
-                enabled: !!this[key] && this._enabled[key],
-            }
-        }
-        if (this.stts) {
-            Object.assign(status, this.stts.getSubmoduleStatus())
-        } else {
-            for (const key of STTS_SUBMODULES) {
-                status[key] = { available: false, enabled: false }
-            }
-        }
-        return status
+    detach(name) {
+        if (this._mods.delete(name)) Logger.info(`${name} tools detached`, "TOOLS")
     }
-    // ---- core methods (delegated) ----
-    resetTurn() { this.chat.resetTurn(); this.stts?.resetTurn() }
+    has(name) { return this._mods.has(name) }
+    get(name) { return this._mods.get(name)?.exec ?? null }
+
+    // STTS tool groups (screenshot / pidev / coding / input) share one executor,
+    // attached while at least one group is on.
+    sttsSet(group, on) {
+        const { editCallback, completeCallback } = this._sttsCallbacks
+        const stts = this.get('stts') ?? new SttsToolExecutor(editCallback, completeCallback)
+        stts.setActive(group, on)
+        if (stts.hasActive) this.attach('stts', stts, { channels: [VOICE_ASSISTANT_CHANNEL], voiceOnly: true })
+        else this.detach('stts')
+    }
+
+    get vtubeEnabled() { return this.has('vtube') }
+    refreshExpressions() { return this.get('vtube')?.refreshExpressions() ?? Promise.resolve() }
+
+    // ---- turn bookkeeping (delegated to chat) ----
+    resetTurn() { for (const { exec } of this._mods.values()) exec.resetTurn?.() }
     shouldHardStop() { return this.chat.shouldHardStop() }
     markFlawed(reason) { this.chat.markFlawed(reason) }
     recordNarration() { return this.chat.recordNarration() }
@@ -131,113 +66,52 @@ class ToolRouter {
     addEpisodicMemory(payload) { return this.chat.addEpisodicMemory(payload) }
     addFactOutOfBand(payload) { return this.chat.addFactOutOfBand(payload) }
     removeFactOutOfBand(query) { return this.chat.removeFactOutOfBand(query) }
+    takePendingImages() { return this.get('stts')?.takePendingImages() ?? [] }
 
-    // ---- Tool lists – only include enabled executors ----
-    get tools() {
-        const base = [...this.chat.tools]
-        if (this.minecraft && this._enabled.minecraft) base.push(...this.minecraft.tools)
-        if (this.vtube && this._enabled.vtube) base.push(...this.vtube.tools)
-        return base
-    }
-
-    get nonMinecraftTools() {
-        const base = [...this.chat.tools]
-        if (this.vtube && this._enabled.vtube) base.push(...this.vtube.tools)
-        return base
-    }
-
-    get vrchatTools() {
-        const base = [...this.chat.tools]
-        if (this.vtube && this._enabled.vtube) base.push(...this.vtube.tools)
-        if (this.vrchat && this._enabled.vrchat) base.push(...this.vrchat.tools)
-        return base
-    }
-
-    get voiceAssistantTools() {
-        const base = [...this.chat.tools]
-        if (this.vtube && this._enabled.vtube) base.push(...this.vtube.tools)
-        // stts.tools is already filtered internally by its own submodule state
-        if (this.stts) base.push(...this.stts.tools)
-        if (this.browser && this._enabled.browser) base.push(...this.browser.tools)
-        return base
-    }
-
-    // ---- Full tool list – union of every enabled executor, deduped by name.
-    get allTools() {
+    // ---- tool lists: union of attached executors, deduped by name ----
+    _collect(visible) {
         const seen = new Map()
-        const executors = [this.chat, this.minecraft, this.vtube, this.vrchat, this.stts, this.browser]
-            .filter(Boolean)
-        for (const executor of executors) {
-            const moduleKey = this._moduleName(executor)
-            if (moduleKey && !this._enabled[moduleKey]) continue
-            // stts (moduleKey null) already filters internally via .tools
-            for (const tool of executor.tools) {
-                seen.set(tool.function.name, tool)
-            }
+        for (const m of this._mods.values()) {
+            if (!visible(m)) continue
+            for (const tool of m.exec.tools) seen.set(tool.function.name, tool)
         }
         return [...seen.values()]
     }
+    toolsFor(channelId) { return this._collect(m => m.channels === '*' || m.channels.includes(channelId)) }
+    get tools() { return this.toolsFor(MINECRAFT_CHANNEL) }
+    get allTools() { return this._collect(() => true) }
 
-    _moduleName(executor) {
-        if (executor === this.minecraft) return 'minecraft'
-        if (executor === this.vtube) return 'vtube'
-        if (executor === this.vrchat) return 'vrchat'
-        if (executor === this.browser) return 'browser'
-        return null // chat, stts — gated elsewhere/internally
-    }
-
-    // ---- tool name checks (safe) ----
-    isChatTool(name) { return CHAT_TOOL_NAMES.has(name) }
-    isMinecraftTool(name) { return this.minecraft && MINECRAFT_TOOL_NAMES.has(name) }
-    isVtubeTool(name) { return this.vtube && VTUBE_TOOL_NAMES.has(name) }
-    isVrchatTool(name) { return this.vrchat && VRCHAT_TOOL_NAMES.has(name) }
-    isSttsTool(name) { return this.stts && STTS_TOOL_NAMES.has(name) }
+    // ---- tool name checks ----
     isInputTool(name) { return INPUT_TOOL_NAMES.has(name) }
-    isBrowserTool(name) { return this.browser && BROWSER_TOOL_NAMES.has(name) }
+    isMinecraftTool(name) { return MINECRAFT_TOOL_NAMES.has(name) }
+    isVtubeTool(name) { return VTUBE_TOOL_NAMES.has(name) }
 
-    // ---- screenshot drain (only if stts enabled) ----
-    takePendingImages() {
-        return this.stts ? this.stts.takePendingImages() : []
-    }
-
-    // ---- execute – only if executor exists AND its module is enabled ----
+    // ---- execute: only tools of attached executors run ----
     async execute(name, args, context = {}) {
-        const executor = this._byName.get(name)
-        if (!executor) {
-            Logger.warning(`Unknown: ${name}`, "TOOL")
-            this.chat.markFlawed('unknown_tool')
-            return JSON.stringify({ status: "error", message: `Unknown tool: ${name}` })
+        const mod = [...this._mods.values()].find(m => m.exec.toolNames.has(name))
+        if (!mod) {
+            const known = ALL_TOOL_NAMES.has(name)
+            Logger.warning(known ? `Blocked "${name}" — its module isn't running` : `Unknown: ${name}`, "TOOL")
+            this.chat.markFlawed(known ? 'module_disabled' : 'unknown_tool')
+            return JSON.stringify({ status: "error", message: known ? `${name} is currently disabled.` : `Unknown tool: ${name}` })
         }
 
-        const moduleKey = this._moduleByName.get(name)
-        if (moduleKey && !this._enabled[moduleKey]) {
-            Logger.warning(`Blocked "${name}" — ${moduleKey} module is disabled`, "TOOL")
-            this.chat.markFlawed('module_disabled')
-            return JSON.stringify({ status: "error", message: `${moduleKey} is currently disabled.` })
-        }
-        // stts tools (moduleKey === null) enforce their own submodule
-        // enabled-state inside each method already — no router-level check needed.
-
-        const isStts = this.stts && this.isSttsTool(name)
-        const isBrowser = this.browser && this.isBrowserTool(name)
-
-        if (isStts || isBrowser) {
+        if (mod.voiceOnly) {
             const inVoiceChannel = context.channelId === VOICE_ASSISTANT_CHANNEL
-            const opts = getConfig()
-            const isTrustedDM = opts.allowAnyToolViaDM
+            const isTrustedDM = getConfig().allowAnyToolViaDM
                 && context.isDM
                 && context.userId
                 && String(context.userId) === String(getOwnerId())
 
             if (!inVoiceChannel && !isTrustedDM) {
                 Logger.warning(`Blocked "${name}" outside voiceAssistant channel (channelId=${context.channelId}, isDM=${context.isDM}, userId=${context.userId})`, "TOOL")
-                this.chat.markFlawed(isStts ? 'stts_tool_wrong_channel' : 'browser_tool_wrong_channel')
+                this.chat.markFlawed('voice_tool_wrong_channel')
                 return JSON.stringify({ status: "error", message: `${name} is only available in voice conversations or trusted DMs.` })
             }
         }
 
-        this.stts?.noteTool(name) // lets the typing tools know if this turn read outside content
-        return executor.execute(name, args, context)
+        for (const { exec } of this._mods.values()) exec.noteTool?.(name) // typing tools track whether the turn read outside content
+        return mod.exec.execute(name, args, context)
     }
 }
 
@@ -250,4 +124,4 @@ const ALL_TOOL_NAMES = new Set([
     ...BROWSER_TOOL_NAMES,
 ])
 
-export { ToolRouter, ALL_TOOL_NAMES, VOICE_ASSISTANT_CHANNEL, TOGGLEABLE_MODULES }
+export { ToolRouter, ALL_TOOL_NAMES, VOICE_ASSISTANT_CHANNEL }

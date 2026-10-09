@@ -51,7 +51,7 @@ export async function startSurvivalLoop(stateController, mcSend, mcChat, ollamaU
     let nextMessageAt = Date.now() + randomMsgDelay(settings)
 
     // Create router with all executors wired up
-    const toolRouter = new ToolRouter(mcSend, () => stateController, vtsClient)
+    const toolRouter = ToolRouter.forMinecraft(() => stateController, vtsClient)
 
     // VtubeToolExecutor starts with an empty expressionCache and nothing
     // else in this call path ever calls refreshExpressions() for it - so

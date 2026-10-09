@@ -36,15 +36,6 @@ export function getRunConfig() {
     return (runConfig ??= getConfigFromFlags(parseFlags()))
 }
 
-/** Tool-module selection for the Lily constructor, derived from the run config. */
-export function lilyOptionsFor(rc) {
-    const sttsTools = rc.stts || rc.pidev || rc.coding
-    return {
-        modules: { minecraft: !!rc.backend, vtube: rc.vtube, vrchat: rc.vrchat, stts: sttsTools, browser: rc.browser },
-        stts: { enabled: sttsTools, pidevEnabled: sttsTools && rc.pidev, codingEnabled: sttsTools && rc.coding },
-    }
-}
-
 export function describeConfig(config) {
     let label = config.backend ?? 'discord-only'
     if (config.bending) label += '-bending'

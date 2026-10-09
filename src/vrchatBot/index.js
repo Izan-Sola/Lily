@@ -17,7 +17,7 @@ export async function startVrchatBot({ ai }) {
 
     initOsc();
     initFollow();
-    startWebServer(3030);
+    const server = startWebServer(3030);
     // Start voice listener (now just attaches event listeners, doesn't start audio capture)
     startVoiceListener();
     initVrchatAutoJoin();
@@ -109,6 +109,7 @@ export async function startVrchatBot({ ai }) {
             stopFollow();
             stopVoiceListener();
             stopVrchatAutoJoin();
+            server.close();
         },
     };
 }

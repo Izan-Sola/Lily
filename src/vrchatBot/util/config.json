@@ -9,7 +9,7 @@
   "AUDIO_MONITOR_SOURCE": "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor",
   "WHISPER_MODEL": "small.en",
   "SILERO_VAD_MODEL_PATH": "./silero_vad.onnx",
-  "WHISPER_SIDECAR_URL": "http://192.168.18.61:8775/transcribe",
+  "WHISPER_SIDECAR_URL": "http://192.168.18.61:8776/transcribe",
   "VOICE_SIDECAR_URL": "http://192.168.18.61:8790/speak",
   "VOICE_WAKE_WORD": ["lily", "legally", "dealy", "clearly", "lili", "lilly", "lilí", "really", "leally", "leeli", "lil"],
   "VAD_POSITIVE_THRESHOLD": 0.6,

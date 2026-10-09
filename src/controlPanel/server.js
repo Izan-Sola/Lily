@@ -9,7 +9,6 @@ import {
     verifyPassword, verifyUsername, newCsrfToken,
 } from './auth.js'
 import { isRunning, restartLlamaServer, startLlamaServer, stopLlamaServer } from './llamaServerManager.js'
-import { TOGGLEABLE_MODULES } from '../ai/tools/toolRouter.js'
 import { REMOTE_HOSTS } from './remoteHosts.js'
 import { REMOTE_ACTIONS, listActions } from './remoteActions.js'   // NEW
 
@@ -254,23 +253,20 @@ function dashboardPage(csrfToken) {
         return res.json()
     }
 
-    const LABELS = {
-        minecraft: 'Minecraft', vtube: 'VTube Studio', vrchat: 'VRChat',
-        browser: 'Browser control', screenshot: 'Screenshot', pidev: 'Pi-dev / system commands',
-        coding: 'VSCode editing', input: 'Typing, keys & clipboard',
-    }
+    let modulesBusy = false
 
     async function loadModules() {
+        if (modulesBusy) return
         const status = await api('/api/modules')
         const el = document.getElementById('modules')
         el.innerHTML = Object.entries(status).map(([name, s]) => \`
             <div class="row">
                 <div>
-                    <span class="name">\${LABELS[name] || name}</span>
-                    \${!s.available ? '<div class="unavailable">not started at boot</div>' : ''}
+                    <span class="name">\${s.label}</span>
+                    \${s.needs.length ? \`<div class="unavailable">needs \${s.needs.join(', ')}</div>\` : ''}
                 </div>
                 <label class="switch">
-                    <input type="checkbox" \${s.enabled ? 'checked' : ''} \${!s.available ? 'disabled' : ''}
+                    <input type="checkbox" \${s.running ? 'checked' : ''}
                         onchange="toggleModule('\${name}', this.checked)">
                     <span class="slider"></span>
                 </label>
@@ -279,13 +275,17 @@ function dashboardPage(csrfToken) {
     }
 
     async function toggleModule(name, enabled) {
+        modulesBusy = true
+        document.querySelectorAll('#modules input').forEach(i => i.disabled = true)
+        toast(\`\${enabled ? 'Starting' : 'Stopping'} \${name}...\`)
         try {
             await api(\`/api/modules/\${name}/toggle\`, { method: 'POST', body: JSON.stringify({ enabled }) })
-            toast(\`\${name} \${enabled ? 'enabled' : 'disabled'}\`)
+            toast(\`\${name} \${enabled ? 'started' : 'stopped'}\`)
         } catch (e) {
             toast('Error: ' + e.message)
-            loadModules()
         }
+        modulesBusy = false
+        loadModules()   // may have started/stopped dependencies or swapped a conflicting module
     }
 
     async function loadApprovals() {
@@ -404,6 +404,7 @@ function dashboardPage(csrfToken) {
     })
 
     loadModules()
+    setInterval(loadModules, 5000)
     loadApprovals()
     setInterval(loadApprovals, 5000)
     loadLlamaStatus()
@@ -413,7 +414,7 @@ function dashboardPage(csrfToken) {
     </body></html>`
 }
 
-export function startControlPanel(ai, { port, username, passwordHash, sessionSecret, trustProxy = true }) {
+export function startControlPanel(manager, { port, username, passwordHash, sessionSecret, trustProxy = true }) {
     const app = express()
     if (trustProxy) app.set('trust proxy', 1)
 
@@ -534,17 +535,14 @@ export function startControlPanel(ai, { port, username, passwordHash, sessionSec
     })
 
     app.get('/api/modules', (req, res) => {
-        res.json(ai.getModuleStatus())
+        res.json(manager.status())
     })
 
-    app.post('/api/modules/:name/toggle', requireCsrf, (req, res) => {
+    app.post('/api/modules/:name/toggle', requireCsrf, async (req, res) => {
         const { name } = req.params
-        const { enabled } = req.body
-        if (!TOGGLEABLE_MODULES.includes(name)) {
-            return res.status(400).json({ error: 'Unknown module' })
-        }
-        const result = ai.setModuleEnabled(name, !!enabled)
-        if (!result.ok) return res.status(400).json({ error: result.reason })
+        if (!(name in manager.status())) return res.status(400).json({ error: 'Unknown module' })
+        const result = await (req.body.enabled ? manager.start(name) : manager.stop(name))
+        if (!result.ok) return res.status(500).json({ error: result.error })
         res.json({ ok: true })
     })
 

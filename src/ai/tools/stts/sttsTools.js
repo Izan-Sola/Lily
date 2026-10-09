@@ -2,7 +2,6 @@
 import { Logger } from '../../../utils/Logger.js'
 import { ok, err } from '../toolHelpers.js'
 import { checkShrinkRatio, checkStubBodies } from '../../../coding/codeEditShared.js'
-import { approvalStore } from '../riskyActionsManagement/approvalStore.js'
 import { LOCAL_GATE_TOKEN } from '../riskyActionsManagement/approvalRoutes.js'
 import { fileURLToPath } from 'node:url'
 import { getSection } from '../../config.js'
@@ -24,10 +23,7 @@ const INPUT_POLICY = new Proxy({}, { get: (_, key) => getSection('input')[key] }
 // (local voice, unchanged); "laptop" etc. → that remote web app.
 // Edit generation, risk classification and approvals always stay on the brain.
 class SttsToolExecutor {
-    constructor(sttsEnabled = false, pidevEnabled = false, codingEnabled = false, editCallback = null, completeCallback = null) {
-        this.sttsEnabled = !!sttsEnabled
-        this.pidevEnabled = !!pidevEnabled
-        this.codingEnabled = !!codingEnabled
+    constructor(editCallback = null, completeCallback = null) {
         this._editCallback = editCallback
         this._input = new InputTools({ complete: completeCallback })
         this._local = createLocalDevice({
@@ -42,39 +38,19 @@ class SttsToolExecutor {
                 extensionPath: fileURLToPath(new URL('../pidev-bridge/lily-gate.ts', import.meta.url)),
             },
         })
-        this._available = {
-            screenshot: !!sttsEnabled,
-            pidev: !!(sttsEnabled && pidevEnabled),
-            coding: !!(sttsEnabled && codingEnabled),
-            input: !!sttsEnabled,
-        }
-        this._enabled = { screenshot: true, pidev: true, coding: true, input: true }
-        this._onCreated = null
+        this._on = new Set() // active tool groups; the module manager flips these
         this._pendingImages = []
     }
 
-    setSubmoduleEnabled(key, enabled) {
-        if (!SUBMODULES.includes(key)) {
-            return { ok: false, reason: `"${key}" isn't a toggleable STTS submodule.` }
-        }
-        if (!this._available[key]) {
-            return { ok: false, reason: `${key} wasn't started at boot (missing flag), so it can't be toggled. Restart with that flag to make it available.` }
-        }
-        this._enabled[key] = !!enabled
-        Logger.info(`${key} tools ${enabled ? 'ENABLED' : 'DISABLED'}`, "MODULE TOGGLE")
-        return { ok: true }
+    setActive(key, on) {
+        if (!SUBMODULES.includes(key)) throw new Error(`"${key}" isn't an STTS tool group.`)
+        this._on[on ? 'add' : 'delete'](key)
     }
 
-    getSubmoduleStatus() {
-        const status = {}
-        for (const key of SUBMODULES) {
-            status[key] = { available: this._available[key], enabled: this._available[key] && this._enabled[key] }
-        }
-        return status
-    }
+    get hasActive() { return this._on.size > 0 }
 
     get toolNames() {
-        return this._activeToolDefs().map(t => t.function.name)
+        return new Set(this._activeToolDefs().map(t => t.function.name))
     }
 
     get tools() {
@@ -101,19 +77,8 @@ class SttsToolExecutor {
         return images
     }
 
-    setApprovalCallbacks({ onApprovalNeeded } = {}) {
-        // 'created' fires from the /approval/request route whenever pi asks for something risky.
-        if (this._onCreated) approvalStore.off('created', this._onCreated)
-        if (!onApprovalNeeded) return
-        this._onCreated = (entry) => {
-            try { onApprovalNeeded(entry) }
-            catch (e) { Logger.error(`onApprovalNeeded callback threw: ${e.message}`, "APPROVAL") }
-        }
-        approvalStore.on('created', this._onCreated)
-    }
-
     _active(key) {
-        return this._available[key] && this._enabled[key]
+        return this._on.has(key)
     }
 
     // ─── screenshot ─────────────────────────────────────────────────────

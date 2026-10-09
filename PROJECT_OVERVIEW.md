@@ -16,6 +16,8 @@
 
     - [Tool executors](#tool-executors)
 
+    - [Typing tools and skills](#typing-tools-and-skills)
+
   - [Modularity](#modularity)
 
   - [Automatic training data generation](#automatic-training-data-generation)
@@ -73,17 +75,20 @@
 
 - **`TurnContext`** (`TurnContext.js`): everything one pass of the loop needs (channel, system prompt override, caller options, images, allowed tools, in-turn `scratch` messages, repeat tracker, per-tool use counts, pending GIF, injected memory block). It's created in `handleMessage` / `resumeToolLoop` and passed down, instead of living in per-channel Maps on the class.
 
-- **Tool loop**: each round asks the model and handles one of five response shapes, each in its own small method:
+- **Tool loop**: each round asks the model and handles one of six response shapes, each in its own small method:
 
   - **Foreign (Continue) tool call** (`_handoff`): forwards the first call to the caller after the risk check.
   - **Native tool call** (`_nativeRound`): runs the calls, results go back as `tool` messages.
   - **Embedded `<tool_call>` XML/JSON** (`_embeddedRound`): same execution path as native, results go back as `<tool_response>`.
   - **Malformed call**: marks the turn flawed and nudges the model to use the right format.
   - **Narrated tool** (`_narratedRound`): the model described a tool instead of calling it; nudge, or force a reply once the narration budget runs out.
+  - **Claimed action** (voice assistant only): the first reply says it did something on the computer ("typing it now~", "copied") without calling a tool. It gets one nudge (`CLAIMED_NUDGE`) to call the tool or admit it can't, then the reply goes through normally. The first round of every voice turn also logs the offered tools (`VOICE TOOLS`), which is the quickest way to check a tool actually reached the model.
 
-  Native and embedded rounds share `_runCalls` (per-turn caps, repeat guard, GIF capture) and `_afterToolRound` (screenshots, hard-stop check, Minecraft-action check). Every turn ending goes through `_reply` / `_end`, so the history push, logging, YouTube TTS and voice GIF hook live in one place. When tools are exhausted, `_finishWithoutTools` retries with tools removed until it gets a natural reply.
+  Native and embedded rounds share `_runCalls` (per-turn caps, repeat guard, GIF capture) and `_afterToolRound` (screenshots, hard-stop check, Minecraft-action check). The per-turn cap is `maxUsesPerTool`, except for the typing tools, which use `maxUsesPerInputTool` (default 12) since filling a form takes many small calls. Every turn ending goes through `_reply` / `_end`, so the history push, logging, YouTube TTS and voice GIF hook live in one place. When tools are exhausted, `_finishWithoutTools` retries with tools removed until it gets a natural reply.
 
 - **Reply gate**: `replyGate` is a `() => string | null` hook; if it returns text, the model is skipped and that text is the reply. `start.js` uses it to stop Lily answering while she's in a duel, so the core doesn't need to know about Minecraft states.
+
+- **`generateText(system, user)`**: one plain completion with no tools, no history and no persona. Used where a tool just needs text produced (the rewrite step of `rewrite_text`). It calls the model directly instead of going through `sendToOllama`, so a canned reply-gate answer can never end up typed into someone's app. `generateFileEdit` is the equivalent for code edits.
 
 - **Modules split out of `Lily`**:
 
@@ -92,6 +97,7 @@
   - **`memory/summarizer.js`**: periodic conversation summaries and batched "observe" summaries, stored as episodic memories.
   - **`flawlessCapture.js`**: training-data capture (see [below](#automatic-training-data-generation)).
   - **`blogPush.js`**: fire-and-forget history push to the blog.
+  - **`skills.js`**: loads the markdown skill playbooks from `ai/skills/` (see [Typing tools and skills](#typing-tools-and-skills)).
   - **`utils.js`**: input sanitising, repeat-call tracker, embedded tool-call parser.
 <br>
 
@@ -135,6 +141,8 @@
 
 - The owner's Discord ID is `discord.discordUserID` in `ai/config.json` (read with `getOwnerId()`).
 
+- The typing policy (`input` section of `ai/config.json`, optional) is the exception to `SECTION_DEFAULTS`: its defaults live in `DEFAULT_POLICY` in `deviceInput.js`, so the brain and the STTS remote app, which share that file, can't drift apart. Unset keys fall back to it.
+
 - `utils/config.js` is separate: it only holds env-based values (token, client ID, banned users).
 <br>
 
@@ -154,11 +162,46 @@
 
   - **`VtubeToolExecutor`**: Contains all the tools related to vtubing. Triggering expressions, etc... Built if the `vtube` flag is used.
 
-  - **`VrchatToolExecutor`**, **`SttsToolExecutor`**, **`BrowserToolExecutor`**: VRChat avatar actions, voice-assistant/coding tools (screenshots, Pi-dev, Continue), and browser control. Built for the `vrchat`, `stts`/`pidev`/`coding` and `browser` flags respectively.
+  - **`VrchatToolExecutor`**, **`SttsToolExecutor`**, **`BrowserToolExecutor`**: VRChat avatar actions, voice-assistant tools (screenshots, typing and keys, Pi-dev, Continue) and browser control. Built for the `vrchat`, `stts`/`pidev`/`coding` and `browser` flags respectively. `SttsToolExecutor` has four toggleable submodules: `screenshot`, `pidev`, `coding` and `input` (typing, keys & clipboard).
 
 - Executors can be switched on and off at runtime from the control panel (`setModuleEnabled`).
 
 - **Risky actions** (`riskyActionsManagement/`): commands handed off to Continue are checked by `riskClassifier.js`; anything flagged needs approval (`approvalStore.js`, `approvalRoutes.js`) from the control panel, and Discord is notified when an approval is needed.
+<br>
+
+### Typing tools and skills
+
+###### `inputTools.js`, `deviceInput.js`, `deviceLocal.js`, `remoteDevices.js`, `src/ai/skills.js`, `src/ai/skills/`
+
+- Lets the voice assistant type into **any** focused text box on a device, not just the browser: read it, rewrite it, press shortcuts, use the clipboard. `InputTools` (`inputTools.js`) is owned by `SttsToolExecutor` as its `input` submodule, so it only exists under the `stts` flag and has its own control panel toggle.
+
+- Three kinds of capability on purpose, since a small model is bad at remembering long sequences:
+
+  - **Atomic tools**: `type_text` (insert, or `replace`; `then` presses keys afterwards, i.e. `tab` for the next form field), `read_text_field` (selection or the whole box), `press_keys` (`"ctrl+a"`, `"tab tab down"`), `clipboard` (get/set).
+  - **Composite tool**: `rewrite_text` always does read, rewrite, paste in that order, so code runs it and the model doesn't. The rewrite is one `generateText` call with a tiny prompt and no tools, so instructions hidden in the user's text can't trigger anything. Text over 3500 characters is refused so the result always fits back.
+  - **Skills**: markdown playbooks for jobs whose steps depend on what she finds. The model only sees each skill's name and description inside `use_skill`'s definition, and loading one returns the full steps. `skills.js` re-reads `ai/skills/*.md` on every call, so adding a file needs no restart. Included: `fill-form`, `compose-message`, `continue-writing`. Format is a `name`/`description` frontmatter plus short numbered steps.
+
+- **Result flow**: tool results normally end with a "you're done, reply now" note. `read_text_field`, `clipboard get` and `use_skill` turn it off since the model has to act on what they return, and while a skill is active every typing tool does too, otherwise the skill would be cut off after one step. Text read from the screen is wrapped as content, not instructions.
+
+- **Taint tracking**: `ToolRouter.execute` calls `noteTool(name)` before every tool, and `resetTurn()` runs at the start of each turn. If the turn used `web_search`, a browser tool, `read_text_field` or `clipboard`, it counts as having read outside content, and `type_text` sends `confirm: true` so the device asks before pasting.
+
+- **Device layer**: the brain's own machine and remote devices expose the same API (`activeWindow`, `readText`, `typeText`, `pressKeys`, `clipboardGet/Set`). `deviceLocal.js` + `deviceInput.js` implement it and **must stay identical** to the copies in the STTS remote app; `remoteDevices.js` proxies the same calls to `/device/<op>` (`active-window`, `read-text`, `type-text`, `press-keys`, `clipboard`) with the device's token.
+
+- **`deviceInput.js`**: like the screenshot code, a table of per-platform tools tried in order, with the one that worked last time going first:
+
+  - **Focused window**: `xdotool` (X11), `hyprctl`, `swaymsg`, `kdotool`, GNOME's Window Calls extension over D-Bus (Wayland), PowerShell (Windows).
+  - **Keys**: `xdotool`, `wtype`, `ydotool` (evdev keycodes, so shortcuts work on any layout), PowerShell `SendKeys`. Key combos are parsed once and validated before anything is pressed. A tool that prints a warning but exits 0 (ydotool without its daemon) counts as a failure.
+  - **Clipboard**: `wl-clipboard`, `xclip`, `xsel`, PowerShell. On GNOME Wayland `xclip` goes first, since `wl-copy` has to flash a window that can steal focus.
+  - **Typing** never sends keystrokes for the text itself: save the clipboard, set it to the text and check it landed, re-check the focused window, paste (Ctrl+Shift+V in terminals on Linux), wait `settleMs`, restore the clipboard. Reading uses a probe string so "nothing selected" can be told apart from "selection equals the old clipboard".
+
+- **Safety** is enforced here on the device, so it holds no matter who calls (policy in `DEFAULT_POLICY`, overridable by the `input` config block):
+
+  - **`blockedWindows`** (password managers, banking) are never touched, for typing, reading or keys.
+  - **Approval popup** (`confirm` in `deviceLocal.js`: zenity, kdialog or a PowerShell message box, auto-deny after `confirmSeconds`) for: terminals, text over `confirmChars`, combos in `confirmKeys` (Enter, Alt+F4, Ctrl+W...), unidentifiable windows, and any call the brain flags as tainted. `confirm` can be set to `always` or `never`.
+  - Nothing ever presses Enter on its own; typing never submits.
+  - The focused window is re-checked after the popup and again right before pasting; if it changed the call fails (409).
+  - If the focused window can't be identified the call is refused, unless `blind` is on.
+  - Errors carry a status (400 bad input, 403 blocked or declined, 409 focus changed, 501 no tool for this system) and a message the model can act on.
 <br>
 
 ## Modularity
@@ -226,7 +269,11 @@
 
 - **Local mic**: on `stt.on('wake', ...)` it runs a turn on the voice-assistant channel and speaks the reply with `tts.speak`.
 
-- **Remote devices**: one Express server on `STTS_REMOTE_PORT` (default 8770) serves `/stts` (turns from remote devices, which speak the reply themselves) and the approval routes.
+- **Remote devices**: one Express server on `STTS_REMOTE_PORT` (default 8770) serves `/stts` (turns from remote devices, which speak the reply themselves) and the approval routes. The device side is the separate STTS web app (STTS-Remote-Module), which records audio, sends it to whisper, posts the text to `/stts/turn` and answers the brain's `/device/<op>` calls: screenshot, ask popup, `pi`, the VS Code companion and the typing ops (see [Typing tools and skills](#typing-tools-and-skills)). Every op is token protected per device, and unknown device ids never fall back to the server.
+
+- **Where tools run**: each turn carries a device id (`deviceContext`), and `SttsToolExecutor` resolves it through `getDevice`: the local device is built in-process from `deviceLocal.js`, remote ones are proxied by `remoteDevices.js`. A tool never needs to know which one it got. Approvals for risky commands and edit generation stay on the brain; the typing approval popups appear on the device itself.
+
+- **Web app extras**: it listens on `host` (UI) and `deviceHost` (`/device/*` only) separately, so the UI can stay on `127.0.0.1` while the brain reaches the device over Tailscale. It streams every device op to the UI as a live activity feed (`/api/events`, server-sent events), and matches wake words as whole words (with `wake.leadingOnly` for words that only count at the start of a sentence).
 
 - **GIFs**: if a turn produced a GIF, it's DMed to the owner through the Discord client (resolved lazily, since Discord may log in after this starts).
 <br>
@@ -429,4 +476,3 @@
 - Deliberately spins up its **own fresh `Lily` instance** (`new Lily()`, not the shared `ai` built in `start.js`), on its own channel id (`"pi-dev"`), so Pi gets an isolated memory/history lane instead of bleeding into Discord/Minecraft context.
 
 - A persona-only excerpt of the main system prompt (no tool defs, no Minecraft-specific instructions) is appended after Pi's own system prompt, so Pi's built-in tool/dev instructions stay fully intact and Lily just rides on top as a personality layer, replies get wrapped in-character but the actual file/OS operations are handled entirely by Pi's own tools, the bridge never calls into Pi directly.
-

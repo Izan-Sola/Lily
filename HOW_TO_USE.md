@@ -21,6 +21,11 @@
   * [Mineflayer way](#mineflayer-way)
 
 * [STTS](#stts)
+
+  * [Remote devices](#remote-devices)
+  * [Typing anywhere](#typing-anywhere)
+  * [Skills](#skills)
+
 * [VSC integration](#vsc-integration)
 * [VRChat](#vrchat)
 
@@ -64,7 +69,7 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 - There's a bunch of flags you can combine to enable each functionality. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
 
-- All the available flags are : `modded`, ``, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, `vtube`, `browser`, `n8n`.
+- All the available flags are : `modded`, `stts`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, `vtube`, `browser`, `n8n`.
 
 All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the flags you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
 
@@ -159,13 +164,13 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 #### Remote devices
 
-* By default STTS only works on the machine running the brain. [This](https://github.com/Izan-Sola/STTS-Remote-Module) lets any other device (your laptop, for example) talk to the brain through the STTS web app and still use the tools **on that device**. If you ask her to look at your screen from the laptop, she screenshots the laptop, not the server. Same for the VSC tools, the popup and `pi`. Oh, and you also need to install the VSC extension located in `src/ai/coding/`.
+* By default STTS only works on the machine running the brain. [This](https://github.com/Izan-Sola/STTS-Remote-Module) lets any other device (your laptop, for example) talk to the brain through the STTS web app and still use the tools **on that device**. If you ask her to look at your screen from the laptop, she screenshots the laptop, not the server. Same for typing and keys (see [Typing anywhere](#typing-anywhere)), the clipboard, the VSC tools, the popup and `pi`. Oh, and you also need to install the VSC extension located in `src/ai/coding/`.
 
 * Nothing changes for local use. If `brain.url` is left empty in the web app, it keeps working on its own with a local `pi`.
 
-* How it works: the web app records and sends the audio to whisper, then sends the text to the brain (`/stts/turn`). The brain runs the turn like it always does, and whenever a tool needs the device it calls back into the web app (`/device/*`). Edit generation, risk checks and approvals stay on the brain, so the control panel is still where you approve risky commands (they show up as `[on laptop] ...`).
+* How it works: the web app records and sends the audio to whisper, then sends the text to the brain (`/stts/turn`). The brain runs the turn like it always does, and whenever a tool needs the device it calls back into the web app (`/device/*`). Edit generation, risk checks and approvals stay on the brain, so the control panel is still where you approve risky commands (they show up as `[on laptop] ...`). The typing approvals are the exception: those popups appear on the device itself, since that's where you are looking.
 
-* Remote tools use the same flags as local ones, so the brain needs to be started with `stts`, plus `pidev` and/or `coding` if you want those tools.
+* Remote tools use the same flags as local ones, so the brain needs to be started with `stts`, plus `pidev` and/or `coding` if you want those tools. The typing tools only need `stts`.
 
 ##### Brain side
 
@@ -196,8 +201,13 @@ All modes are configured through a unified start file (`src/start.js`) that auto
   * **brain.timeoutMs**: How long to wait for the brain's reply before giving up. Default `660000`.
   * **companionUrl**: Where the VS Code companion is listening on this device. Default `http://localhost:8768`.
   * **timeouts**: Per-tool timeouts (`screenshotMs`, `askUserMs`, `piMs`, `companionRequestMs`...). Edits apply without a restart.
+  * **host** and **deviceHost**: Where the web app listens. Since she can now type on the device, don't leave the UI open to your whole network. Set `host` to `127.0.0.1` (UI only on this machine, use `tailscale serve` for your phone) and `deviceHost` to this device's Tailscale IP (only `/device/*`, token protected, for the brain). If you leave both unset, one listener on `0.0.0.0` serves everything like before.
+  * **wake.leadingOnly**: Optional list of wake words that only count at the start of a sentence, i.e `["really", "clearly", "legally"]`. They are common words that whisper often hears as "Lily". Wake words are matched as whole words now, so "lil" no longer fires on "still".
+  * **input**: The typing policy, see [Typing anywhere](#typing-anywhere).
 
 * Screenshots on Linux try the tool for your desktop first (GNOME, KDE, grim on Wayland) and then fall back to `scrot`, `maim` and ImageMagick's `import`, so have at least one installed. The input popup needs `zenity` or `kdialog`. Windows works too.
+
+* The web app shows a live feed of what the brain does on the device (screenshots, typing, key presses, clipboard...) as small lines in the log.
 
 ##### Ports
 
@@ -205,6 +215,76 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 * If you use Tailscale, allow them only on that interface, i.e `sudo ufw allow in on tailscale0 to any port 8770 proto tcp`.
 
 > **Note:** Remote turns are processed one at a time, but they aren't coordinated with a turn from the brain's own mic. If you talk to both at the exact same time, screenshots may get mixed up.
+
+#### Typing anywhere
+
+* She can type into **any** text box on the device you are talking through (browser, Discord desktop app, notes, whatever has focus), read what's in it, rewrite it, press shortcuts and use the clipboard. It works on the brain's own machine and on remote devices, since both use the same device code (`deviceInput.js`).
+
+* Tools: `type_text`, `read_text_field`, `rewrite_text`, `press_keys`, `clipboard` and `use_skill`. They need the `stts` flag and can be switched on/off from the control panel ("Typing, keys & clipboard").
+
+* Text is never typed key by key. It goes to the clipboard, gets pasted with Ctrl+V (Ctrl+Shift+V in terminals) and then your old clipboard is put back. Only text is restored, if you had an image copied it's gone.
+
+* What each device needs:
+
+  * **X11**: `sudo apt install xdotool xclip` and you are done. By far the easiest option, so if you are on Zorin/GNOME and don't care about Wayland, pick the Xorg session at the login screen.
+  * **Wayland**: `ydotool` **with its daemon running** (`ydotoold`), plus `wl-clipboard`. `wtype` is tried first but only works on sway/Hyprland style compositors, not GNOME or KDE.
+    * Without the daemon ydotool prints "backend unavailable" and does nothing. The brain reports that as an error instead of pretending it typed.
+    * Your user needs access to `/dev/uinput` (a udev rule giving it to the `input` group, add yourself to the group and log out and in).
+    * Run `ydotoold` as a user service with an explicit socket, i.e `ExecStart=/usr/local/bin/ydotoold --socket-path=%t/.ydotool_socket --socket-perm=0600`, and set `YDOTOOL_SOCKET=/run/user/1000/.ydotool_socket` in the environment of whatever runs the brain / web app (they spawn `ydotool` themselves). The apt package on older Ubuntu/Zorin doesn't ship the daemon, build it from the [repo](https://github.com/ReimuNotMoe/ydotool).
+    * **GNOME**: it has no way of telling which window is focused, so install the [Window Calls](https://extensions.gnome.org/extension/4724/window-calls/) extension. Without it she refuses to type, since she can't check the window (`input.blind` overrides that, see below). KDE uses `kdotool`, Hyprland and sway work out of the box.
+  * **Windows**: nothing to install, it uses PowerShell. It can't type into elevated (admin) windows and can't press the Windows key.
+  * The approval popup needs `zenity` or `kdialog` (or PowerShell on Windows).
+  * The process must run inside your desktop session, so `DISPLAY` / `WAYLAND_DISPLAY` and `XDG_SESSION_TYPE` are set.
+
+* Safety is enforced on the device, no matter who asks:
+
+  * She never presses Enter by herself. Typing never sends or submits anything. Enter (and ctrl+enter, alt+f4, ctrl+w, ctrl+q, super+l...) needs you to click Allow on a popup.
+  * Password managers and banking windows are never touched.
+  * Typing into a terminal, or pasting a long text, asks first.
+  * If the turn read outside content (web search, browser, a text field, the clipboard), every paste asks first.
+  * The focused window is checked again right before pasting, if it changed, nothing happens. The popup auto-denies after 20 seconds.
+
+* Tune it with an optional `input` block, in the brain's `config.json` and in the web app's `config.json` (every key has a default, only add what you change):
+
+```json
+  "input": {
+    "confirm": "risky",
+    "confirmChars": 500,
+    "maxChars": 4000,
+    "settleMs": 400,
+    "blockedWindows": ["keepass", "bitwarden", "paypal"],
+    "terminals": ["terminal", "konsole", "kitty"],
+    "confirmKeys": ["enter", "ctrl+enter", "alt+f4"],
+    "blind": false
+  }
+```
+
+  * **confirm**: `"risky"` (default) only asks in the cases above, `"always"` asks for everything, `"never"` turns popups off.
+  * **confirmChars** / **maxChars**: Pastes longer than the first ask first, longer than the second are refused.
+  * **settleMs**: Pause so the app reads the clipboard before it's restored. Raise it if pastes come out wrong on a slow machine.
+  * **blockedWindows**: Words matched against the app name and window title. Lists replace the defaults, they don't add to them.
+  * **terminals**: Matched against the app name only. These also paste with Ctrl+Shift+V.
+  * **confirmKeys**: Key combos that always need approval.
+  * **blind**: `true` lets her type even if the focused window can't be identified (always asks).
+
+* In the brain's `config.json` you can also set **maxUsesPerInputTool** (default `12`). Typing tools get a higher per-turn cap than other tools because filling a form takes many small calls.
+
+##### Skills
+
+* Some jobs aren't one action, and the steps depend on what she finds (filling a form, answering a message). Those are skills: markdown playbooks in `src/ai/skills/`. She only sees each skill's name and one-line description, and loads the full steps with `use_skill` when the request matches.
+* Included: `fill-form`, `compose-message` and `continue-writing`. Fixed sequences, like "fix the grammar of what I selected", aren't skills, they are the `rewrite_text` tool, which runs read, rewrite and paste in code.
+* To add one, drop a `.md` file in the folder, no restart needed:
+
+```
+---
+name: my-skill
+description: one line saying WHEN to use it
+---
+Short numbered steps, written as instructions for the model...
+```
+
+* While a skill is running she can keep calling tools until it's done. Skills should never submit or send anything on their own.
+
 
 
 ### VSC integration
@@ -402,6 +482,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
   * **BROWSER_BRIDGE_URL**: default `ws://localhost:9334`. Only change it if you've configured the extension to use a different port.
 
 * This is currently only offered/used on the voice assistant / STTS side, not wired into Discord.
+* For typing in a browser page the extension is still the better tool (it targets the page's DOM). The system-level typing from [Typing anywhere](#typing-anywhere) is for native apps and for anything the extension can't reach.
 
 ### n8n
 
@@ -425,3 +506,4 @@ All modes are configured through a unified start file (`src/start.js`) that auto
   * **CP_API_KEY**: only needed if you're hitting its API from outside the dashboard itself.
 
 * Same deal as the VRChat website, if you want it publicly reachable you're gonna need a sub-domain + reverse proxy, and to actually pick a real password this time.
+* The STTS tools (screenshots, Pi dev, VSC editing, typing, keys & clipboard) each have their own toggle here.

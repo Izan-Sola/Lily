@@ -13,7 +13,7 @@
 - no idea when I will bother working on the mineflayer implementation
 - should test more the vtubing on youtube
 - ~~Thinking of reworking memory? Maybe make a database divided in categories? System, People, Lily (herself), Events... idk~~ kinda did some stuff
-
+- at some point i should rework the modules enabling/disabling since rn just hides or shows tools to the model not really disable or enable anything
 
 - am i ever gonna start that mc series playing with my AI daughter?
 

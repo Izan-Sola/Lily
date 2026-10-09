@@ -8,7 +8,7 @@
 
 
 ##### Notes or todos 
-
+- pending to update .mds after refactor of modules
 - still cant bend water and chi.
 - no idea when I will bother working on the mineflayer implementation
 - should test more the vtubing on youtube

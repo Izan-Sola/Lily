@@ -1,4 +1,4 @@
-import { getSection } from './config.js'
+import { getSection } from '../config.js'
 
 // One in-flight turn per channel.
 export class ChannelLocks {

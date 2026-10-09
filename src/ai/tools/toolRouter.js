@@ -4,17 +4,18 @@ import { ChatToolExecutor, CHAT_TOOLS, CHAT_TOOL_NAMES } from './chatTools.js'
 import { MinecraftToolExecutor, MINECRAFT_TOOL_NAMES } from './minecraftTools.js'
 import { VtubeToolExecutor, VTUBE_TOOL_NAMES } from './vtubeTools.js'
 import { VrchatToolExecutor, VRCHAT_TOOL_NAMES } from './vrchatTools.js'
-import { SttsToolExecutor, STTS_TOOL_NAMES } from './sttsTools.js'
+import { SttsToolExecutor, STTS_TOOL_NAMES } from './stts/sttsTools.js'
 import { BrowserToolExecutor, BROWSER_TOOL_NAMES } from './browserTools.js'
+import { INPUT_TOOL_NAMES } from './stts/inputTools.js'
 import { getConfig, getOwnerId } from '../config.js'
 
 const VOICE_ASSISTANT_CHANNEL = 'voiceAssistant'
 
 // Whole-executor toggles (on/off as a unit) vs. STTS's own submodule
-// toggles (screenshot / pidev / coding), which are delegated to the
+// toggles (screenshot / pidev / coding / input), which are delegated to the
 // executor itself since it already tracks available+enabled per submodule.
 const WHOLE_EXECUTOR_MODULES = ['minecraft', 'vtube', 'vrchat', 'browser']
-const STTS_SUBMODULES = ['screenshot', 'pidev', 'coding']
+const STTS_SUBMODULES = ['screenshot', 'pidev', 'coding', 'input']
 const TOGGLEABLE_MODULES = [...WHOLE_EXECUTOR_MODULES, ...STTS_SUBMODULES]
 
 class ToolRouter {
@@ -37,6 +38,7 @@ class ToolRouter {
             sttsConfig.pidevEnabled,
             sttsConfig.codingEnabled,
             sttsConfig.editCallback,
+            sttsConfig.completeCallback,
         ) : null
         this.browser = browser ? new BrowserToolExecutor() : null
 
@@ -120,7 +122,7 @@ class ToolRouter {
         return status
     }
     // ---- core methods (delegated) ----
-    resetTurn() { this.chat.resetTurn() }
+    resetTurn() { this.chat.resetTurn(); this.stts?.resetTurn() }
     shouldHardStop() { return this.chat.shouldHardStop() }
     markFlawed(reason) { this.chat.markFlawed(reason) }
     recordNarration() { return this.chat.recordNarration() }
@@ -190,6 +192,7 @@ class ToolRouter {
     isVtubeTool(name) { return this.vtube && VTUBE_TOOL_NAMES.has(name) }
     isVrchatTool(name) { return this.vrchat && VRCHAT_TOOL_NAMES.has(name) }
     isSttsTool(name) { return this.stts && STTS_TOOL_NAMES.has(name) }
+    isInputTool(name) { return INPUT_TOOL_NAMES.has(name) }
     isBrowserTool(name) { return this.browser && BROWSER_TOOL_NAMES.has(name) }
 
     // ---- screenshot drain (only if stts enabled) ----
@@ -233,6 +236,7 @@ class ToolRouter {
             }
         }
 
+        this.stts?.noteTool(name) // lets the typing tools know if this turn read outside content
         return executor.execute(name, args, context)
     }
 }

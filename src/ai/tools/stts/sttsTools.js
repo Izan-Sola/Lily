@@ -1,18 +1,21 @@
 // discord/tools/sttsTools.js
-import { Logger } from '../../utils/Logger.js'
-import { ok, err } from './toolHelpers.js'
-import { checkShrinkRatio, checkStubBodies } from '../../coding/codeEditShared.js'
-import { approvalStore } from './riskyActionsManagement/approvalStore.js'
-import { LOCAL_GATE_TOKEN } from './riskyActionsManagement/approvalRoutes.js'
+import { Logger } from '../../../utils/Logger.js'
+import { ok, err } from '../toolHelpers.js'
+import { checkShrinkRatio, checkStubBodies } from '../../../coding/codeEditShared.js'
+import { approvalStore } from '../riskyActionsManagement/approvalStore.js'
+import { LOCAL_GATE_TOKEN } from '../riskyActionsManagement/approvalRoutes.js'
 import { fileURLToPath } from 'node:url'
-import { getSection } from '../config.js'
+import { getSection } from '../../config.js'
 import { createLocalDevice } from './deviceLocal.js'
 import { getDevice, deviceContext } from './remoteDevices.js'
+import { InputTools, INPUT_TOOL_NAMES } from './inputTools.js'
 
-const SUBMODULES = ['screenshot', 'pidev', 'coding']
+const SUBMODULES = ['screenshot', 'pidev', 'coding', 'input']
 
 // Timeouts come from config.json "timeouts"; read on each access so edits apply live.
 const T = new Proxy({}, { get: (_, key) => getSection('timeouts')[key] })
+// Typing policy from config.json "input" (see DEFAULT_POLICY in deviceInput.js); unset keys use the defaults.
+const INPUT_POLICY = new Proxy({}, { get: (_, key) => getSection('input')[key] })
 
 // ─── STTS Tool Executor ──────────────────────────────────────────────────
 //
@@ -21,13 +24,15 @@ const T = new Proxy({}, { get: (_, key) => getSection('timeouts')[key] })
 // (local voice, unchanged); "laptop" etc. → that remote web app.
 // Edit generation, risk classification and approvals always stay on the brain.
 class SttsToolExecutor {
-    constructor(sttsEnabled = false, pidevEnabled = false, codingEnabled = false, editCallback = null) {
+    constructor(sttsEnabled = false, pidevEnabled = false, codingEnabled = false, editCallback = null, completeCallback = null) {
         this.sttsEnabled = !!sttsEnabled
         this.pidevEnabled = !!pidevEnabled
         this.codingEnabled = !!codingEnabled
         this._editCallback = editCallback
+        this._input = new InputTools({ complete: completeCallback })
         this._local = createLocalDevice({
             timeouts: T,
+            input: INPUT_POLICY,
             companionUrl: process.env.VSCODE_COMPANION_URL || 'http://localhost:8768',
             // pi on this machine calls back into the brain's /approval routes (see approvalRoutes.js).
             gate: {
@@ -41,8 +46,9 @@ class SttsToolExecutor {
             screenshot: !!sttsEnabled,
             pidev: !!(sttsEnabled && pidevEnabled),
             coding: !!(sttsEnabled && codingEnabled),
+            input: !!sttsEnabled,
         }
-        this._enabled = { screenshot: true, pidev: true, coding: true }
+        this._enabled = { screenshot: true, pidev: true, coding: true, input: true }
         this._onCreated = null
         this._pendingImages = []
     }
@@ -80,8 +86,14 @@ class SttsToolExecutor {
         if (this._active('screenshot')) defs.push(SCREENSHOT_TOOL)
         if (this._active('pidev')) defs.push(RUN_COMMAND_TOOL, ASK_USER_TOOL)
         if (this._active('coding')) defs.push(EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL, CREATE_FILE_TOOL)
+        if (this._active('input')) defs.push(...this._input.tools)
         return defs
     }
+
+    // Called by the router at the start of every turn and before every tool, so the typing tools
+    // know whether this turn has read outside content (see inputTools.js).
+    resetTurn() { this._input.resetTurn() }
+    noteTool(name) { this._input.noteTool(name) }
 
     takePendingImages() {
         const images = this._pendingImages
@@ -112,7 +124,9 @@ class SttsToolExecutor {
             const { buffer, via } = await dev.screenshot()
             this._pendingImages.push({ base64: buffer.toString('base64'), mediaType: 'image/png' })
             Logger.info(`Captured screenshot via ${via} (${(buffer.length / 1024).toFixed(0)} KB)`, "STTS")
-            return ok("Screenshot captured, it'll be attached to the conversation for you to see.")
+            // The focused window's name makes vision answers better ("this is Discord", "this is a terminal").
+            const win = await dev.activeWindow().then(w => `${w.app ? `${w.app}: ` : ''}${w.title}`, () => null)
+            return ok(`Screenshot captured${win ? ` (focused window: ${win})` : ''}, it'll be attached to the conversation for you to see.`)
         } catch (e) {
             Logger.error(`Screenshot failed: ${e.message}`, "STTS")
             return err("Couldn't capture the screen.")
@@ -271,6 +285,10 @@ class SttsToolExecutor {
         const dev = getDevice(deviceId, this._local)
         if (!dev) return err(`Unknown device "${deviceId}" — nothing was done.`)
 
+        if (INPUT_TOOL_NAMES.has(name)) {
+            return this._active('input') ? this._input.execute(name, args, dev) : err("Typing tools aren't enabled.")
+        }
+
         switch (name) {
             case "get_screenshot": return this.getScreenshot(dev)
             case "run_system_command": return this.runSystemCommand(args, context, dev)
@@ -391,8 +409,9 @@ const READ_ACTIVE_FILE_TOOL = {
     },
 }
 
-const STTS_TOOL_NAMES = new Set(
-    [SCREENSHOT_TOOL, RUN_COMMAND_TOOL, ASK_USER_TOOL, EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL, CREATE_FILE_TOOL].map(t => t.function.name)
-)
+const STTS_TOOL_NAMES = new Set([
+    ...[SCREENSHOT_TOOL, RUN_COMMAND_TOOL, ASK_USER_TOOL, EDIT_ACTIVE_FILE_TOOL, READ_ACTIVE_FILE_TOOL, CREATE_FILE_TOOL].map(t => t.function.name),
+    ...INPUT_TOOL_NAMES,
+])
 
 export { SttsToolExecutor, STTS_TOOL_NAMES }

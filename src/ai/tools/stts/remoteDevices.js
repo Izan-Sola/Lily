@@ -15,7 +15,7 @@
 import express from 'express'
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { getSection } from '../config.js'
+import { getSection } from '../../config.js'
 
 export const deviceContext = new AsyncLocalStorage()
 const devices = () => { try { return getSection('devices') ?? {} } catch { return {} } }
@@ -58,6 +58,14 @@ export function getDevice(id, local) {
         applyEdit: (path, content) => call('apply-edit', { path, content }, T.companionRequestMs),
         createFile: (path, content, overwrite) => call('create-file', { path, content, overwrite }, T.companionRequestMs),
         runPi: async (prompt) => (await call('pi', { prompt }, T.piMs)).output,
+
+        // typing anywhere. The device enforces the safety rules; these may wait on an approval popup.
+        activeWindow: () => call('active-window', {}, T.companionRequestMs),
+        readText: opts => call('read-text', opts, T.askUserMs),
+        typeText: opts => call('type-text', opts, T.askUserMs),
+        pressKeys: opts => call('press-keys', opts, T.askUserMs),
+        clipboardGet: async () => (await call('clipboard', { action: 'get' }, T.companionRequestMs)).text,
+        clipboardSet: text => call('clipboard', { action: 'set', text }, T.companionRequestMs),
     }
 }
 

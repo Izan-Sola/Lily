@@ -1,6 +1,6 @@
 // Everything one pass of the tool loop needs, created per handleMessage /
 // resumeToolLoop and passed down instead of living in per-channel Maps.
-import { ToolCallTracker } from './utils.js'
+import { ToolCallTracker } from '../utils.js'
 
 export class TurnContext {
     /**

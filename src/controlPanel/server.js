@@ -257,7 +257,7 @@ function dashboardPage(csrfToken) {
     const LABELS = {
         minecraft: 'Minecraft', vtube: 'VTube Studio', vrchat: 'VRChat',
         browser: 'Browser control', screenshot: 'Screenshot', pidev: 'Pi-dev / system commands',
-        coding: 'VSCode editing',
+        coding: 'VSCode editing', input: 'Typing, keys & clipboard',
     }
 
     async function loadModules() {

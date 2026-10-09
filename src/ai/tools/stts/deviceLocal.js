@@ -1,9 +1,10 @@
 // deviceLocal.js
 //
 // Everything that touches the machine the user is sitting at: screenshot,
-// input popup, VS Code companion, pi. No brain dependencies.
+// popups, typing/keys/clipboard (deviceInput.js), VS Code companion, pi.
+// No brain dependencies.
 //
-// The same file is used in two places (keep the copies identical):
+// This file and deviceInput.js are used in two places (keep the copies identical):
 //   • brain   (discord/tools/deviceLocal.js) → "local" device = the minipc
 //   • web app (deviceLocal.js)               → serves the laptop to the brain
 import { execFile, spawn } from 'node:child_process'
@@ -14,6 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createInput } from './deviceInput.js'
 
 const run = promisify(execFile)
 
@@ -93,6 +95,35 @@ const WIN_ASK = [
     `Write-Output ([Microsoft.VisualBasic.Interaction]::InputBox($env:LILY_ASK_PROMPT, "${TITLE}", ""))`,
 ].join('\n')
 
+// ─── allow/deny popup ────────────────────────────────────────────────────
+// Used by the typing safety checks. Resolves true (Allow) or false (Deny, closed, or timed out).
+const CONFIRM_TITLE = 'Lily is asking permission'
+const CONFIRM = {
+    zenity: (m, s) => ['zenity', ['--question', '--no-markup', `--title=${CONFIRM_TITLE}`, `--text=${m}`, `--timeout=${s}`, '--ok-label=Allow', '--cancel-label=Deny']],
+    kdialog: m => ['kdialog', ['--title', CONFIRM_TITLE, '--warningyesno', m, '--yes-label', 'Allow', '--no-label', 'Deny']],
+}
+const WIN_CONFIRM = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    `Write-Output ([System.Windows.Forms.MessageBox]::Show($env:LILY_CONFIRM_MSG, "${CONFIRM_TITLE}", 'YesNo', 'Warning', 'Button2'))`,
+].join('\n')
+
+async function confirm(message, seconds = 20) {
+    const cmds = isWin
+        ? [['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_CONFIRM], { env: { ...process.env, LILY_CONFIRM_MSG: message } }]]
+        : (desktop().de.includes('kde') ? ['kdialog', 'zenity'] : ['zenity', 'kdialog']).map(n => [...CONFIRM[n](message, seconds), {}])
+    const failures = []
+    for (const [bin, args, extra] of cmds) {
+        try {
+            const { stdout } = await run(bin, args, { timeout: (seconds + 5) * 1000, ...extra })
+            return isWin ? /yes/i.test(stdout) : true
+        } catch (e) {
+            if (e.killed || e.code === 1 || e.code === 5) return false // Deny, or no answer in time
+            failures.push(`${bin}: ${e.message}`)
+        }
+    }
+    throw new Error(`No confirmation popup tool available. Tried: ${failures.join(' | ')}`)
+}
+
 // ─── companion (VS Code extension on this machine) ───────────────────────
 async function companion(base, ms, method, route, body) {
     const res = await fetch(base + route, {
@@ -108,15 +139,19 @@ async function companion(base, ms, method, route, body) {
 
 // ─── the device ──────────────────────────────────────────────────────────
 // timeouts: object (or live Proxy) with the keys in DEFAULTS; missing keys fall back.
+// input: typing policy (object or live Proxy, see DEFAULT_POLICY in deviceInput.js).
 // gate: { url, token, deviceId, extensionPath? } -> brain approval endpoint + lily-gate.ts.
 //   extensionPath is optional and defaults to ./lily-gate.ts next to this file.
 //   Without it runPi refuses to run (pi runs with --perm yolo, so it must never run ungated).
-export function createLocalDevice({ timeouts = {}, companionUrl = 'http://localhost:8768', gate = null } = {}) {
+export function createLocalDevice({ timeouts = {}, companionUrl = 'http://localhost:8768', gate = null, input = {} } = {}) {
     const t = k => timeouts[k] ?? DEFAULTS[k]
     if (gate) gate = { ...gate, extensionPath: gate.extensionPath ?? DEFAULT_GATE_EXT }
     const ext = (method, route, body) => companion(companionUrl, t('companionRequestMs'), method, route, body)
 
     return {
+        // activeWindow, clipboardGet/Set, pressKeys, typeText, readText
+        ...createInput({ policy: input, confirm }),
+
         async screenshot() {
             const dir = await mkdtemp(path.join(tmpdir(), 'lily-shot-'))
             const file = path.join(dir, 'screenshot.png')

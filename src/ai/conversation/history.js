@@ -1,4 +1,4 @@
-import { Logger } from '../../src/utils/Logger.js'
+import { Logger } from '../../utils/Logger.js'
 
 /**
  * Clean conversation history — stores only real exchanges.

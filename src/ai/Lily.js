@@ -1,6 +1,6 @@
 // src/ai/Lily.js
 import { sanitizeInput, parseEmbeddedToolCalls } from './utils.js'
-import { ConversationHistory, RawBuffer } from './history.js'
+import { ConversationHistory, RawBuffer } from './conversation/history.js'
 import { SYSTEM_PROMPT, VTUBE_EXPRESSION_ADDENDUM } from './prompts.js'
 import { ToolRouter, ALL_TOOL_NAMES, VOICE_ASSISTANT_CHANNEL as VOICE_ASSISTANT_CHANNEL_ID } from './tools/toolRouter.js'
 import { Logger } from '../utils/Logger.js'
@@ -11,8 +11,8 @@ import { WorkingMemory } from './memory/workingMemory.js'
 import { handleExplicitMemory } from './memory/explicitMemory.js'
 import { Summarizer } from './memory/summarizer.js'
 import { classifyRisk, riskAllowed } from './tools/riskyActionsManagement/riskClassifier.js'
-import { TurnContext } from './TurnContext.js'
-import { ChannelLocks } from './channelLocks.js'
+import { TurnContext } from './conversation/TurnContext.js'
+import { ChannelLocks } from './conversation/channelLocks.js'
 import { FlawlessCapture } from './flawlessCapture.js'
 import { chatCompletion } from './llmClient.js'
 import { pushHistoryToBlog } from './blogPush.js'
@@ -27,6 +27,9 @@ const isMinecraftActionTool = name => name.startsWith("minecraft_action")
 const REPLY_STOP = ["</answer>", "<|user|>", "<|endoftext|>"]
 const NO_TOOLS_NUDGE = "[System: You cannot tool call more in this turn. Stop attempting to call tools this turn, and naturally reply to the user with a text reply addressing his message.]"
 const MALFORMED_NUDGE = `[System: Your <tool_call> was malformed. Use exact format:\n<tool_call>\n{"name": "tool_name", "arguments": {"arg": "value"}}\n</tool_call>]`
+// Voice only: the model says "typing it now~" but never calls the tool, so nothing happens.
+const CLAIMED_NUDGE = "[System: You said you did something on the user's computer but called no tool, so nothing happened. Call the tool now (type_text, press_keys, rewrite_text or clipboard), or tell the user you can't.]"
+const CLAIMS_ACTION = /\b(typing|typed|pressing|pressed|rewriting|rewrote|copying|copied)\b/i
 const NARRATED_NUDGE = "[System: You narrated a tool instead of calling it. Make proper use of the tool calls with the correct format.]"
 
 export class Lily {
@@ -65,6 +68,7 @@ export class Lily {
                 ...stts,
                 editCallback: (filePath, originalContent, instruction) =>
                     this.generateFileEdit(filePath, originalContent, instruction),
+                completeCallback: (system, user) => this.generateText(system, user),
             },
             flags: modules,
         })
@@ -222,6 +226,19 @@ export class Lily {
         return content ? stripCodeFence(content) : null
     }
 
+    // One plain completion: no tools, no history, no persona. Used where the model just has to
+    // produce text (voice "rewrite what's in this box"). Calls the model directly instead of via
+    // sendToOllama, so a canned replyGate answer can never end up typed into the user's app.
+    async generateText(system, user) {
+        const { agentMaxTokens, summaryTemperature } = getSection('llm')
+        const msg = await chatCompletion(
+            this.opts,
+            [{ role: 'system', content: system }, { role: 'user', content: user }],
+            { tools: null, overrides: { max_tokens: agentMaxTokens, temperature: summaryTemperature } },
+        )
+        return (msg?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim() || null
+    }
+
     // ---------- turn endings ----------
     // Every way a loop can end goes through here (voice GIF hook + result).
     _end(ctx, result) {
@@ -284,7 +301,9 @@ export class Lily {
             const { name, args } = call
             const isAction = isMinecraftActionTool(name)
             const used = ctx.toolUses.get(name) ?? 0
-            const cap = isAction ? this.opts.maxUsesPerMinecraftAction : this.opts.maxUsesPerTool
+            const cap = isAction ? this.opts.maxUsesPerMinecraftAction
+                : this.tools.isInputTool(name) ? (this.opts.maxUsesPerInputTool ?? 12) // form-filling takes many small calls
+                    : this.opts.maxUsesPerTool
 
             let blocked = null
             if (used >= cap) {
@@ -396,6 +415,8 @@ export class Lily {
     async runToolLoop(ctx) {
         for (let i = 0; i < this.opts.maxToolLoops; i++) {
             const tools = [...ctx.baseTools, ...ctx.foreignTools]
+            const voice = ctx.channelId === VOICE_ASSISTANT_CHANNEL_ID
+            if (voice && i === 0) Logger.info(`${tools.length} tools: ${tools.map(t => t.function.name).join(', ')}`, "VOICE TOOLS")
             const msg = await this.sendToOllama(this._loopMessages(ctx), { tools, overrides: this._channelOverrides(ctx.channelId) })
             if (!msg) return this._end(ctx, { text: "I'm having trouble thinking right now, sorry!", gifUrl: null })
 
@@ -409,6 +430,10 @@ export class Lily {
                 done = await this._embeddedRound(ctx, content)
             } else if ([...ALL_TOOL_NAMES].some(name => content.includes(name))) {
                 done = await this._narratedRound(ctx, content)
+            } else if (voice && i === 0 && !ctx.claimNudged && CLAIMS_ACTION.test(content) && tools.some(t => this.tools.isInputTool(t.function.name))) {
+                Logger.warning(`Claimed an action without calling a tool: ${content.slice(0, 120)}`, "CLAIMED")
+                ctx.claimNudged = true
+                ctx.scratch.push({ role: "assistant", content }, { role: "user", content: CLAIMED_NUDGE })
             } else if (content && content.toLowerCase() !== "none") {
                 return this._reply(ctx, content, "LILY REPLY")
             } else {

@@ -4,7 +4,7 @@ import { SYSTEM_PROMPT } from '../ai/prompts.js'
 import { getOwnerId } from '../ai/config.js'
 import { VOICE_ASSISTANT_CHANNEL_ID } from '../ai/Lily.js'
 import { Logger } from '../utils/Logger.js'
-import { createTurnRouter } from '../ai/tools/remoteDevices.js'
+import { createTurnRouter } from '../ai/tools/stts/remoteDevices.js'
 import { createApprovalRouter } from '../ai/tools/riskyActionsManagement/approvalRoutes.js'
 
 const REMOTE_PORT = Number(process.env.STTS_REMOTE_PORT) || 8770

@@ -67,13 +67,17 @@ CUDA_VISIBLE_DEVICES=0 /mnt/CA200B97200B8A21/llama.cpp/build/bin/llama-server \
 
 ### Start modes:
 
-- There's a bunch of flags you can combine to enable each functionality. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
+- Everything the brain can do is a **module** (Discord, Minecraft, VTube Studio, STTS, VRChat...). Modules can be started and stopped live from the [control panel](#control-panel), no restart needed. The start flags are just a shortcut to pick which modules start at boot, handy for stuff like pm2. I.E, imagine you want discord and modded minecraft, you would use: `npm run start -- modded discord` or `npm run start -- discord modded`
 
 - All the available flags are : `modded`, `stts`, `mineflayer`, `discord`, `bending`, `vrchat`, `coding`, `pidev`, `vtube`, `browser`, `n8n`.
 
-All modes are configured through a unified start file (`src/start.js`) that automatically loads each functionality based on the flags you choose. The brain is designed to be modular so you can mix and match features by adding the corresponding flags to the `start` command.
+- Some flags start more than one module: `stts` starts the speech pipeline plus the screenshot and typing tools, `vtube` starts VTube Studio plus YouTube chat, and `n8n` starts the n8n bridge plus the Discord notifications (those need `discord` too, otherwise they are skipped). `modded` and `mineflayer` are alternate Minecraft backends, you can't combine them as flags. From the control panel, turning one on turns the other off.
 
-> **Note:** Bending (ProjectKorra) functionality only works with the NeoForge modded Minecraft approach. Mineflayer mode does not currently support bending abilities.
+- You can also start with no flags at all and turn everything on from the control panel (it needs the [control panel variables](#control-panel) set).
+
+All modes are configured through a unified start file (`src/start.js`) that builds the brain, starts the control panel and then starts the modules matching your flags. The brain is designed to be modular so you can mix and match features, at boot with flags or later from the panel.
+
+> **Note:** Bending (ProjectKorra) functionality only works with the NeoForge modded Minecraft approach. Mineflayer mode does not currently support bending abilities. `bending` is a boot flag only, the mod also switches it live when the in-game mode changes.
 
 ### [RAG](https://aws.amazon.com/what-is/retrieval-augmented-generation) Database:
 
@@ -110,6 +114,8 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 * For speech transcription, you are going to need `faster-whisper`. The config is hard coded in the `transcribe()` function so go there if you wanna use cpu instead of cuda, a different model tier, etc...
 
 ### Minecraft
+
+* Start it with the `modded` or `mineflayer` flag, or from the control panel ("Minecraft (NeoForge mod)" / "Minecraft (Mineflayer)"). Only one backend can run at a time: turning one on in the panel stops the other.
 
 #### Neoforge way:
 
@@ -149,6 +155,8 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 ### STTS
 
+* Started with the `stts` flag or the "Speech-to-Text + Voice Assistant" module in the control panel.
+
 * You are gonna need to change a bunch of values in the config:
  
   * **audioMonitorSource**: The microphone/audio input source to monitor. This is system-specific and needs to match the correct source on your machine. Example: `alsa_input.pci-0000_00_1f.3.analog-stereo.99`
@@ -168,9 +176,9 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 * Nothing changes for local use. If `brain.url` is left empty in the web app, it keeps working on its own with a local `pi`.
 
-* How it works: the web app records and sends the audio to whisper, then sends the text to the brain (`/stts/turn`). The brain runs the turn like it always does, and whenever a tool needs the device it calls back into the web app (`/device/*`). Edit generation, risk checks and approvals stay on the brain, so the control panel is still where you approve risky commands (they show up as `[on laptop] ...`). The typing approvals are the exception: those popups appear on the device itself, since that's where you are looking.
+* How it works: the web app records and sends the audio to whisper, then sends the text to the brain (`/stts/turn`). The brain runs the turn like it always does, and whenever a tool needs the device it calls back into the web app (`/device/*`). Edit generation, risk checks and approvals stay on the brain, so the control panel is still where you approve risky commands (they show up as `[on laptop] ...`). The typing approvals are the exception: those popups appear on the device itself.
 
-* Remote tools use the same flags as local ones, so the brain needs to be started with `stts`, plus `pidev` and/or `coding` if you want those tools. The typing tools only need `stts`.
+* Remote tools use the same modules as local ones, so the brain needs `stts` running (flag or panel), plus `pidev` and/or `coding` if you want those tools. The typing tools only need `stts`. A tool is only offered to the AI while its module is running.
 
 ##### Brain side
 
@@ -220,7 +228,7 @@ All modes are configured through a unified start file (`src/start.js`) that auto
 
 * She can type into **any** text box on the device you are talking through (browser, Discord desktop app, notes, whatever has focus), read what's in it, rewrite it, press shortcuts and use the clipboard. It works on the brain's own machine and on remote devices, since both use the same device code (`deviceInput.js`).
 
-* Tools: `type_text`, `read_text_field`, `rewrite_text`, `press_keys`, `clipboard` and `use_skill`. They need the `stts` flag and can be switched on/off from the control panel ("Typing, keys & clipboard").
+* Tools: `type_text`, `read_text_field`, `rewrite_text`, `press_keys`, `clipboard` and `use_skill`. They come with the `stts` flag and can be started/stopped on their own from the control panel ("Typing, keys & clipboard tools"). While that module is stopped she doesn't even know the tools exist.
 
 * Text is never typed key by key. It goes to the clipboard, gets pasted with Ctrl+V (Ctrl+Shift+V in terminals) and then your old clipboard is put back. Only text is restored, if you had an image copied it's gone.
 
@@ -289,6 +297,7 @@ Short numbered steps, written as instructions for the model...
 
 ### VSC integration
 
+- Started with the `coding` flag or the "VSCode editing + coding bridge" module in the control panel (it also starts the Tavily MCP server).
 - For this I used the extension called `Continue`.
 - You need to edit `Continue`'s config, to look something like this:
 
@@ -326,9 +335,9 @@ Short numbered steps, written as instructions for the model...
 
 * If you have been linked here directly, you may also want to check this: [Prerequisites](#prerequisites). And remember to change the prompts in `bot/prompts.js`
   
-* Download this: https://github.com/Izan-Sola/LilyVrchat on the machine where your bot's game is gonna be running. Start it by running: `node index.js` and `node vrchatBridge.js`. For testing that the custom OSC parameters are working, you can use `node osc-test.js`, walk near your bot and check if the console logs anything. If you are gonna run it connected to the main brain, just run it with the `vrchat` flag.
+* Download this: https://github.com/Izan-Sola/LilyVrchat on the machine where your bot's game is gonna be running. Start it by running: `node index.js` and `node vrchatBridge.js`. For testing that the custom OSC parameters are working, you can use `node osc-test.js`, walk near your bot and check if the console logs anything. If you are gonna run it connected to the main brain, just run it with the `vrchat` flag (or start the "VRChat" module from the control panel).
 
-* This thingy exposes a website in port 3030 as an alternative for talking to her through there via text (she will still respond in game), with an option to append a screenshot of what she sees. This is not necessary, but if you wanted to make it publicly accesible, then you would need to register a sub-domain with DuckDNS and reverse proxy.
+* This thingy exposes a website in port 3030 as an alternative for talking to her through there via text (she will still respond in game), with an option to append a screenshot of what she sees. This is not necessary, but if you wanted to make it publicly accesible, then you would need to register a sub-domain with DuckDNS and reverse proxy. The site goes away when the module is stopped.
 
 * Needless to say you are gonna need to allow all the ports mentioned in your firewall. And port 9000 for vrchat OSC stuff.
 
@@ -433,7 +442,8 @@ Short numbered steps, written as instructions for the model...
   * **1 to 8**: Forcibly make it perform a default VRChat expression.
 
 ### Pi dev
- 
+
+ - Started with the `pidev` flag or the "Pi-dev / system commands" module in the control panel. That one module runs the bridge and gives her the system command tools.
  - You will need to edit the `models.json` config of pi-dev to look something like this:
    
     ```json
@@ -460,7 +470,7 @@ Short numbered steps, written as instructions for the model...
 ### VTube Studio
 
 * For this you obviously need [VTube Studio](https://denchisoft.com/) running, model loaded, and the API enabled in its settings.
-* Run with the `vtube` flag. First time it connects it'll ask you to allow the plugin inside VTube Studio itself, just click accept.
+* Run with the `vtube` flag, or start "VTube Studio" from the control panel. First time it connects it'll ask you to allow the plugin inside VTube Studio itself, just click accept. If VTube Studio isn't open when it starts, the module fails to start and you can just start it again from the panel once it is.
 * Environment variables (all optional, defaults shown):
 
   * **VTS_HOST**: default `localhost`.
@@ -468,7 +478,7 @@ Short numbered steps, written as instructions for the model...
   * **VTS_PLUGIN_NAME**: default `LilyVTS`, whatever shows up as the plugin name inside VTS.
   * **VTS_PLUGIN_DEV**: default `Izan`, just the plugin dev/author name field, doesn't really matter what you put.
 
-* If you also want it to read a YouTube live chat while vtubing (so she reacts to chat messages during a stream), you need:
+* If you also want it to read a YouTube live chat while vtubing (so she reacts to chat messages during a stream), the `vtube` flag also starts the "YouTube live chat" module (it's a separate switch in the panel), and you need:
 
   * **YOUTUBE_API_KEY**: A Youtube Data API v3 key from the [Google Cloud Console](https://console.cloud.google.com/).
   * **YOUTUBE_VIDEO_ID**: The video ID of the live stream (the part after `v=` in the URL).
@@ -476,7 +486,7 @@ Short numbered steps, written as instructions for the model...
 ### Browser control
 
 * This uses the [`open-browser-control`](https://github.com/smankoo/open-browser-control) Chrome extension in its bridge mode, so the AI can navigate/click/type/scroll on your actual browser.
-* You need to install the extension in Chrome first, following its own repo's instructions. The bridge itself (`npx -y open-browser-control --bridge`) gets spawned automatically when you run with the `browser` flag, you don't need to run it yourself.
+* You need to install the extension in Chrome first, following its own repo's instructions. The bridge itself (`npx -y open-browser-control --bridge`) gets spawned automatically when you run with the `browser` flag or start "Browser control" from the panel, you don't need to run it yourself. Stopping the module kills it.
 * One environment variable, optional:
 
   * **BROWSER_BRIDGE_URL**: default `ws://localhost:9334`. Only change it if you've configured the extension to use a different port.
@@ -487,12 +497,12 @@ Short numbered steps, written as instructions for the model...
 ### n8n
 
 * This spins up a small OpenAI-compatible endpoint (`/v1/chat/completions`) so you can point an [n8n](https://n8n.io/) AI node at the brain, plus loads any trigger files dropped in `src/n8n/triggers`.
-* Run with the `n8n` flag. No required environment variables, it defaults to port 3200 for the bridge.
-* This also wires up a `/notify` endpoint on the Discord side so a workflow can DM you through the bot, that one needs Discord to also be running (`discord` flag).
+* Run with the `n8n` flag, or start "n8n bridge + triggers" from the panel. No required environment variables, it defaults to port 3200 for the bridge.
+* This also wires up a `/notify` endpoint on the Discord side so a workflow can DM you through the bot. That is its own module ("n8n Discord notifications") and needs both n8n and Discord running. With the flags it is skipped if you didn't pass `discord`. From the panel, turning it on also starts whatever it needs.
 
 ### Control panel
 
-* A small local web dashboard to toggle modules on/off and manage the llama-server process without touching the terminal.
+* A small local web dashboard to start and stop modules live and manage the llama-server process without touching the terminal.
 * It will NOT start unless these 3 are set:
 
   * **CP_USERNAME**: login username.
@@ -505,5 +515,11 @@ Short numbered steps, written as instructions for the model...
   * **CP_HTTPS**: set to `true` if you're putting it behind a reverse proxy with HTTPS, so it trusts the proxy correctly.
   * **CP_API_KEY**: only needed if you're hitting its API from outside the dashboard itself.
 
+* **Modules**: every module has a switch. This is a real start/stop, not just hiding tools: turning one on connects it (opens its ports, logs in, spawns its bridge...) and gives the AI its tools, turning it off disconnects everything and takes the tools away. You don't need to have passed a flag at boot.
+  * Modules that need another one start it for you (i.e. n8n Discord notifications starts n8n and Discord). Turning a module off also turns off everything that depends on it.
+  * The two Minecraft backends swap: turning one on stops the other.
+  * If a module fails to start (VTube Studio closed, a port in use...) the dashboard shows the error and the switch flips back. Fix it and try again.
+  * The list refreshes every few seconds and the switches lock while something is starting or stopping.
+  * Modules: Discord, Speech-to-Text + Voice Assistant, Screenshot, Typing/keys/clipboard, Pi-dev, VSCode editing + coding bridge, Browser control, VTube Studio, YouTube live chat, both Minecraft backends, VRChat, n8n and n8n Discord notifications.
+
 * Same deal as the VRChat website, if you want it publicly reachable you're gonna need a sub-domain + reverse proxy, and to actually pick a real password this time.
-* The STTS tools (screenshots, Pi dev, VSC editing, typing, keys & clipboard) each have their own toggle here.

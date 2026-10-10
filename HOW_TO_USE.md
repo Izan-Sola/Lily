@@ -518,8 +518,8 @@ Short numbered steps, written as instructions for the model...
 * **Modules**: every module has a switch. This is a real start/stop, not just hiding tools: turning one on connects it (opens its ports, logs in, spawns its bridge...) and gives the AI its tools, turning it off disconnects everything and takes the tools away. You don't need to have passed a flag at boot.
   * Modules that need another one start it for you (i.e. n8n Discord notifications starts n8n and Discord). Turning a module off also turns off everything that depends on it.
   * The two Minecraft backends swap: turning one on stops the other.
-  * If a module fails to start (VTube Studio closed, a port in use...) the dashboard shows the error and the switch flips back. Fix it and try again.
+  * If a module fails to start (VTube Studio closed, a port in use...) the dashboard shows the error and the switch flips back.
   * The list refreshes every few seconds and the switches lock while something is starting or stopping.
   * Modules: Discord, Speech-to-Text + Voice Assistant, Screenshot, Typing/keys/clipboard, Pi-dev, VSCode editing + coding bridge, Browser control, VTube Studio, YouTube live chat, both Minecraft backends, VRChat, n8n and n8n Discord notifications.
 
-* Same deal as the VRChat website, if you want it publicly reachable you're gonna need a sub-domain + reverse proxy, and to actually pick a real password this time.
+* Same deal as the VRChat website, if you want it publicly reachable you're gonna need a sub-domain + reverse proxy.

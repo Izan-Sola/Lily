@@ -8,7 +8,7 @@
 
   - [Core (`Lily`)](#core-lily)
 
-  - [Startup and services](#startup-and-services)
+  - [Startup and modules](#startup-and-modules)
 
   - [Configuration](#configuration)
 
@@ -69,9 +69,9 @@
 
 ###### `src/ai/`
 
-- `Lily.js` is the AI core: per-channel history and raw buffers, prompt building, and the **tool loop** (`runToolLoop`). It knows nothing about Discord, Minecraft or any other surface; those are wired in from outside (see [Startup and services](#startup-and-services)).
+- `Lily.js` is the AI core: per-channel history and raw buffers, prompt building, and the **tool loop** (`runToolLoop`). It knows nothing about Discord, Minecraft or any other surface; those are wired in from outside (see [Startup and modules](#startup-and-modules)).
 
-- **Construction**: one options object, `new Lily({ overrides, mcSend, vtsClient, modules, stts, onVoiceGif, getStateController, replyGate })`. `modules` picks which tool executors get built (`minecraft`, `vtube`, `vrchat`, `stts`, `browser`), `overrides` layers over `config.json` for that instance (e.g. `{ model }`). Late wiring is done with `setMcSend`, `setVtsClient`, `setBrowserClient`, `setStateController` and `setReplyGate`.
+- **Construction**: one options object, `new Lily({ overrides, onVoiceGif, getStateController, replyGate })`. `overrides` layers over `config.json` for that instance (e.g. `{ model }`). Lily builds **no tool executors** itself besides chat: modules attach theirs to `ai.tools` while they run. Late wiring is done with `setStateController` and `setReplyGate` (the Minecraft module sets them on start and clears them on stop).
 
 - **`TurnContext`** (`TurnContext.js`): everything one pass of the loop needs (channel, system prompt override, caller options, images, allowed tools, in-turn `scratch` messages, repeat tracker, per-tool use counts, pending GIF, injected memory block). It's created in `handleMessage` / `resumeToolLoop` and passed down, instead of living in per-channel Maps on the class.
 
@@ -86,7 +86,9 @@
 
   Native and embedded rounds share `_runCalls` (per-turn caps, repeat guard, GIF capture) and `_afterToolRound` (screenshots, hard-stop check, Minecraft-action check). The per-turn cap is `maxUsesPerTool`, except for the typing tools, which use `maxUsesPerInputTool` (default 12) since filling a form takes many small calls. Every turn ending goes through `_reply` / `_end`, so the history push, logging, YouTube TTS and voice GIF hook live in one place. When tools are exhausted, `_finishWithoutTools` retries with tools removed until it gets a natural reply.
 
-- **Reply gate**: `replyGate` is a `() => string | null` hook; if it returns text, the model is skipped and that text is the reply. `start.js` uses it to stop Lily answering while she's in a duel, so the core doesn't need to know about Minecraft states.
+- **Tool lists per channel**: `getToolsForChannel` asks the router (`toolsFor(channelId)`, or `allTools` for the owner's trusted DMs). What the model is offered is therefore always what's running at that moment, and the VTube prompt addendum is only added while the VTube module is running.
+
+- **Reply gate**: `replyGate` is a `() => string | null` hook; if it returns text, the model is skipped and that text is the reply. The Minecraft (NeoForge) module uses it to stop Lily answering while she's in a duel, so the core doesn't need to know about Minecraft states.
 
 - **`generateText(system, user)`**: one plain completion with no tools, no history and no persona. Used where a tool just needs text produced (the rewrite step of `rewrite_text`). It calls the model directly instead of going through `sendToOllama`, so a canned reply-gate answer can never end up typed into someone's app. `generateFileEdit` is the equivalent for code edits.
 
@@ -101,26 +103,32 @@
   - **`utils.js`**: input sanitising, repeat-call tracker, embedded tool-call parser.
 <br>
 
-## Startup and services
+## Startup and modules
 
-###### `src/start.js`, `src/startUtils.js`
+###### `src/start.js`, `src/startUtils.js`, `src/modules/`
 
-- `start.js` is the composition root. It parses the flags once (`getRunConfig()`), builds the single `Lily` instance, and then starts everything from a `SERVICES` registry. Nothing imports `start.js`; the `ai` instance and the Discord client are passed in where they're needed (`createBot({ ai })`, `startVoiceAssistant({ ai, getDiscordClient })`), so there are no circular imports.
+- Everything the brain can run is a **module**. Modules really start and stop at runtime (connections, ports, child processes and tools included), from the control panel or from the start flags. The flags are only a boot-time shortcut (handy for pm2) that picks which modules start first.
 
-- Each service is `{ name, label, phase, enabled, needs, start, stop }`:
+- `start.js` is the composition root and is deliberately short: it parses the flags once (`getRunConfig()`), builds the single `Lily` instance and a `ModuleManager`, starts the control panel (if its env vars are set), calls `manager.startFlagged(flags)` and stops everything with `manager.stopAll()` on SIGINT/SIGTERM. Nothing imports `start.js`; the `ai` instance and the Discord client are passed in where they're needed, so there are no circular imports. The control panel is no longer a service, it's the host that drives the manager.
 
-  - **`phase`**: `early` services start before Discord logs in, `ready` services start once it has (or immediately when the `discord` flag isn't used).
-  - **`enabled`**: a function of the run config, so a service only starts if its flag is on.
-  - **`needs`**: names a service that must have started first (e.g. the survival loop needs Minecraft).
-  - **`stop`**: called on shutdown, in reverse start order.
+- **`ModuleManager`** (`modules/manager.js`) owns the lifecycle. A module definition is:
 
-  The same list drives the startup banner, startup and shutdown. A service that fails to start is logged and skipped; it doesn't take the others down.
+  - **`name`, `label`**: id and the text shown in the panel.
+  - **`flag`**: optional CLI flag that starts it at boot. Several modules can share one flag (`stts` starts `stts`, `screenshot` and `input`).
+  - **`needs`**: modules that must be running first.
+  - **`conflicts`**: modules that can't run alongside it (starting it stops them, which is how the two Minecraft backends swap).
+  - **`start(ctx)`**: sets everything up and returns a handle (or nothing). Throws if it fails.
+  - **`stop(handle, ctx)`**: tears everything down.
 
-- **Current services**: control panel, STTS, voice assistant, VTube Studio, YouTube chat, Minecraft, survival loop, n8n triggers, VRChat, coding (Continue) bridge, Tavily MCP server, browser bridge, Pi-dev bridge, n8n bridge, approval callbacks (Discord) and the n8n notify server (Discord).
+  `ctx` is `{ ai, runConfig, handle(name) }`; `handle(name)` returns another running module's handle (e.g. the VTS client, the Discord client).
 
-- **Adding a service**: add an entry to `SERVICES` (plus a `label` if it should appear in the banner). Nothing else needs touching.
+- **Manager API**: `start(name)` (auto-starts missing `needs`, stops `conflicts`), `stop(name)` (stops everything that needs it first), `startFlagged(flags)` (boot only: modules whose `needs` aren't up are skipped with a warning instead of auto-started), `stopAll()` (reverse start order) and `status()` (`{ name: { label, running, needs } }`, used by the panel). Every operation goes through one queue so rapid toggling is safe, and each returns `{ ok }` or `{ ok: false, error }` instead of throwing. A module that fails to start is logged and left stopped; it doesn't take the others down.
 
-- `startUtils.js` holds `parseFlags`, `getConfigFromFlags`, `getRunConfig` (parsed once and cached), `lilyOptionsFor` (maps the run config to Lily's `modules`/`stts` options), `describeConfig` and `getToolConfig`. Modules read flag state through `getRunConfig()`, not by re-parsing `process.argv`.
+- **Current modules** (`modules/index.js`): `discord`, `stts` (speech-to-text + voice assistant), `screenshot`, `input`, `pidev`, `coding`, `browser`, `vtube`, `youtube`, `minecraft-modded`, `minecraft-mineflayer`, `vrchat`, `n8n`, `notify` (needs `n8n` and `discord`). `screenshot`, `input`, `pidev` and `coding` are STTS tool groups (see [Tools](#tools)); `pidev` and `coding` also own their bridges.
+
+- **Adding a module**: add an entry to `MODULES`. If it has tools, call `ai.tools.attach(...)` in `start` and `ai.tools.detach(...)` in `stop`. Add `needs`/`conflicts` for combinations and a `flag` if it should be startable from the command line. Nothing else needs touching.
+
+- `startUtils.js` holds `parseFlags`, `getConfigFromFlags`, `getRunConfig` (parsed once and cached, throws on `modded` + `mineflayer`), `describeConfig` and `getToolConfig`. The Minecraft bots still read flag state (e.g. `bending`) through `getRunConfig()` / the `runConfig` they're handed, not by re-parsing `process.argv`.
 <br>
 
 ## Configuration
@@ -150,30 +158,36 @@
 
 ###### `src/ai/tools/`
 
-- Each main functionality has its own `ToolExecutor` which contains the tool definitions for that specific functionality, its own code logic, and tool functions. Combining functionalities will make each's executor tools available globally. Note that some tools might be filtered in certain parts of the code depending on the source of the user message to avoid misuse.
+- Each main functionality has its own `ToolExecutor` which contains the tool definitions for that specific functionality, its own code logic, and tool functions. An executor only exists in the router while its module is running, so the AI is only ever offered (and can only run) the tools of running modules. Some tools are further filtered by channel, or restricted to voice/trusted DMs, to avoid misuse.
 
-- The main file is `toolRouter.js` which can initialize each independent tool executor for each distinct functionality. It also includes a bunch of helper functions, and routes shared functions that pertain to a specific `ToolExecutor`.
+- The main file is `toolRouter.js`. `ToolRouter` no longer knows about specific modules: it keeps a map of attached executors, each with its visibility rules, and routes calls to whichever one owns the tool name.
+
+  - **`attach(name, exec, { channels, voiceOnly })`**: adds an executor. `channels` is `'*'` (every channel) or a list of channel ids that see its tools; `voiceOnly` makes `execute` refuse the call outside the voice channel and the owner's trusted DMs.
+  - **`detach(name)`**, **`has(name)`**, **`get(name)`**: remove / check / fetch an executor.
+  - **`sttsSet(group, on)`**: turns an STTS tool group on or off. The groups share one `SttsToolExecutor`, attached while at least one group is on and detached when none is.
+  - **`toolsFor(channelId)`**, **`allTools`**: the tool lists (deduped by name). `tools` is a shortcut for the Minecraft channel.
+  - **`execute(name, args, ctx)`**: finds the owning executor. If none is attached, a known tool answers "currently disabled" and an unknown one "Unknown tool" (both mark the turn flawed). Before running, it calls `noteTool(name)` on every executor and applies the `voiceOnly` check.
+  - **`ToolRouter.forMinecraft(getStateController, vtsClient)`**: small router used by the survival loops.
+  - Plus the helpers that delegate to chat (`resetTurn`, `markFlawed`, `autoInjectMemory`...), `takePendingImages`, `refreshExpressions` and the name checks.
 
 - **Tool executors**:
 
-  - **`ChatToolExecutor`**: Contains all tools for a conversational discord bot. Memory tools, gif/meme tools and web search. Always built; chat tools are the only executor with a per-turn budget (`toolLimits` in `config.json`).
+  - **`ChatToolExecutor`**: Contains all tools for a conversational discord bot. Memory tools, gif/meme tools and web search. Always attached; chat tools are the only executor with a per-turn budget (`toolLimits` in `config.json`).
 
-  - **`MinecraftToolExecutor`**: Contains all the tools for an assistant-like minecraft bot. Mining, dropping, attacking, etc... Built if either the `mineflayer` or `modded` flag is used.
+  - **`MinecraftToolExecutor`**: Contains all the tools for an assistant-like minecraft bot. Mining, dropping, attacking, etc... Attached (on the Minecraft channel only) by whichever Minecraft module is running.
 
-  - **`VtubeToolExecutor`**: Contains all the tools related to vtubing. Triggering expressions, etc... Built if the `vtube` flag is used.
+  - **`VtubeToolExecutor`**: Contains all the tools related to vtubing. Triggering expressions, etc... Attached by the `vtube` module.
 
-  - **`VrchatToolExecutor`**, **`SttsToolExecutor`**, **`BrowserToolExecutor`**: VRChat avatar actions, voice-assistant tools (screenshots, typing and keys, Pi-dev, Continue) and browser control. Built for the `vrchat`, `stts`/`pidev`/`coding` and `browser` flags respectively. `SttsToolExecutor` has four toggleable submodules: `screenshot`, `pidev`, `coding` and `input` (typing, keys & clipboard).
+  - **`VrchatToolExecutor`**, **`SttsToolExecutor`**, **`BrowserToolExecutor`**: VRChat avatar actions (attached by `vrchat`), voice-assistant tools (voice channel only) and browser control (attached by `browser`, voice channel only). `SttsToolExecutor` has four tool groups, `screenshot`, `pidev`, `coding` and `input` (typing, keys & clipboard), switched with `setActive(group, on)`. Each group is driven by the module of the same name.
 
-- Executors can be switched on and off at runtime from the control panel (`setModuleEnabled`).
-
-- **Risky actions** (`riskyActionsManagement/`): commands handed off to Continue are checked by `riskClassifier.js`; anything flagged needs approval (`approvalStore.js`, `approvalRoutes.js`) from the control panel, and Discord is notified when an approval is needed.
+- **Risky actions** (`riskyActionsManagement/`): commands handed off to Continue are checked by `riskClassifier.js`; anything flagged needs approval (`approvalStore.js`, `approvalRoutes.js`) from the control panel. While the `discord` module is running it listens to `approvalStore` and posts a notice in the channel that triggered the request.
 <br>
 
 ### Typing tools and skills
 
 ###### `inputTools.js`, `deviceInput.js`, `deviceLocal.js`, `remoteDevices.js`, `src/ai/skills.js`, `src/ai/skills/`
 
-- Lets the voice assistant type into **any** focused text box on a device, not just the browser: read it, rewrite it, press shortcuts, use the clipboard. `InputTools` (`inputTools.js`) is owned by `SttsToolExecutor` as its `input` submodule, so it only exists under the `stts` flag and has its own control panel toggle.
+- Lets the voice assistant type into **any** focused text box on a device, not just the browser: read it, rewrite it, press shortcuts, use the clipboard. `InputTools` (`inputTools.js`) is owned by `SttsToolExecutor` as its `input` group, so its tools only exist while the `input` module is running (started by the `stts` flag, with its own control panel switch).
 
 - Three kinds of capability on purpose, since a small model is bad at remembering long sequences:
 
@@ -183,7 +197,7 @@
 
 - **Result flow**: tool results normally end with a "you're done, reply now" note. `read_text_field`, `clipboard get` and `use_skill` turn it off since the model has to act on what they return, and while a skill is active every typing tool does too, otherwise the skill would be cut off after one step. Text read from the screen is wrapped as content, not instructions.
 
-- **Taint tracking**: `ToolRouter.execute` calls `noteTool(name)` before every tool, and `resetTurn()` runs at the start of each turn. If the turn used `web_search`, a browser tool, `read_text_field` or `clipboard`, it counts as having read outside content, and `type_text` sends `confirm: true` so the device asks before pasting.
+- **Taint tracking**: `ToolRouter.execute` calls `noteTool(name)` on the attached executors before every tool, and `resetTurn()` runs at the start of each turn. If the turn used `web_search`, a browser tool, `read_text_field` or `clipboard`, it counts as having read outside content, and `type_text` sends `confirm: true` so the device asks before pasting.
 
 - **Device layer**: the brain's own machine and remote devices expose the same API (`activeWindow`, `readText`, `typeText`, `pressKeys`, `clipboardGet/Set`). `deviceLocal.js` + `deviceInput.js` implement it and **must stay identical** to the copies in the STTS remote app; `remoteDevices.js` proxies the same calls to `/device/<op>` (`active-window`, `read-text`, `type-text`, `press-keys`, `clipboard`) with the device's token.
 
@@ -206,11 +220,11 @@
 
 ## Modularity
 
-- The brain contains many functionalities, but not all need to be active at the same time. By mixing different flags such as `discord`, `modded`, `vtube` etc... You can choose to enable the functionalities you are actually going to use, anything else will not be enabled.
+- The brain contains many functionalities, but not all need to be active at the same time. Each one is a module (see [Startup and modules](#startup-and-modules)) that can be started and stopped live from the control panel, or picked at boot with flags such as `discord`, `modded`, `vtube` etc... Anything not running has no connections, ports or tools.
 
-- Known flags: `discord`, `modded`, `mineflayer`, `bending`, `vtube`, `vrchat`, `coding`, `pidev`, `stts`, `browser`, `n8n`. `modded` and `mineflayer` are alternate Minecraft backends and can't be combined; `bending` only has an effect with `modded`.
+- Known flags: `discord`, `modded`, `mineflayer`, `bending`, `vtube`, `vrchat`, `coding`, `pidev`, `stts`, `browser`, `n8n`. Some start several modules (`stts` → `stts` + `screenshot` + `input`, `vtube` → `vtube` + `youtube`, `n8n` → `n8n` + `notify`). `modded` and `mineflayer` are alternate Minecraft backends: they can't be combined as flags, and starting one from the panel stops the other. `bending` is a boot flag that only has an effect with `modded`.
 
-- `start.js` handles the brain initiation, checking the flags that were used and enabling each correspondent functionality through the service registry (see [Startup and services](#startup-and-services)).
+- Modules that depend on others (`notify` needs `n8n` and `discord`) start their dependencies automatically when toggled from the panel; at boot, with flags, they're skipped if a dependency isn't running. Stopping a module stops everything that depends on it first.
 <br>
 
 ## Automatic training data generation
@@ -228,7 +242,7 @@
 
 ###### `src/discord/`
 
-- The main file is `bot.js`, containing all the logic for the discord bot functionality. Handling replies, voice calls, media... It receives the `Lily` instance from `createBot({ ai })` and exports the Discord `client`.
+- The main file is `bot.js`, containing all the logic for the discord bot functionality. Handling replies, voice calls, media... It receives the `Lily` instance from `createBot({ ai })` and exports the Discord `client`. The `discord` module calls `createBot` once (its event handlers are registered a single time), logs in on start and destroys the client on stop, so Discord can be turned off and on again without a restart. It also wires the risky-command approval notices while it runs.
 
 ### Features
 
@@ -265,7 +279,7 @@
 
 ###### `src/voiceAssistant/`
 
-- Started by the `VOICE` service (needs `STTS`, so only under the `stts` flag). `startVoiceAssistant({ ai, getDiscordClient })` returns `{ stop() }` and **binds nothing at import time**.
+- Started by the `stts` module together with the STT engine (`stts.start()`, then `startVoiceAssistant`) and stopped with it. `startVoiceAssistant({ ai, getDiscordClient })` returns `{ stop() }` and **binds nothing at import time**.
 
 - **Local mic**: on `stt.on('wake', ...)` it runs a turn on the voice-assistant channel and speaks the reply with `tts.speak`.
 
@@ -275,7 +289,7 @@
 
 - **Web app extras**: it listens on `host` (UI) and `deviceHost` (`/device/*` only) separately, so the UI can stay on `127.0.0.1` while the brain reaches the device over Tailscale. It streams every device op to the UI as a live activity feed (`/api/events`, server-sent events), and matches wake words as whole words (with `wake.leadingOnly` for words that only count at the start of a sentence).
 
-- **GIFs**: if a turn produced a GIF, it's DMed to the owner through the Discord client (resolved lazily, since Discord may log in after this starts).
+- **GIFs**: if a turn produced a GIF, it's DMed to the owner through the Discord client (resolved lazily from the `discord` module's handle, since Discord may start after this, or not at all).
 <br>
 
 ## Minecraft
@@ -284,7 +298,7 @@
 
 ###### `src/minecraft/neoforgemod-way/`
 
-- The duel hook in `start.js` (`setStateController` / `setReplyGate`) is only wired for this backend: while the state is `DUELING`, Lily's chat replies are short-circuited with a canned message.
+- Run by the `minecraft-modded` module (flag `modded`), which conflicts with `minecraft-mineflayer`. On start it starts the bot, attaches `MinecraftToolExecutor` (Minecraft channel only) and sets the duel hook (`setStateController` / `setReplyGate`): while the state is `DUELING`, Lily's chat replies are short-circuited with a canned message. On stop it detaches the tools, clears the hooks and calls `stopMinecraftBot()`, which closes the WebSocket server and stops the state machine and survival loop.
 
 #### **State Machine**
 
@@ -384,7 +398,7 @@
 > Blocking means the queue of actions will be paused until the current action finishes. Non-blocking means the queue will continue to be drained while the current action is being executed.
 <br>
 
-- **`survivalLoop.js`**: Periodically sends a prompt to the bot with all the necessary information for the bot to decide which action to take. Started by the `SURVIVAL` service (modded backend only) and stopped through its `stop()`.
+- **`survivalLoop.js`**: Periodically sends a prompt to the bot with all the necessary information for the bot to decide which action to take. Started by `bot.js` itself once the mod connects (and restarted when the mode changes), and stopped by `stopMinecraftBot()`. It builds its own small router with `ToolRouter.forMinecraft(...)`, separate from `ai.tools`.
 - **`sneak.js`**: Handles the sneak timing.
 - **`movement.js`**: Handles moving to the target location. Re sends "move_to" if the target moves too far.
 <br>
@@ -401,13 +415,13 @@
 
 ###### `src/minecraft/mineflayer/`
 
-- A second, alternate Minecraft backend for cracked/plugin servers, using [mineflayer](https://github.com/PrismarineJS/mineflayer) instead of a server-side mod. Mutually exclusive with the Neoforge backend (`modded` vs `mineflayer` flags), can't run both at once.
+- A second, alternate Minecraft backend for cracked/plugin servers, using [mineflayer](https://github.com/PrismarineJS/mineflayer) instead of a server-side mod. Run by the `minecraft-mineflayer` module (flag `mineflayer`), which conflicts with the Neoforge one: they can't run at once, and starting one stops the other.
 
 - Ports the same `StateController` architecture 1:1 in spirit: `IDLE → RECOVERING → ATTACKING → FOLLOWING`, same priority order, same `survivalLoop.js`/`survivalPromptBuilder.js` shape and `ctx` property names, so existing persona/prompt work transfers over mostly unchanged.
 
 - `MovementHelper` wraps `mineflayer-pathfinder` instead of the mod's custom `move_to`; `SneakHelper` drives `bot.setControlState('sneak', ...)` behind the same `pulse()`/`hold()`/`cancelHold()` API. `MiningState` now issues real `bot.dig()` calls instead of a break event + callback round-trip.
 
-- The **dueling/combo system is entirely dropped** here, still wip. `start.js` doesn't inject a state controller or reply gate for this backend yet.
+- The **dueling/combo system is entirely dropped** here, still wip. The module doesn't inject a state controller or reply gate for this backend yet.
 
 - New over the mod version: `helpers/whisper.js` detects incoming private messages (mineflayer's built-in `whisper` event plus a regex fallback for plugins that format `/msg` differently) and `StateController.setLastUserMessage(player, message, channel)` tracks which channel (`'public'`/`'whisper'`) a message came in on, so replies route back the same way (`/msg` stays private, public chat stays public) without needing her name mentioned first for whispers.
 
@@ -415,9 +429,9 @@
 
 ###### `src/vtubing/`
 
-- Lets the AI control a VTube Studio avatar and read a YouTube live chat while doing so, active under the `vtube` flag (`VTUBE` and `YOUTUBE` services).
+- Lets the AI control a VTube Studio avatar and read a YouTube live chat while doing so. Two modules, both started by the `vtube` flag but separate switches in the panel: `vtube` and `youtube`.
 
-- **`VTSClient.js`**: A persistent authenticated WebSocket connection to VTube Studio's own local API. Handles the one-time plugin authorization handshake, caches the resulting token to `vts_token.json` so it isn't asked again on every restart, and exposes hotkey listing/triggering which `VtubeToolExecutor` calls into.
+- **`VTSClient.js`**: A persistent authenticated WebSocket connection to VTube Studio's own local API. Handles the one-time plugin authorization handshake, caches the resulting token to `vts_token.json` so it isn't asked again on every restart, and exposes hotkey listing/triggering which `VtubeToolExecutor` calls into. The `vtube` module connects it, attaches the executor, refreshes the expression list every minute and drops the client if VTS closes. If VTS isn't open when it starts, the module fails to start (it can be started again from the panel). Minecraft modules take the client from this module's handle if it's running.
 
 - **`youtube/liveClient.js`**: Polls a live stream's chat via the YouTube Data API (`YOUTUBE_API_KEY` + `YOUTUBE_VIDEO_ID`), calling back per new message. Poll interval is floored server-side so a misconfigured value can't burn API quota.
 
@@ -429,7 +443,7 @@
 
 ###### `src/vrchatBot/`
 
-- The VRChat surface: an OSC bridge to control a VRChat avatar plus a voice loop, meant to run following the user around in-game. Kept intentionally separate from the main brain's persistent memory/tools (no tool calls here beyond what's wired through `ai`), active under the `vrchat` flag.
+- The VRChat surface: an OSC bridge to control a VRChat avatar plus a voice loop, meant to run following the user around in-game. Kept intentionally separate from the main brain's persistent memory/tools (no tool calls here beyond what's wired through `ai`), run by the `vrchat` module. Stopping it removes the avatar-action tools, stops following, voice and auto-join, and closes the web UI.
 
 - **`vrchat/osc.js`**: Low-level OSC send/receive to VRChat's local OSC endpoints (movement inputs, avatar parameters, chatbox).
 
@@ -441,7 +455,7 @@
 
 - **`vrchat/vrchatBridge.js`**: Handles auto-accepting invites from trusted user IDs, and the Steam/Proton launch plumbing on Linux.
 
-- **`server.js`**: Exposes a small web UI on port 3030 as a text-based alternative to talking to the bot, optionally attaching a screenshot, replies still land in-game either way.
+- **`server.js`**: Exposes a small web UI on port 3030 as a text-based alternative to talking to the bot, optionally attaching a screenshot, replies still land in-game either way. `startWebServer` returns the HTTP server so the module can close it on stop.
 
 ### Listening and voice
 
@@ -457,7 +471,7 @@
 
 ###### `src/coding/`
 
-- Runs a small Express server (`continue-bridge.js`, `BRAIN_PORT`, default 8767) that speaks the OpenAI chat-completions format expected by the [Continue](https://continue.dev/) VS Code extension, so Continue's chat/edit roles both talk to the same shared `ai` instance as everything else instead of a generic API. Started by the `CODING` service, with the Tavily MCP server (`TAVILY`) alongside it.
+- Runs a small Express server (`continue-bridge.js`, `BRAIN_PORT`, default 8767) that speaks the OpenAI chat-completions format expected by the [Continue](https://continue.dev/) VS Code extension, so Continue's chat/edit roles both talk to the same shared `ai` instance as everything else instead of a generic API. Started by the `coding` module, which also spawns the Tavily MCP server and turns on the VSCode file tools (`coding` group); stopping it kills Tavily, closes the bridge and removes those tools.
 
 - Two roles are handled differently: the **chat/agent role** (tool-use capable) gets Lily's persona; the **apply role** (the one that writes file content straight to disk with no tool call in between) is locked to a strict code-merging-only system prompt (`codeEditShared.js`'s `CODE_SYSTEM_PROMPT`) since there's no tool-call layer to intercept a bad response on that path.
 
@@ -471,7 +485,7 @@
 
 ###### `src/pidev-bridge/`
 
-- `pidev-bridge.js` runs its own small Express server (`PIDEV_BRIDGE_PORT`, default 3100) exposing an OpenAI-compatible `/v1/chat/completions` endpoint, used as the model backend for the `pi` coding-agent CLI (running in its own terminal, not spawned by the brain). Started by the `PIDEV` service.
+- `pidev-bridge.js` runs its own small Express server (`PIDEV_BRIDGE_PORT`, default 3100) exposing an OpenAI-compatible `/v1/chat/completions` endpoint, used as the model backend for the `pi` coding-agent CLI (running in its own terminal, not spawned by the brain). Started by the `pidev` module, which also turns on the system command tools (`pidev` group); stopping it closes the bridge and removes them.
 
 - Deliberately spins up its **own fresh `Lily` instance** (`new Lily()`, not the shared `ai` built in `start.js`), on its own channel id (`"pi-dev"`), so Pi gets an isolated memory/history lane instead of bleeding into Discord/Minecraft context.
 

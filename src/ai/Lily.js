@@ -484,6 +484,11 @@ export class Lily {
         this.summarizer.observe(channelId, clean, authorName)
     }
 
+    // Replace the existing handleMessage method in src/ai/Lily.js with this one.
+    // No other change to Lily.js is needed: VOICE_ASSISTANT_CHANNEL_ID is already
+    // imported there, and _runCalls already passes { channelId, isDM, userId } to
+    // tools.execute(), which chatToolExecutor.js now uses for visibility.
+
     async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}, images = []) {
         const clean = sanitizeInput(rawInput)
         if (!clean && images.length === 0) return null
@@ -501,6 +506,11 @@ export class Lily {
             this.pushToConvoHistory(channelId, userMessage)
             this.tools.resetTurn()
 
+            // DM and voice turns are private: facts written during them are stored
+            // with private visibility, and only those turns can read private facts.
+            const isPrivate = channelId === VOICE_ASSISTANT_CHANNEL_ID || !!opts.isDM
+            const known = this.workingMemory.presentNames(channelId)
+
             // Explicit "remember that ..." / "forget ..." — written before the model
             // sees the message, outside the turn's tool budget.
             const explicitNote = this.opts.explicitMemoryEnabled
@@ -508,12 +518,21 @@ export class Lily {
                     tools: this.tools,
                     authorName,
                     authorId,
-                    known: this.workingMemory.presentNames(channelId),
+                    known,
                     idLookup: name => this.workingMemory.idFor(channelId, name),
+                    visibility: isPrivate ? 'private' : 'server',
                 })
                 : null
+
+            // Voice skips auto-inject by default. To let her recall things there,
+            // drop this condition: private facts are already gated by includePrivate.
             const autoMemory = channelId !== VOICE_ASSISTANT_CHANNEL_ID
-                ? await this.tools.autoInjectMemory(clean, { authorName, authorId })
+                ? await this.tools.autoInjectMemory(clean, {
+                    authorName,
+                    authorId,
+                    known,
+                    includePrivate: isPrivate,
+                })
                 : null
 
             const ctx = new TurnContext({

@@ -1,4 +1,6 @@
 import axios from "axios"
+import fs from "fs"
+import path from "path"
 import { Logger } from '../../utils/Logger.js'
 import { tavily } from "@tavily/core"
 import { getConfig, getSection } from '../config.js'
@@ -11,6 +13,84 @@ import { DONE_NOTE } from './toolHelpers.js'
 const LIMITS = new Proxy({}, {
     get: (_, key) => getSection('toolLimits')[key],
 })
+
+// Channels whose turns are private by nature (matches the id used in Lily.js).
+const PRIVATE_CHANNELS = new Set(["voiceAssistant"])
+
+// A fact written during a DM or voice turn is stored as 'private' in the vault
+// so it never surfaces in a public channel.
+const visibilityFor = (ctx = {}) =>
+    (ctx.isDM || PRIVATE_CHANNELS.has(ctx.channelId)) ? "private" : "server"
+
+// ─── Web search helpers (Tavily free tier) ──────────────────────────────
+// Free tier = a small monthly credit pool, and a basic search costs 1 credit.
+// So: results are cached, usage is counted on disk against a cap, and the
+// expensive "advanced" depth is never used. Every knob below can be overridden
+// with a flat key in config.json "search" (e.g. "tavilyMonthlyCap": 800).
+const webCfg = () => {
+    const s = getSection('search') ?? {}
+    return {
+        monthlyCap: s.tavilyMonthlyCap ?? 900,       // stay under the free pool; check your dashboard
+        usagePath: s.tavilyUsagePath ?? "./data/tavily-usage.json",
+        fetchResults: s.tavilyFetchResults ?? 8,     // asked for; the filter keeps the best few
+        keep: s.tavilyKeep ?? 4,                     // sources actually shown to the model
+        minScore: s.tavilyMinScore ?? 0.25,
+        maxPerDomain: s.tavilyMaxPerDomain ?? 2,
+        snippetChars: s.tavilySnippetChars ?? 450,
+        answerChars: s.tavilyAnswerChars ?? 500,
+        newsDays: s.tavilyNewsDays ?? 7,
+        cacheTtlMs: s.tavilyCacheTtlMs ?? 15 * 60 * 1000,
+        cacheMax: 50,
+    }
+}
+
+const monthKey = () => new Date().toISOString().slice(0, 7)
+
+function loadUsage(file) {
+    try {
+        const u = JSON.parse(fs.readFileSync(file, "utf8"))
+        if (u?.month === monthKey() && Number.isFinite(u.credits)) return u
+    } catch { /* first run or unreadable: start fresh */ }
+    return { month: monthKey(), credits: 0 }
+}
+
+function saveUsage(file, usage) {
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(file, JSON.stringify(usage))
+    } catch (err) {
+        Logger.error(`Could not save usage (non-fatal): ${err.message}`, "WEB SEARCH")
+    }
+}
+
+const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, "") } catch { return "unknown" } }
+
+function trimText(text, max) {
+    const t = String(text ?? "").replace(/\s+/g, " ").trim()
+    return t.length > max ? `${t.slice(0, max - 1)}…` : t
+}
+
+// Best-scoring first, junk dropped, at most N per domain. If nothing clears the
+// score floor, keep the single best result but flag it as weak.
+function pickResults(raw, c) {
+    const sorted = [...(raw ?? [])]
+        .filter(r => r?.content && r?.url)
+        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    const good = sorted.filter(r => (r.score ?? 1) >= c.minScore)
+    const pool = good.length ? good : sorted.slice(0, 1)
+
+    const perDomain = new Map()
+    const picked = []
+    for (const r of pool) {
+        const host = hostOf(r.url)
+        const n = perDomain.get(host) ?? 0
+        if (n >= c.maxPerDomain) continue
+        perDomain.set(host, n + 1)
+        picked.push(r)
+        if (picked.length >= c.keep) break
+    }
+    return { picked, weak: !good.length && picked.length > 0 }
+}
 
 // ─── Chat Tool Executor ──────────────────────────────────────────────────
 //
@@ -30,6 +110,9 @@ const LIMITS = new Proxy({}, {
 class ChatToolExecutor {
     constructor() {
         this.resetTurn()
+        this._searchCache = new Map()   // "g:query" / "n:query" -> { at, payload }
+        this._usage = null              // { month, credits }, lazily loaded from disk
+        this._tavilyClient = null
     }
 
     get opts() {
@@ -155,7 +238,7 @@ class ChatToolExecutor {
         }
     }
 
-    async memoryQuery(query, { daysAgo = null, windowDays = 2, daysBack = null } = {}) {
+    async memoryQuery(query, { daysAgo = null, windowDays = 2, daysBack = null, includePrivate = false } = {}) {
         const limitErr = this._checkLimit('memoryQuery', LIMITS.memoryQuery, 'memory search (query_memory_database)')
         if (limitErr) return limitErr
 
@@ -195,7 +278,7 @@ class ChatToolExecutor {
         try {
             const k = daysAgo !== null ? 25 : 10
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
-                query, k, min_score: this.opts.memoryQueryMinScore
+                query, k, min_score: this.opts.memoryQueryMinScore, include_private: includePrivate
             }, { timeout: this.opts.dbTimeout })
 
             if (!data?.results?.length) return finish("No relevant information found in memory.")
@@ -226,9 +309,24 @@ class ChatToolExecutor {
         }
     }
 
-    // Auto-injection (passive, not a tool call) — unchanged from before the split.
-    // Auto-injection (passive, not a tool call).
-    async autoInjectMemory(queryText, { authorName = null, authorId = null } = {}) {
+    // Formats one get_entity row. Rows with relation "mentioned" come from OTHER
+    // people's/topic files that link to this subject (Obsidian backlinks).
+    _entityLine(name, hit) {
+        return hit.relation === "mentioned"
+            ? `(about ${name}, from ${hit.from ?? "other"}'s notes) ${hit.text}`
+            : `(about ${name}) ${hit.text}`
+    }
+
+    // Auto-injection (passive, not a tool call). Each turn pulls, in order:
+    //   0. pinned server knowledge (Server/pinned.md)
+    //   1. the speaker's own file (exact lookup) + a few facts others wrote about them
+    //   1b. files of people named in the message (exact alias match, capped), same one-hop links
+    //   2. topic facts (semantic)
+    //   3. past conversations (semantic)
+    // `known`: names currently in the room (working memory) — only these can
+    // be matched as "mentioned", so a random word never becomes a lookup.
+    // `includePrivate`: true on DM / voice turns so private facts are visible.
+    async autoInjectMemory(queryText, { authorName = null, authorId = null, known = [], includePrivate = false } = {}) {
         if (!this.opts.memoryAutoInjectEnabled) return null
         const trimmed = (queryText ?? "").trim()
         if (!trimmed && !authorName && !authorId) return null
@@ -236,25 +334,36 @@ class ChatToolExecutor {
         const parts = []
         const seen = new Set()
         const push = (text) => {
-            const key = text.trim().toLowerCase()
+            const key = (text ?? "").trim().toLowerCase()
             if (!key || seen.has(key)) return
             seen.add(key)
             parts.push(text)
         }
 
-        // 1. Who's talking — exact lookup, bypasses FAISS entirely.
+        // 0. Pinned server knowledge — small, curated, always present.
+        try {
+            const { data } = await axios.get(`${this.opts.memoryDbUrl}/pinned`, { timeout: this.opts.dbTimeout })
+            for (const text of data?.facts ?? []) push(`(server) ${text}`)
+        } catch (err) {
+            Logger.error(err.message, "MEMORY AUTOINJECT PINNED")
+        }
+
+        // 1. Who's talking — exact lookup, bypasses embeddings entirely.
         if (this.opts.memoryAutoInjectPersonEnabled && (authorName || authorId)) {
             try {
                 const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
                     subject_id: authorId ?? null,
                     person_name: authorName ?? null,
                     limit: this.opts.memoryAutoInjectPersonLimit ?? 6,
+                    include_private: includePrivate,
+                    include_related: true,
+                    related_limit: this.opts.memoryAutoInjectRelatedLimit ?? 3,
                 }, { timeout: this.opts.dbTimeout })
 
                 const hits = data?.results ?? []
                 if (hits.length) {
                     Logger.info(`[person] ${authorName ?? authorId}: ${hits.length} fact(s)`, "MEMORY AUTOINJECT")
-                    for (const h of hits) push(`(about ${authorName ?? "them"}) ${h.text}`)
+                    for (const h of hits) push(this._entityLine(authorName ?? "them", h))
                 }
             } catch (err) {
                 Logger.error(err.message, "MEMORY AUTOINJECT PERSON")
@@ -263,13 +372,41 @@ class ChatToolExecutor {
 
         if (!trimmed) return parts.length ? parts.join("\n") : null
 
+        // 1b. People named in the message. Private facts of other people are
+        // never injected, regardless of channel.
+        const lower = trimmed.toLowerCase()
+        const mentioned = (known ?? [])
+            .filter(n => n && n !== authorName && lower.includes(n.toLowerCase()))
+            .slice(0, this.opts.memoryAutoInjectMentionedMax ?? 3)
+
+        for (const name of mentioned) {
+            try {
+                const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+                    person_name: name,
+                    limit: this.opts.memoryAutoInjectMentionedLimit ?? 4,
+                    include_private: false,
+                    include_related: true,
+                    related_limit: this.opts.memoryAutoInjectMentionedRelatedLimit ?? 2,
+                }, { timeout: this.opts.dbTimeout })
+
+                const hits = data?.results ?? []
+                if (hits.length) {
+                    Logger.info(`[mentioned] ${name}: ${hits.length} fact(s)`, "MEMORY AUTOINJECT")
+                    for (const h of hits) push(this._entityLine(name, h))
+                }
+            } catch (err) {
+                Logger.error(err.message, "MEMORY AUTOINJECT MENTIONED")
+            }
+        }
+
         // 2. Topic facts.
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
                 query: trimmed,
                 k: this.opts.memoryAutoInjectFactK,
                 min_score: this.opts.memoryAutoInjectFactMinScore,
-                types: ["fact"]
+                types: ["fact"],
+                include_private: includePrivate,
             }, { timeout: this.opts.dbTimeout })
 
             const hits = data?.results ?? []
@@ -322,6 +459,7 @@ class ChatToolExecutor {
                 category: meta.category ?? null,
                 subject_id: meta.subject_id ?? null,
                 person_name: meta.person_name ?? null,
+                visibility: meta.visibility ?? "server",
             }, { timeout: this.opts.dbTimeout })
 
             const failed = data?.status === "error" || data?.ok === false
@@ -329,7 +467,7 @@ class ChatToolExecutor {
                 Logger.error(`add_fact returned failure: ${JSON.stringify(data)}`, "MEMORY ADD")
                 return this._err(data.message ?? "Failed to store information.")
             }
-            if (data?.status !== "ok") {
+            if (data?.status !== "ok" && data?.status !== "skipped") {
                 Logger.warning(`Unexpected add_fact response shape: ${JSON.stringify(data)}`, "MEMORY ADD")
             }
             return this._ok(data?.message ?? "Stored.")
@@ -338,9 +476,10 @@ class ChatToolExecutor {
             return this._err("Failed to store information.")
         }
     }
+
     // Exact metadata lookup — "everything I know about this person" — instead of
     // hoping semantic similarity surfaces all of someone's facts.
-    async entityLookup({ person_name = null, subject_id = null, category = null } = {}) {
+    async entityLookup({ person_name = null, subject_id = null, category = null, includePrivate = false } = {}) {
         const limitErr = this._checkLimit('memoryQuery', LIMITS.memoryQuery, 'memory lookup (lookup_entity)')
         if (limitErr) return limitErr
 
@@ -356,14 +495,20 @@ class ChatToolExecutor {
         Logger.info(`Entity lookup: ${person_name ?? subject_id}`, "MEMORY ENTITY")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
-                person_name, subject_id, category, limit: getSection('memory').lookupEntityLimit,
+                person_name, subject_id, category,
+                limit: getSection('memory').lookupEntityLimit,
+                include_private: includePrivate,
+                include_related: true,
+                related_limit: getSection('memory').lookupEntityRelatedLimit ?? 5,
             }, { timeout: this.opts.dbTimeout })
 
             const results = data?.results ?? []
             return JSON.stringify({
                 status: "ok",
                 results: results.length
-                    ? results.map(r => `[${r.category}] ${r.text}`).join("\n")
+                    ? results.map(r => r.relation === "mentioned"
+                        ? `[mentioned in ${r.from ?? "other"}'s notes] ${r.text}`
+                        : `[${r.category}] ${r.text}`).join("\n")
                     : "Nothing is stored under that name yet.",
                 instruction: "Lookup complete. Reply in character now — don't look the same person up again this turn.",
             })
@@ -372,10 +517,11 @@ class ChatToolExecutor {
             return this._err("Entity lookup failed.")
         }
     }
-    async addFactOutOfBand({ text, source = "explicit_user_request", category = null, subject_id = null, person_name = null }) {
+
+    async addFactOutOfBand({ text, source = "explicit_user_request", category = null, subject_id = null, person_name = null, visibility = "server" }) {
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`,
-                { text, source, category, subject_id, person_name },
+                { text, source, category, subject_id, person_name, visibility },
                 { timeout: this.opts.dbTimeout })
             return data
         } catch (err) {
@@ -398,6 +544,7 @@ class ChatToolExecutor {
             return { status: "error", removed: [] }
         }
     }
+
     async memoryUpdate(searchQuery, updatedText) {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr
@@ -534,66 +681,138 @@ class ChatToolExecutor {
         }
     }
 
-    async webSearch(query) {
+    _usageState(c) {
+        if (!this._usage || this._usage.month !== monthKey()) this._usage = loadUsage(c.usagePath)
+        return this._usage
+    }
+
+    // One basic-depth Tavily call (1 credit). Returns null when the monthly cap is hit.
+    async _tavilySearch(q, recent, c) {
+        const usage = this._usageState(c)
+        if (usage.credits >= c.monthlyCap) return null
+
+        this._tavilyClient ??= tavily({ apiKey: process.env.TAVILY_API_KEY })
+        const options = {
+            maxResults: c.fetchResults,
+            includeAnswer: true,
+            includeImages: false,
+            searchDepth: "basic",       // "advanced" costs 2 credits; never used on the free tier
+        }
+        if (recent) { options.topic = "news"; options.days = c.newsDays }
+
+        const response = await this._tavilyClient.search(q, options)
+        usage.credits += 1
+        saveUsage(c.usagePath, usage)
+        return response
+    }
+
+    async webSearch(query, { recent = false } = {}) {
         const limitErr = this._checkLimit('webSearch', LIMITS.webSearch, 'web_search')
         if (limitErr) return limitErr
         const argErr = this._requireQuery(query, 2, "current Minecraft version")
         if (argErr) return argErr
         this.turnUsage.webSearch++
 
-        Logger.info(`Querying Tavily API: "${query}"`, "WEB SEARCH")
-        try {
-            const client = tavily({ apiKey: process.env.TAVILY_API_KEY })
-            const response = await client.search(query, {
-                maxResults: getSection('search').tavilyMaxResults,
-                includeImages: getSection('search').tavilyIncludeImages,
-                searchDepth: "basic",
-            })
+        const c = webCfg()
+        const q = query.replace(/["“”]/g, "").replace(/\s+/g, " ").trim()
+        const cacheKey = `${recent ? "n" : "g"}:${q.toLowerCase()}`
 
-            const results = response?.results ?? []
-            if (!results.length) {
+        const hit = this._searchCache.get(cacheKey)
+        if (hit && Date.now() - hit.at < c.cacheTtlMs) {
+            Logger.info(`Cache hit (0 credits): "${q}"`, "WEB SEARCH")
+            return hit.payload
+        }
+
+        const unavailable = () => this._err(
+            "Web search isn't available right now. Don't retry — answer from what you already know, and say plainly that you couldn't check it."
+        )
+
+        Logger.info(`Tavily search${recent ? " (news)" : ""}: "${q}"`, "WEB SEARCH")
+        try {
+            let response = await this._tavilySearch(q, recent, c)
+            if (!response) {
+                Logger.warning(`Monthly cap (${c.monthlyCap}) reached, search disabled until next month`, "WEB SEARCH")
+                return unavailable()
+            }
+
+            let { picked, weak } = pickResults(response.results, c)
+
+            // News topic can come back empty for niche queries: one general retry.
+            if (!picked.length && recent) {
+                Logger.info(`News search empty, retrying as general`, "WEB SEARCH")
+                response = await this._tavilySearch(q, false, c)
+                if (!response) return unavailable()
+                    ; ({ picked, weak } = pickResults(response.results, c))
+            }
+
+            if (!picked.length) {
                 return JSON.stringify({
                     status: "ok",
                     results: "No results found.",
-                    instruction: "Search came back empty — that's your answer, don't keep rephrasing. Reply now, in character."
+                    instruction: "Search came back empty — that's your answer, don't keep rephrasing. Reply now, in character, and say you couldn't find anything."
                 })
             }
 
-            const resultsText = results.map(r =>
-                `**${r.title}**\n${r.url}\n${r.content ?? ""}`
-            ).join("\n\n")
-
-            return JSON.stringify({
-                status: "ok",
-                results: resultsText,
-                instruction: "Search complete. Summarize this in your own words for your visible, in-character reply now — don't search again unless this truly didn't cover it, and never paste URLs or raw excerpts verbatim."
+            const today = new Date().toISOString().slice(0, 10)
+            const lines = [`Today's date: ${today}. Judge how old each source is against it.`]
+            if (response.answer) {
+                lines.push(`Search engine's quick summary (check it against the sources): ${trimText(response.answer, c.answerChars)}`)
+            }
+            picked.forEach((r, i) => {
+                const when = r.publishedDate ? `, ${String(r.publishedDate).slice(0, 10)}` : ""
+                lines.push(`${i + 1}. ${trimText(r.title, 90)} [${hostOf(r.url)}${when}]\n${trimText(r.content, c.snippetChars)}`)
             })
+            if (weak) lines.push("Note: nothing here matched the question strongly. Say you're not sure instead of guessing.")
+
+            const payload = JSON.stringify({
+                status: "ok",
+                results: lines.join("\n\n"),
+                instruction: "Search complete. Answer in your own words in your visible, in-character reply now. Prefer facts that several sources agree on, mention if sources look old or disagree, and never paste URLs or raw excerpts. Don't search again unless this truly didn't cover it."
+            })
+
+            this._searchCache.set(cacheKey, { at: Date.now(), payload })
+            if (this._searchCache.size > c.cacheMax) this._searchCache.delete(this._searchCache.keys().next().value)
+            return payload
         } catch (err) {
-            Logger.error(err.message, "WEB SEARCH")
-            return this._err("Web search failed.")
+            const status = err.response?.status
+            Logger.error(`${err.message}${status ? ` (HTTP ${status})` : ""}`, "WEB SEARCH")
+            if (status === 401) Logger.error("Check TAVILY_API_KEY", "WEB SEARCH")
+            // 429/432/433: rate or plan limit hit on Tavily's side
+            return [429, 432, 433].includes(status) ? unavailable() : this._err("Web search failed.")
         }
     }
 
-    async execute(name, args) {
+    // `ctx` is { channelId, isDM, userId } as passed by Lily._runCalls. If your
+    // ToolRouter.execute doesn't forward its third argument to this method yet,
+    // add it there — without it everything defaults to 'server' visibility.
+    async execute(name, args, ctx = {}) {
         const totalBlock = this._spendTotal()
         if (totalBlock) return totalBlock
 
+        const visibility = visibilityFor(ctx)
+        const includePrivate = visibility === "private"
+
         switch (name) {
-            case "web_search": return this.webSearch(args?.query ?? "")
+            case "web_search": return this.webSearch(args?.query ?? "", {
+                recent: args?.recent === true || args?.recent === "true",
+            })
             case "query_memory_database": return this.memoryQuery(args?.query ?? "", {
                 daysAgo: args?.days_ago ?? null,
                 windowDays: args?.window_days ?? 2,
-                daysBack: args?.days_back ?? null
+                daysBack: args?.days_back ?? null,
+                includePrivate,
             })
             case "lookup_entity": return this.entityLookup({
                 person_name: args?.person_name ?? null,
                 subject_id: args?.subject_id ?? null,
                 category: args?.category ?? null,
+                includePrivate,
             })
             case "addto_memory_database": return this.memoryAdd(args?.text ?? "", args?.source ?? "user", {
                 category: args?.category ?? null,
                 subject_id: args?.subject_id ?? null,
                 person_name: args?.person_name ?? null,
+                visibility,
             })
             case "update_memory_database": return this.memoryUpdate(args?.query ?? "", args?.text ?? "")
             case "remove_memory_database": return this.memoryRemove(args?.query ?? "")
@@ -627,7 +846,7 @@ const CHAT_TOOLS = [
                 properties: {
                     query: {
                         type: "string",
-                        // CHANGED: hard word cap stated as a number, not "a phrase" — small
+                        // Hard word cap stated as a number, not "a phrase" — small
                         // models anchor much better on an explicit number than on adjectives
                         // like "short". maxLength enforces it if your JSON schema layer checks it.
                         description: "2-6 keywords only. No full sentences, no politeness, no extra instructions to the search. Example: 'shinyshadow favorite color'. Required for modes 1 and 2.",
@@ -645,14 +864,21 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a fact that has NEVER been queried or stored before. Never use for a fact about a real person unless they just said it this exact message. One call per message unless the user's message truly has multiple distinct new facts.",
+            description: "Store a fact worth keeping permanently that has NEVER been queried or stored before. Several people are in chat — always make clear WHO the fact is about in the text, never just 'he' or 'they'. Never use it for a fact about a real person unless they just said it in this exact message. One call per message unless the message truly has multiple distinct new facts.",
             parameters: {
                 type: "object",
                 properties: {
-                    text: { type: "string", description: "One factual sentence. 3-20 words. Required, never empty.", maxLength: 150 },
-                    source: { type: "string" }
+                    text: { type: "string", description: "One factual sentence naming who or what it's about. 3-20 words. Required, never empty.", maxLength: 150 },
+                    source: { type: "string" },
+                    category: {
+                        type: "string",
+                        enum: ["person", "project", "place", "object", "preference", "goal", "decision", "event", "bot", "general"],
+                        description: "What kind of thing this fact is about. Default 'general'."
+                    },
+                    person_name: { type: "string", description: "Only when the fact is about a specific person — their display name, exactly as written in chat.", maxLength: 60 },
+                    subject_id: { type: "string", description: "Only when you were actually given that person's Discord user id. Never invent one.", maxLength: 40 }
                 },
-                required: ["text"]
+                required: ["text", "person_name", "category"]
             }
         }
     },
@@ -721,11 +947,14 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "web_search",
-            description: "Search the web for real-world facts outside your knowledge. One call is normally enough.",
+            description: "Search the web for real-world facts outside your knowledge. Searches are rationed: don't use it for things you already know or for chit-chat. One call is normally enough.",
             parameters: {
                 type: "object",
                 properties: {
-
+                    recent: {
+                        type: "boolean",
+                        description: "true ONLY for news, current events, latest versions, prices or scores. Leave false for how-things-work and general facts."
+                    },
                     query: {
                         type: "string",
                         description: "A short search-engine query, 3-8 words, like a real Google search. No questions, no politeness, no requests for sources/dates/methodology. Bad: 'please tell me detailed statistics with sources about X'. Good: 'X statistics 2026'.",
@@ -740,9 +969,9 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "lookup_entity",
-            description: `List everything stored about ONE named person. Use this for "what do you know about X", "who is X", or before saying something about a specific person you're not sure of.
+            description: `List everything stored about ONE named person or topic note (e.g. a project like the castle). Use this for "what do you know about X", "who is X", or before saying something about a specific person you're not sure of.
 
-                        Exact lookup, not a similarity search — it returns all of their facts, not just the closest-matching ones. For topics or events rather than people, use query_memory_database instead.`,
+                        Exact lookup, not a similarity search — it returns all of their facts, plus a few facts other people's notes link to them ("mentioned in ..."). For fuzzy topics or past events, use query_memory_database instead.`,
             parameters: {
                 type: "object",
                 properties: {
@@ -751,28 +980,6 @@ const CHAT_TOOLS = [
                     category: { type: "string", description: "Optional narrowing, e.g. 'preference'.", maxLength: 30 }
                 },
                 required: []
-            }
-        }
-    },
-    {
-        type: "function",
-        function: {
-            name: "addto_memory_database",
-            description: "Store a fact worth sotring permanently that has NEVER been queried or stored before. Several people are in chat — always make clear WHO the fact is about in the text, never just 'he' or 'they'. ",
-            parameters: {
-                type: "object",
-                properties: {
-                    text: { type: "string", description: "One factual sentence naming who or what it's about. 3-20 words. Required, never empty.", maxLength: 150 },
-                    source: { type: "string" },
-                    category: {
-                        type: "string",
-                        enum: ["person", "project", "place", "object", "preference", "goal", "decision", "event", "bot", "general"],
-                        description: "What kind of thing this fact is about. Default 'general'."
-                    },
-                    person_name: { type: "string", description: "Only when the fact is about a specific person — their display name, exactly as written in chat.", maxLength: 60 },
-                    subject_id: { type: "string", description: "Only when you were actually given that person's Discord user id. Never invent one.", maxLength: 40 }
-                },
-                required: ["text", "person_name", "category"]
             }
         }
     },

@@ -14,6 +14,11 @@
 //     that person when they're someone we've actually seen in the channel;
 //     otherwise it's stored as a plain fact with no subject.
 //
+// Vault routing (memory service): a fact with a person goes to that person's
+// file in People/, anything else to Server/<category>.md. `visibility`
+// ('server' | 'private') is stored per fact; DM and voice turns pass 'private'
+// so those facts never surface in a public channel.
+//
 // Deliberately narrow: patterns are anchored to the start of the message, so
 // "I should remember that for later" doesn't trigger a write. This runs
 // out-of-band — it does not spend the turn's tool budget — and returns a note
@@ -117,7 +122,8 @@ export function attributeFact(payload, { authorName = null, authorId = null, kno
  * or null when nothing fired. Never throws.
  *
  * @param {string} text  the raw user message
- * @param {object} ctx   { tools, authorName, authorId, known, idLookup }
+ * @param {object} ctx   { tools, authorName, authorId, known, idLookup, visibility }
+ *                       visibility: 'server' (default) or 'private' (DM / voice)
  */
 export async function handleExplicitMemory(text, {
     tools,
@@ -125,6 +131,7 @@ export async function handleExplicitMemory(text, {
     authorId = null,
     known = [],
     idLookup = null,
+    visibility = 'server',
 } = {}) {
     const hit = detectExplicitMemory(text)
     if (!hit || !tools) return null
@@ -147,8 +154,8 @@ export async function handleExplicitMemory(text, {
         })
 
         // Rewrite "I hate mushrooms" as "ShinyShadow_: I hate mushrooms" so the
-        // fact still means something when it comes back out of the DB months
-        // later with no speaker attached.
+        // fact still means something in global search results and injected
+        // context, where the person's file isn't visible.
         const factText = firstPerson && authorName
             ? `${authorName}: ${hit.payload}`
             : hit.payload
@@ -156,10 +163,10 @@ export async function handleExplicitMemory(text, {
         const result = await tools.addFactOutOfBand({
             text: factText,
             source: `explicit:${who}`,
-            // Metadata from step 1 — never touches the embedding, only get_entity().
             category: personName ? 'person' : 'general',
             subject_id: subjectId ?? null,
             person_name: personName ?? null,
+            visibility,
         })
 
         if (result?.status === 'skipped') {
@@ -171,7 +178,7 @@ export async function handleExplicitMemory(text, {
             return null
         }
 
-        Logger.success(`Stored from ${who}: "${factText}"${personName ? ` [person: ${personName}]` : ''}`, 'EXPLICIT MEMORY')
+        Logger.success(`Stored from ${who} [${visibility}]: "${factText}"${personName ? ` [person: ${personName}]` : ''}${result.file ? ` -> ${result.file}` : ''}`, 'EXPLICIT MEMORY')
         return `[Note: "${factText}" has already been saved to memory. Acknowledge it in character — do not call addto_memory_database for it.]`
     } catch (err) {
         Logger.error(err.message, 'EXPLICIT MEMORY')

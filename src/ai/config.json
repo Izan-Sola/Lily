@@ -26,7 +26,7 @@
     "summarizeLastN": 20,
     "observeEvery": 20,
     "ollamaUrl": "http://localhost:11435",
-    "memoryDbUrl": "http://localhost:8002",
+    "memoryDbUrl": "http://192.168.18.61:8002",
     "blogUrl": "http://localhost:1234",
     "ollamaTimeout": 300000,
     "dbTimeout": 30000,

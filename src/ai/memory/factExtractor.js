@@ -2,6 +2,7 @@
 // Second, narrow LLM call that pulls lasting facts about people out of a BATCH of chat
 // lines (many speakers) and stores them out-of-band. Runs after the summarizer, so the
 // chat model never has to decide to save anything.
+import axios from 'axios'
 import { chatCompletion } from '../llmClient.js'
 import { Logger } from '../../utils/Logger.js'
 
@@ -13,12 +14,14 @@ const CHUNK_SIZE = 20            // chat lines per model call
 const CONTEXT_LINES = 3          // earlier lines shown as context only
 const MAX_FACTS_PER_CHUNK = 12
 const MIN_LETTERS = 6            // a chunk with no real text from a human is skipped
+const MAX_STORED_PEOPLE = 8      // people whose stored facts are shown to the model per chunk
 
 const EXTRACT_PROMPT = `/no_think
 You extract lasting facts about people from a chat log. Output JSON only. No prose, no code fences.
 
 You are shown:
 Known people: names currently in the room (may be missing)
+ALREADY STORED: facts already saved about people in the log (may be missing)
 EARLIER CONTEXT: lines before the log, only for working out who "he/she/they" means (may be missing)
 CHAT LOG: lines in the form "Name: message"
 
@@ -28,7 +31,9 @@ If there is nothing to save: {"facts":[]}
 Rules:
 - Facts come ONLY from lines written by people. Lines written by "Lily" are the bot: use them to understand what people are answering, but NEVER save something that only Lily said, and never save facts about Lily.
 - The log can contain SEVERAL people and SEVERAL facts. Return one entry per separate fact, about whichever person it concerns. Split lists and compound sentences ("X likes A and B" is two facts). Never merge different facts into one entry.
+- Output ONLY facts that are NEW. Skip anything already in ALREADY STORED, even if worded differently, and skip a fact that is just a part of, or a combination of, stored facts.
 - "I / me / my" means the person who wrote that line. "person" must be a real name, never a pronoun. Resolve "he/she/they" from nearby lines. If you cannot tell who it is, skip it.
+- "person" must be the name exactly as written in the CHAT LOG or Known people. Never use a variant, nickname or typo of it from the stored facts.
 - "text" is one short standalone sentence containing the person's name, 3-20 words. Drop framing like "did you know", "btw", "also". Fill in missing detail from the previous line when an answer depends on it.
 - A lasting fact is: likes/dislikes, job, skills, possessions, plans, history, relationships, opinions, habits, identity.
 - Skip: questions, commands, greetings, jokes with no real fact, temporary states (hungry, tired, brb), general world facts not about a person.
@@ -51,6 +56,13 @@ Lily: did mia ever hear back about the job?
 Kai: yeah she got it, and she's starting next week
 Lily: good for her (≧◡≦)
 {"facts":[{"person":"Mia","text":"Mia got the job she applied for","category":"event"},{"person":"Mia","text":"Mia starts her new job next week","category":"event"}]}
+
+Known people: Kai, Mia
+ALREADY STORED:
+- Mia: Mia lives in Madrid
+CHAT LOG:
+Mia: I live in Madrid and I work as a nurse
+{"facts":[{"person":"Mia","text":"Mia works as a nurse","category":"person"}]}
 
 Known people: Kai
 CHAT LOG:
@@ -78,9 +90,27 @@ function hasHumanText(chunk) {
     return chunk.some(l => !isLily(l.name) && l.text.replace(/[^\p{L}]/gu, '').length >= MIN_LETTERS)
 }
 
-function buildUserContent({ chunk, context, known }) {
+// Facts already stored for a person (resolved by the memory server through aliases).
+// Private facts are only fetched on private turns, so a server turn never sees them.
+async function existingFacts(opts, name, includePrivate) {
+    try {
+        const { data } = await axios.post(`${opts.memoryDbUrl}/get_entity`, {
+            person_name: name,
+            limit: 30,
+            include_private: includePrivate,
+            include_related: false,
+            summary_mode: 'off',
+        }, { timeout: opts.dbTimeout })
+        return (data?.results ?? []).filter(r => r.relation === 'own').map(r => `${name}: ${r.text}`)
+    } catch {
+        return []
+    }
+}
+
+function buildUserContent({ chunk, context, known, stored }) {
     const parts = []
     if (known.length) parts.push(`Known people: ${known.join(', ')}`)
+    if (stored.length) parts.push(`ALREADY STORED:\n${stored.map(s => `- ${s}`).join('\n')}`)
     if (context.length) parts.push(`EARLIER CONTEXT:\n${render(context)}`)
     parts.push(`CHAT LOG:\n${render(chunk)}`)
     return parts.join('\n')
@@ -109,6 +139,7 @@ export async function extractAndStoreFacts({
             think: false,
             model: opts.factExtractionModel ?? opts.model,
         }
+        const includePrivate = visibility === 'private'
 
         const seen = new Set()
         let stored = 0
@@ -123,11 +154,16 @@ export async function extractAndStoreFacts({
             const canonical = new Map(people.map(n => [n.toLowerCase(), n]))
             const haystack = [...ctx, ...chunk].map(l => `${l.name} ${l.text}`).join('\n').toLowerCase()
 
+            // Facts already on file for everyone this chunk is about, so the model skips repeats.
+            const mentioned = people.filter(n => haystack.includes(n.toLowerCase())).slice(0, MAX_STORED_PEOPLE)
+            const storedFacts = (await Promise.all(mentioned.map(n => existingFacts(opts, n, includePrivate)))).flat()
+            const storedSet = new Set(storedFacts.map(s => s.toLowerCase()))
+
             const msg = await chatCompletion(
                 llmOpts,
                 [
                     { role: 'system', content: EXTRACT_PROMPT },
-                    { role: 'user', content: buildUserContent({ chunk, context: ctx, known: people }) },
+                    { role: 'user', content: buildUserContent({ chunk, context: ctx, known: people, stored: storedFacts }) },
                 ],
                 { overrides: { temperature: 0, max_tokens: 900, presence_penalty: 0, repeat_penalty: 1 } },
             )
@@ -155,6 +191,12 @@ export async function extractAndStoreFacts({
                 const key = `${person.toLowerCase()}|${text.toLowerCase()}`
                 if (seen.has(key)) continue
                 seen.add(key)
+
+                // Exact repeat of something already stored: skip without a server round trip.
+                if (storedSet.has(`${person}: ${text}`.toLowerCase())) {
+                    Logger.info(`${person}: "${text}" -> already stored`, 'FACT EXTRACT')
+                    continue
+                }
 
                 const category = CATEGORIES.has(f?.category) ? f.category : 'general'
                 // Sequential on purpose: keeps the backend's dedupe/similarity check from racing itself.

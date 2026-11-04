@@ -110,9 +110,11 @@ function pickResults(raw, c) {
 class ChatToolExecutor {
     constructor() {
         this.resetTurn()
-        this._searchCache = new Map()   // "g:query" / "n:query" -> { at, payload }
-        this._usage = null              // { month, credits }, lazily loaded from disk
+        this._searchCache = new Map()
+        this._usage = null
         this._tavilyClient = null
+        this._entityNames = { at: 0, names: [] }
+        this._missCache = new Map()   // NEW: lowercase name -> time of last empty lookup
     }
 
     get opts() {
@@ -335,6 +337,55 @@ class ChatToolExecutor {
     _relatedLine(hit) {
         return `(related, about ${hit.from ?? "other"}) ${hit.text}`
     }
+    // Every name/alias the vault has a note for. Cached; on failure keeps the last good list.
+    async _vaultNames() {
+        const ttl = this.opts.memoryAutoInjectNamesTtlMs ?? 60000
+        const cached = this._entityNames
+        if (cached.names.length && Date.now() - cached.at < Math.min(ttl, 60000)) return cached.names
+        try {
+            const { data } = await axios.get(`${this.opts.memoryDbUrl}/entities`, { timeout: this.opts.dbTimeout })
+            const names = (data?.names ?? []).filter(n => typeof n === "string" && n.trim().length >= 3)
+            Logger.info(`fetched ${names.length} name(s) from /entities`, "MEMORY AUTOINJECT NAMES")
+            if (names.length) this._entityNames = { at: Date.now(), names }
+            return names.length ? names : cached.names
+        } catch (err) {
+            Logger.error(`${this.opts.memoryDbUrl}/entities: ${err.message}`, "MEMORY AUTOINJECT NAMES")
+            return cached.names   // keep last good list, retry next turn
+        }
+    }
+    async _lookupMentioned(name, includePrivate) {
+        const key = name.toLowerCase()
+        if (Date.now() - (this._missCache.get(key) ?? 0) < 5 * 60 * 1000) return []
+        try {
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+                person_name: name,
+                limit: this.opts.memoryAutoInjectMentionedLimit ?? 4,
+                include_private: includePrivate,
+                include_related: true,
+                related_limit: this.opts.memoryAutoInjectMentionedRelatedLimit ?? 2,
+                summary_mode: "replace",
+            }, { timeout: this.opts.dbTimeout })
+            const hits = data?.results ?? []
+            if (!hits.length) this._missCache.set(key, Date.now())
+            Logger.info(`[mentioned] ${name}: ${hits.length} row(s)`, "MEMORY AUTOINJECT")
+            return hits.map(h => this._entityLine(name, h))
+        } catch (err) {
+            Logger.error(`${name}: ${err.message}`, "MEMORY AUTOINJECT MENTIONED")
+            return []
+        }
+    }
+    // Names from `candidates` that appear in `text` as whole words, longest first.
+    _namesIn(text, candidates) {
+        const found = new Map()
+        for (const name of candidates) {
+            const trimmedName = (name ?? "").trim()
+            if (trimmedName.length < 3) continue
+            const escaped = trimmedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+            const re = new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "iu")
+            if (re.test(text) && !found.has(trimmedName.toLowerCase())) found.set(trimmedName.toLowerCase(), trimmedName)
+        }
+        return [...found.values()].sort((a, b) => b.length - a.length)
+    }
     // Auto-injection (passive, not a tool call). Each turn pulls, in order:
     //   0. pinned server knowledge (Server/pinned.md)
     //   1. the speaker's own file (exact lookup) + a few facts others wrote about them
@@ -344,10 +395,41 @@ class ChatToolExecutor {
     // `known`: names currently in the room (working memory) — only these can
     // be matched as "mentioned", so a random word never becomes a lookup.
     // `includePrivate`: true on DM / voice turns so private facts are visible.
-    async autoInjectMemory(queryText, { authorName = null, authorId = null, known = [], includePrivate = true } = {}) {
+    _senderCandidates(authorName, text) {
+        const handle = text.match(/^\[([^\]]+)\]/)?.[1]?.trim()
+        const first = authorName?.split(/[^\p{L}\p{N}_.-]+/u)[0]
+        return [...new Set([handle, authorName?.trim(), first].filter(n => n && n.length >= 2))]
+    }
+
+
+    async _lookupMentioned(name, includePrivate) {
+        const key = name.toLowerCase()
+        if (Date.now() - (this._missCache.get(key) ?? 0) < 60 * 1000) return []
+        try {
+            const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+                person_name: name,
+                limit: this.opts.memoryAutoInjectMentionedLimit ?? 4,
+                include_private: includePrivate,
+                include_related: true,
+                related_limit: this.opts.memoryAutoInjectMentionedRelatedLimit ?? 2,
+                summary_mode: "replace",
+            }, { timeout: this.opts.dbTimeout })
+            const hits = data?.results ?? []
+            if (!hits.length) this._missCache.set(key, Date.now())
+            Logger.info(`[mentioned] ${name}: ${hits.length} row(s)`, "MEMORY AUTOINJECT")
+            return hits.map(h => this._entityLine(name, h))
+        } catch (err) {
+            Logger.error(`${name}: ${err.message}`, "MEMORY AUTOINJECT MENTIONED")
+            return []
+        }
+    }
+
+    async autoInjectMemory(rawText, { authorName = null, authorId = null, known = [], includePrivate = true } = {}) {
         if (!this.opts.memoryAutoInjectEnabled) return null
-        const trimmed = (queryText ?? "").trim()
-        if (!trimmed && !authorName && !authorId) return null
+        const raw = (rawText ?? "").trim()
+        const senders = this._senderCandidates(authorName, raw)
+        const trimmed = raw.replace(/^\[[^\]]+\]\s*says to you:\s*/i, "").trim()
+        if (!trimmed && !senders.length && !authorId) return null
 
         const parts = []
         const seen = new Set()
@@ -357,8 +439,9 @@ class ChatToolExecutor {
             seen.add(key)
             parts.push(text)
         }
+        const done = () => parts.length ? parts.join("\n") : null
 
-        // 0. Pinned server knowledge — small, curated, always present.
+        // 0. Pinned server knowledge.
         try {
             const { data } = await axios.get(`${this.opts.memoryDbUrl}/pinned`, { timeout: this.opts.dbTimeout })
             for (const text of data?.facts ?? []) push(`(server) ${text}`)
@@ -366,61 +449,46 @@ class ChatToolExecutor {
             Logger.error(err.message, "MEMORY AUTOINJECT PINNED")
         }
 
-        // 1. Who's talking — exact lookup, bypasses embeddings entirely.
-        if (this.opts.memoryAutoInjectPersonEnabled && (authorName || authorId)) {
-            try {
-                const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
-                    subject_id: authorId ?? null,
-                    person_name: authorName ?? null,
-                    limit: this.opts.memoryAutoInjectPersonLimit ?? 6,
-                    include_private: includePrivate,
-                    include_related: true,
-                    related_limit: this.opts.memoryAutoInjectRelatedLimit ?? 3,
-                    summary_mode: "replace",
-                    conversation_limit: this.opts.memoryAutoInjectConversationLimit ?? 0,
-                }, { timeout: this.opts.dbTimeout })
-
-                const hits = data?.results ?? []
-                if (hits.length) {
-                    Logger.info(`[person] ${authorName ?? authorId}: ${hits.length} row(s)${hits.some(h => h.relation === "summary") ? " (with summary)" : ""}`, "MEMORY AUTOINJECT")
-                    for (const h of hits) push(this._entityLine(authorName ?? "them", h))
+        // 1. Sender: handle, then display name, then first token; stop at first hit.
+        if (this.opts.memoryAutoInjectPersonEnabled && (senders.length || authorId)) {
+            for (const name of senders.length ? senders : [null]) {
+                try {
+                    const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+                        subject_id: authorId ?? null,
+                        person_name: name,
+                        limit: this.opts.memoryAutoInjectPersonLimit ?? 6,
+                        include_private: includePrivate,
+                        include_related: true,
+                        related_limit: this.opts.memoryAutoInjectRelatedLimit ?? 3,
+                        summary_mode: "replace",
+                        conversation_limit: this.opts.memoryAutoInjectConversationLimit ?? 0,
+                    }, { timeout: this.opts.dbTimeout })
+                    const hits = data?.results ?? []
+                    Logger.info(`[person] tried "${name}": ${hits.length} row(s)`, "MEMORY AUTOINJECT")
+                    if (hits.length) {
+                        for (const h of hits) push(this._entityLine(name ?? "them", h))
+                        break
+                    }
+                } catch (err) {
+                    Logger.error(err.message, "MEMORY AUTOINJECT PERSON")
                 }
-            } catch (err) {
-                Logger.error(err.message, "MEMORY AUTOINJECT PERSON")
             }
         }
 
-        if (!trimmed) return parts.length ? parts.join("\n") : null
+        if (!trimmed) return done()
 
-        // 1b. People named in the message. Private facts of other people are
-        // never injected, regardless of channel.
-        const lower = trimmed.toLowerCase()
-        const mentioned = (known ?? [])
-            .filter(n => n && n !== authorName && lower.includes(n.toLowerCase()))
-            .slice(0, this.opts.memoryAutoInjectMentionedMax ?? 3)
-
-        for (const name of mentioned) {
-            try {
-                const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
-                    person_name: name,
-                    limit: this.opts.memoryAutoInjectMentionedLimit ?? 4,
-                    include_private: true, // always include private facts of the mentioned person, if any
-                    include_related: true,
-                    related_limit: this.opts.memoryAutoInjectMentionedRelatedLimit ?? 2,
-                    summary_mode: "replace",
-                }, { timeout: this.opts.dbTimeout })
-
-                const hits = data?.results ?? []
-                if (hits.length) {
-                    Logger.info(`[mentioned] ${name}: ${hits.length} row(s)`, "MEMORY AUTOINJECT")
-                    for (const h of hits) push(this._entityLine(name, h))
-                }
-            } catch (err) {
-                Logger.error(err.message, "MEMORY AUTOINJECT MENTIONED")
-            }
+        // 1b. Mentioned people: vault/room names plus every word in the message, exact lookup each.
+        {
+            const selfNames = new Set(senders.flatMap(s => [s.toLowerCase(), s.toLowerCase().replace(/^_+|_+$/g, "")]))
+            const vault = [...(await this._vaultNames()), ...(known ?? [])]
+            const names = this._namesIn(trimmed, vault)
+                .filter(n => !selfNames.has(n.toLowerCase()))
+                .slice(0, this.opts.memoryAutoInjectMentionedMax ?? 6)
+            Logger.info(`${vault.length} vault name(s), mentioned: ${names.join(", ") || "(none)"}`, "MEMORY AUTOINJECT")
+            const results = await Promise.all(names.map(n => this._lookupMentioned(n, includePrivate)))
+            for (const lines of results) for (const l of lines) push(l)
         }
-
-        // 2. Topic facts, expanded one hop through the links in each hit.
+        // 2. Topic facts, one hop through links.
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
                 query: trimmed,
@@ -432,16 +500,9 @@ class ChatToolExecutor {
                 related_limit: this.opts.memoryAutoInjectSearchRelatedLimit ?? 2,
                 max_related: this.opts.memoryAutoInjectSearchRelatedMax ?? 4,
             }, { timeout: this.opts.dbTimeout })
-
-            const hits = data?.results ?? []
-            for (const h of hits) {
-                if (h.relation === "linked") {
-                    Logger.info(`[linked via "${h.via}"] "${h.text}"`, "MEMORY AUTOINJECT")
-                    push(this._relatedLine(h))
-                } else {
-                    Logger.info(`[fact, score ${h.score}] "${h.text}"`, "MEMORY AUTOINJECT")
-                    push(h.text)
-                }
+            for (const h of data?.results ?? []) {
+                Logger.info(`[${h.relation === "linked" ? `linked via "${h.via}"` : `fact, score ${h.score}`}] "${h.text}"`, "MEMORY AUTOINJECT")
+                push(h.relation === "linked" ? this._relatedLine(h) : h.text)
             }
         } catch (err) {
             Logger.error(err.message, "MEMORY AUTOINJECT FACT")
@@ -457,10 +518,8 @@ class ChatToolExecutor {
                     types: ["episodic"],
                     include_private: includePrivate,
                 }, { timeout: this.opts.dbTimeout })
-
-                const hits = data?.results ?? []
-                for (const h of hits) {
-                    Logger.info(`[episodic, score ${h.score}] summary: "${h.text}"\nraw: ${h.content}`, "MEMORY AUTOINJECT")
+                for (const h of data?.results ?? []) {
+                    Logger.info(`[episodic, score ${h.score}] "${h.text}"`, "MEMORY AUTOINJECT")
                     push(`(past conversation) ${h.content}`)
                 }
             } catch (err) {
@@ -468,13 +527,9 @@ class ChatToolExecutor {
             }
         }
 
-        if (!parts.length) {
-            Logger.info(`No hits for: "${trimmed}"`, "MEMORY AUTOINJECT")
-            return null
-        }
-        return parts.join("\n")
+        if (!parts.length) Logger.info(`No hits for: "${trimmed}"`, "MEMORY AUTOINJECT")
+        return done()
     }
-
     async memoryAdd(factText, source = "user", meta = {}) {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr
@@ -870,25 +925,17 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "query_memory_database",
-            description: `Search stored facts (about people/server/yourself) and past events. One search covers both.
-
-                        Check this before stating anything as fact you're not 100% sure of.
-
-                        Three modes, pick ONE per call:
-                        1. Fact/topic lookup — query set, days_ago/days_back unset.
-                        2. A specific past event ("10 days ago") — query + days_ago.
-                        3. Open-ended recent stretch, no topic — days_back set, query empty.
-
-                        query is required (2-6 words) in modes 1 and 2. One call is normally enough.`,
+            description: `Search stored facts and past conversations by topic or time.
+USE WHEN: someone asks about a past event, what was said or done earlier, "remember when...", "what happened lately", or any stored fact that isn't about one specific named person.
+DO NOT USE WHEN: the question is "what do you know about <person>" or "who is <person>" (use lookup_entity), or for real-world facts (use web_search).
+Modes, pick ONE: (1) topic: query only. (2) specific past event: query + days_ago. (3) recent stretch with no topic: days_back only.
+query is required (2-6 keywords) in modes 1 and 2.`,
             parameters: {
                 type: "object",
                 properties: {
                     query: {
                         type: "string",
-                        // Hard word cap stated as a number, not "a phrase" — small
-                        // models anchor much better on an explicit number than on adjectives
-                        // like "short". maxLength enforces it if your JSON schema layer checks it.
-                        description: "2-6 keywords only. No full sentences, no politeness, no extra instructions to the search. Example: 'shinyshadow favorite color'. Required for modes 1 and 2.",
+                        description: "2-6 keywords only. No sentences, no politeness. Example: 'shinyshadow favorite color'.",
                         maxLength: 60
                     },
                     days_ago: { type: "number", minimum: 0, description: "Rough days back for a specific past event. Omit otherwise." },
@@ -985,18 +1032,21 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "web_search",
-            description: "Search the web for real-world facts outside your knowledge. Searches are rationed: don't use it for things you already know or for chit-chat. One call is normally enough.",
+            description: `Search the web for real-world facts.
+USE WHEN: news, current events, latest versions, prices, scores, release dates, or any real-world fact you aren't certain of. If you would be guessing, search instead.
+DO NOT USE WHEN: chit-chat, opinions, facts about people in this chat (use memory tools), or things you already know for sure.
+One call is normally enough.`,
             parameters: {
                 type: "object",
                 properties: {
-                    recent: {
-                        type: "boolean",
-                        description: "true ONLY for news, current events, latest versions, prices or scores. Leave false for how-things-work and general facts."
-                    },
                     query: {
                         type: "string",
-                        description: "A short search-engine query, 3-8 words, like a real Google search. No questions, no politeness, no requests for sources/dates/methodology. Bad: 'please tell me detailed statistics with sources about X'. Good: 'X statistics 2026'.",
+                        description: "A short search-engine query, 3-8 words, like a real Google search. No questions, no politeness. Good: 'Minecraft latest version 2026'.",
                         maxLength: 60
+                    },
+                    recent: {
+                        type: "boolean",
+                        description: "true ONLY for news, current events, latest versions, prices or scores. Otherwise false."
                     }
                 },
                 required: ["query"]
@@ -1007,17 +1057,18 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "lookup_entity",
-            description: `List everything stored about ONE named person or topic note (e.g. a project like the castle). Use this for "what do you know about X", "who is X", or before saying something about a specific person you're not sure of.
-
-                        Exact lookup, not a similarity search — it returns all of their facts, plus a few facts other people's notes link to them ("mentioned in ..."). For fuzzy topics or past events, use query_memory_database instead.`,
+            description: `Everything stored about ONE named person or topic note (exact lookup, not a similarity search).
+USE WHEN: "what do you know about X", "who is X", "look X up", "check your memory for X", "do you know X", or before saying anything about a specific person you aren't sure of. Call it even if the autoinjected memory already shows something, because that block is partial.
+DO NOT USE WHEN: the question is about an event, a time period, or a fuzzy topic (use query_memory_database).
+Returns all their facts plus facts other people's notes link to them.`,
             parameters: {
                 type: "object",
                 properties: {
-                    person_name: { type: "string", description: "Their display name, exactly as it appears in chat. Required unless you have subject_id.", maxLength: 60 },
+                    person_name: { type: "string", description: "The name exactly as the user typed it. Copy it letter by letter, never correct, shorten or respell it. Example: 'IsGone'.", maxLength: 60 },
                     subject_id: { type: "string", description: "Their Discord user id, only if you were actually given one. Never guess.", maxLength: 40 },
                     category: { type: "string", description: "Optional narrowing, e.g. 'preference'.", maxLength: 30 }
                 },
-                required: []
+                required: ["person_name"]
             }
         }
     },

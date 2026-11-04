@@ -10,6 +10,7 @@ import { CODE_SYSTEM_PROMPT, stripCodeFence } from '../coding/codeEditShared.js'
 import { WorkingMemory } from './memory/workingMemory.js'
 import { handleExplicitMemory } from './memory/explicitMemory.js'
 import { Summarizer } from './memory/summarizer.js'
+import { extractAndStoreFacts } from './memory/factExtractor.js'
 import { classifyRisk, riskAllowed } from './tools/riskyActionsManagement/riskClassifier.js'
 import { TurnContext } from './conversation/TurnContext.js'
 import { ChannelLocks } from './conversation/channelLocks.js'
@@ -65,6 +66,7 @@ export class Lily {
             () => this.opts,
             channelId => this.getHistory(channelId),
             memory => this.tools.addEpisodicMemory(memory),
+            batch => this._extractFacts(batch),
         )
     }
 
@@ -144,7 +146,7 @@ export class Lily {
             let block = ""
             if (working) block += `${working}\n`
             if (ctx.autoMemory) {
-                block += `[Extra context] Information that might be related to the newest message - ignore if irrelevant${ctx.autoMemory}\n[Extra context]\n`
+                block += `[Memory autoinjected] Information that might be related to the user or conversation - ignore if irrelevant${ctx.autoMemory}\n[Memory autoinjected]\n`
             }
             if (rawContext.length) {
                 const reminder = channelId === MINECRAFT_CHANNEL_ID && !suppressActionReminder
@@ -219,6 +221,21 @@ export class Lily {
             { tools: null, overrides: { max_tokens: agentMaxTokens, temperature: summaryTemperature } },
         )
         return (msg?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim() || null
+    }
+
+    // ---------- fact extraction (runs after the summarizer) ----------
+    // Called by the Summarizer with the named chat lines collected since the last summary.
+    async _extractFacts({ channelId, lines, context, isPrivate }) {
+        if (this.opts.autoFactExtraction === false) return 0
+        return extractAndStoreFacts({
+            lines,
+            context,
+            known: this.workingMemory.presentNames(channelId),
+            tools: this.tools,
+            opts: this.opts,
+            idLookup: name => this.workingMemory.idFor(channelId, name),
+            visibility: isPrivate ? 'private' : 'server',
+        })
     }
 
     // ---------- turn endings ----------
@@ -460,12 +477,14 @@ export class Lily {
     }
 
     _turnFields(channelId, systemPrompt, opts, images) {
+        // New facts are saved by the background extractor, so the chat model doesn't get the save tool.
+        const hidden = this.opts.autoFactExtraction !== false ? new Set(['addto_memory_database']) : new Set()
         return {
             channelId,
             systemPrompt,
             opts,
             images,
-            baseTools: this.getToolsForChannel(channelId, opts),
+            baseTools: this.getToolsForChannel(channelId, opts).filter(t => !hidden.has(t.function.name)),
             maxToolRepeats: this.opts.maxToolRepeats,
         }
     }
@@ -483,11 +502,6 @@ export class Lily {
         }
         this.summarizer.observe(channelId, clean, authorName)
     }
-
-    // Replace the existing handleMessage method in src/ai/Lily.js with this one.
-    // No other change to Lily.js is needed: VOICE_ASSISTANT_CHANNEL_ID is already
-    // imported there, and _runCalls already passes { channelId, isDM, userId } to
-    // tools.execute(), which chatToolExecutor.js now uses for visibility.
 
     async handleMessage(channelId, rawInput, logPrefix, systemPromptOverride = null, opts = {}, images = []) {
         const clean = sanitizeInput(rawInput)
@@ -510,6 +524,9 @@ export class Lily {
             // with private visibility, and only those turns can read private facts.
             const isPrivate = channelId === VOICE_ASSISTANT_CHANNEL_ID || !!opts.isDM
             const known = this.workingMemory.presentNames(channelId)
+
+            // Named line for the fact extractor (runs after the next summary).
+            if (clean) this.summarizer.record(channelId, authorName ?? "User", clean, { isPrivate })
 
             // Explicit "remember that ..." / "forget ..." — written before the model
             // sees the message, outside the turn's tool budget.
@@ -544,9 +561,16 @@ export class Lily {
 
             await this.summarizer.tick(channelId)
             const loopResult = await this.runToolLoop(ctx)
-            if (loopResult?.text) this._pushToBlog(channelId)
+            if (loopResult?.text) {
+                this._pushToBlog(channelId)
+                this.summarizer.record(channelId, "Lily", loopResult.text, { isPrivate })
+            }
 
-            // Fire-and-forget: never sits in front of the reply.
+            // Fire-and-forget: never sits in front of the reply. If a summary ran this turn,
+            // the fact extraction for the lines collected since the last summary runs now.
+            this.summarizer.runPendingExtraction(channelId)
+                .catch(err => Logger.error(err.message, "FACT EXTRACT"))
+
             const lines = this.getRawContext(channelId)
             this.workingMemory.update(channelId, {
                 lines: lines.length ? lines : [`${authorName ?? "User"}: ${clean}`],

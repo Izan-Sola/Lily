@@ -278,12 +278,17 @@ class ChatToolExecutor {
         try {
             const k = daysAgo !== null ? 25 : 10
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
-                query, k, min_score: this.opts.memoryQueryMinScore, include_private: includePrivate
+                query, k, min_score: this.opts.memoryQueryMinScore, include_private: includePrivate,
+                // One-hop expansion only for plain lookups: a dated search wants dated hits.
+                include_related: daysAgo === null,
+                related_limit: getSection('memory').searchRelatedLimit ?? 2,
             }, { timeout: this.opts.dbTimeout })
 
-            if (!data?.results?.length) return finish("No relevant information found in memory.")
+            const all = data?.results ?? []
+            let results = all.filter(e => e.relation !== "linked")
+            const related = all.filter(e => e.relation === "linked")
 
-            let results = data.results
+            if (!results.length) return finish("No relevant information found in memory.")
 
             if (daysAgo !== null) {
                 const nowSecs = Date.now() / 1000
@@ -295,14 +300,15 @@ class ChatToolExecutor {
                 if (!results.length) return finish(`No relevant information found from around ${daysAgo} days ago.`)
             }
 
-            results = results.slice(0, 10)
-            return finish(results.map(e => {
+            const lines = results.slice(0, 10).map(e => {
                 if (e.type === "episodic") {
                     const date = new Date(e.timestamp * 1000).toLocaleDateString()
                     return `[${date}] ${e.content}`
                 }
                 return e.text
-            }).join("\n"))
+            })
+            for (const r of related) lines.push(this._relatedLine(r))
+            return finish(lines.join("\n"))
         } catch (err) {
             Logger.error(err.message, "MEMORY QUERY")
             return finish("No relevant information found in memory.")
@@ -312,11 +318,23 @@ class ChatToolExecutor {
     // Formats one get_entity row. Rows with relation "mentioned" come from OTHER
     // people's/topic files that link to this subject (Obsidian backlinks).
     _entityLine(name, hit) {
-        return hit.relation === "mentioned"
-            ? `(about ${name}, from ${hit.from ?? "other"}'s notes) ${hit.text}`
-            : `(about ${name}) ${hit.text}`
+        switch (hit.relation) {
+            case "mentioned":
+                return `(about ${name}, from ${hit.from ?? "other"}'s notes) ${hit.text}`
+            case "summary":
+                return `(about ${name}, summary of what's known) ${hit.text}`
+            case "conversation": {
+                const date = hit.timestamp ? new Date(hit.timestamp * 1000).toLocaleDateString() : "earlier"
+                return `(past conversation with ${name}, ${date}) ${hit.text}`
+            }
+            default:
+                return `(about ${name}) ${hit.text}`
+        }
     }
 
+    _relatedLine(hit) {
+        return `(related, about ${hit.from ?? "other"}) ${hit.text}`
+    }
     // Auto-injection (passive, not a tool call). Each turn pulls, in order:
     //   0. pinned server knowledge (Server/pinned.md)
     //   1. the speaker's own file (exact lookup) + a few facts others wrote about them
@@ -326,7 +344,7 @@ class ChatToolExecutor {
     // `known`: names currently in the room (working memory) — only these can
     // be matched as "mentioned", so a random word never becomes a lookup.
     // `includePrivate`: true on DM / voice turns so private facts are visible.
-    async autoInjectMemory(queryText, { authorName = null, authorId = null, known = [], includePrivate = false } = {}) {
+    async autoInjectMemory(queryText, { authorName = null, authorId = null, known = [], includePrivate = true } = {}) {
         if (!this.opts.memoryAutoInjectEnabled) return null
         const trimmed = (queryText ?? "").trim()
         if (!trimmed && !authorName && !authorId) return null
@@ -358,11 +376,13 @@ class ChatToolExecutor {
                     include_private: includePrivate,
                     include_related: true,
                     related_limit: this.opts.memoryAutoInjectRelatedLimit ?? 3,
+                    summary_mode: "replace",
+                    conversation_limit: this.opts.memoryAutoInjectConversationLimit ?? 0,
                 }, { timeout: this.opts.dbTimeout })
 
                 const hits = data?.results ?? []
                 if (hits.length) {
-                    Logger.info(`[person] ${authorName ?? authorId}: ${hits.length} fact(s)`, "MEMORY AUTOINJECT")
+                    Logger.info(`[person] ${authorName ?? authorId}: ${hits.length} row(s)${hits.some(h => h.relation === "summary") ? " (with summary)" : ""}`, "MEMORY AUTOINJECT")
                     for (const h of hits) push(this._entityLine(authorName ?? "them", h))
                 }
             } catch (err) {
@@ -384,14 +404,15 @@ class ChatToolExecutor {
                 const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
                     person_name: name,
                     limit: this.opts.memoryAutoInjectMentionedLimit ?? 4,
-                    include_private: false,
+                    include_private: true, // always include private facts of the mentioned person, if any
                     include_related: true,
                     related_limit: this.opts.memoryAutoInjectMentionedRelatedLimit ?? 2,
+                    summary_mode: "replace",
                 }, { timeout: this.opts.dbTimeout })
 
                 const hits = data?.results ?? []
                 if (hits.length) {
-                    Logger.info(`[mentioned] ${name}: ${hits.length} fact(s)`, "MEMORY AUTOINJECT")
+                    Logger.info(`[mentioned] ${name}: ${hits.length} row(s)`, "MEMORY AUTOINJECT")
                     for (const h of hits) push(this._entityLine(name, h))
                 }
             } catch (err) {
@@ -399,7 +420,7 @@ class ChatToolExecutor {
             }
         }
 
-        // 2. Topic facts.
+        // 2. Topic facts, expanded one hop through the links in each hit.
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
                 query: trimmed,
@@ -407,12 +428,20 @@ class ChatToolExecutor {
                 min_score: this.opts.memoryAutoInjectFactMinScore,
                 types: ["fact"],
                 include_private: includePrivate,
+                include_related: true,
+                related_limit: this.opts.memoryAutoInjectSearchRelatedLimit ?? 2,
+                max_related: this.opts.memoryAutoInjectSearchRelatedMax ?? 4,
             }, { timeout: this.opts.dbTimeout })
 
             const hits = data?.results ?? []
             for (const h of hits) {
-                Logger.info(`[fact, score ${h.score}] "${h.text}"`, "MEMORY AUTOINJECT")
-                push(h.text)
+                if (h.relation === "linked") {
+                    Logger.info(`[linked via "${h.via}"] "${h.text}"`, "MEMORY AUTOINJECT")
+                    push(this._relatedLine(h))
+                } else {
+                    Logger.info(`[fact, score ${h.score}] "${h.text}"`, "MEMORY AUTOINJECT")
+                    push(h.text)
+                }
             }
         } catch (err) {
             Logger.error(err.message, "MEMORY AUTOINJECT FACT")
@@ -425,7 +454,8 @@ class ChatToolExecutor {
                     query: trimmed,
                     k: this.opts.memoryAutoInjectEpisodicK,
                     min_score: this.opts.memoryAutoInjectEpisodicMinScore,
-                    types: ["episodic"]
+                    types: ["episodic"],
+                    include_private: includePrivate,
                 }, { timeout: this.opts.dbTimeout })
 
                 const hits = data?.results ?? []
@@ -500,16 +530,25 @@ class ChatToolExecutor {
                 include_private: includePrivate,
                 include_related: true,
                 related_limit: getSection('memory').lookupEntityRelatedLimit ?? 5,
+                summary_mode: "prepend",
+                conversation_limit: getSection('memory').lookupEntityConversationLimit ?? 3,
             }, { timeout: this.opts.dbTimeout })
 
             const results = data?.results ?? []
+            const line = (r) => {
+                switch (r.relation) {
+                    case "mentioned": return `[mentioned in ${r.from ?? "other"}'s notes] ${r.text}`
+                    case "summary": return `[summary] ${r.text}`
+                    case "conversation": {
+                        const date = r.timestamp ? new Date(r.timestamp * 1000).toLocaleDateString() : "earlier"
+                        return `[past conversation, ${date}] ${r.text}`
+                    }
+                    default: return `[${r.category}] ${r.text}`
+                }
+            }
             return JSON.stringify({
                 status: "ok",
-                results: results.length
-                    ? results.map(r => r.relation === "mentioned"
-                        ? `[mentioned in ${r.from ?? "other"}'s notes] ${r.text}`
-                        : `[${r.category}] ${r.text}`).join("\n")
-                    : "Nothing is stored under that name yet.",
+                results: results.length ? results.map(line).join("\n") : "Nothing is stored under that name yet.",
                 instruction: "Lookup complete. Reply in character now — don't look the same person up again this turn.",
             })
         } catch (err) {
@@ -864,19 +903,18 @@ const CHAT_TOOLS = [
         type: "function",
         function: {
             name: "addto_memory_database",
-            description: "Store a fact worth keeping permanently that has NEVER been queried or stored before. Several people are in chat — always make clear WHO the fact is about in the text, never just 'he' or 'they'. Never use it for a fact about a real person unless they just said it in this exact message. One call per message unless the message truly has multiple distinct new facts.",
+            description: `Save a lasting fact about a specific person to long-term memory. Call this whenever the conversation reveals new information about someone: what they like or dislike, what they do, own, plan or did, their relationships, opinions, habits or history. This includes facts people tell you about THEMSELVES ("I main support", "I'm moving to Madrid") and facts about OTHER people, however phrased: direct statements ("he's a dev"), asides ("did you know Sam hates mornings?"), "btw..." remarks, corrections, or facts slipped in while talking about something else. The trigger is the information, not the sentence shape. If unsure whether something counts, call the tool. person_name is always required: use the speaker's name for "I/me/my", and resolve "he/she/they/my friend" from the conversation. Do NOT call for questions, jokes, temporary states ("is hungry right now").`,
             parameters: {
                 type: "object",
                 properties: {
-                    text: { type: "string", description: "One factual sentence naming who or what it's about. 3-20 words. Required, never empty.", maxLength: 150 },
-                    source: { type: "string" },
+                    text: { type: "string", description: "One standalone factual sentence that names the person, e.g. 'Sam hates mornings'. 3-20 words. Drop framing like 'did you know'. Never empty.", maxLength: 150 },
+                    person_name: { type: "string", description: "Name of the person the fact is about, exactly as written in chat. Resolve pronouns from context. Never empty.", maxLength: 60 },
                     category: {
                         type: "string",
                         enum: ["person", "project", "place", "object", "preference", "goal", "decision", "event", "bot", "general"],
-                        description: "What kind of thing this fact is about. Default 'general'."
+                        description: "What kind of thing the fact is about. Default 'general'."
                     },
-                    person_name: { type: "string", description: "Only when the fact is about a specific person — their display name, exactly as written in chat.", maxLength: 60 },
-                    subject_id: { type: "string", description: "Only when you were actually given that person's Discord user id. Never invent one.", maxLength: 40 }
+                    subject_id: { type: "string", description: "Only if you were actually given that person's Discord user id. Never invent one.", maxLength: 40 }
                 },
                 required: ["text", "person_name", "category"]
             }

@@ -92,6 +92,8 @@ function pickResults(raw, c) {
     return { picked, weak: !good.length && picked.length > 0 }
 }
 
+const fmtDate = (ts) => ts ? new Date(ts * 1000).toLocaleDateString() : "earlier"
+
 // ─── Chat Tool Executor ──────────────────────────────────────────────────
 //
 // Turn-loop contract (unchanged from before the split — read before touching):
@@ -114,7 +116,7 @@ class ChatToolExecutor {
         this._usage = null
         this._tavilyClient = null
         this._entityNames = { at: 0, names: [] }
-        this._missCache = new Map()   // NEW: lowercase name -> time of last empty lookup
+        this._missCache = new Map()   // lowercase name -> time of last empty lookup
     }
 
     get opts() {
@@ -224,6 +226,12 @@ class ChatToolExecutor {
         return null
     }
 
+    // POST /get_entity; returns the result rows (throws on network errors).
+    async _getEntity(body) {
+        const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, body, { timeout: this.opts.dbTimeout })
+        return data?.results ?? []
+    }
+
     async wikiSearch(query) {
         Logger.info(`"${query}"`, "WIKI")
         try {
@@ -266,10 +274,9 @@ class ChatToolExecutor {
 
                 if (!data?.results?.length) return finish(`No memories found from the last ${daysBack} days.`)
 
-                return finish(data.results.map(e => {
-                    const date = new Date(e.timestamp * 1000).toLocaleDateString()
-                    return e.type === "episodic" ? `[${date}] ${e.content}` : `[${date}] ${e.text}`
-                }).join("\n"))
+                return finish(data.results.map(e =>
+                    `[${new Date(e.timestamp * 1000).toLocaleDateString()}] ${e.type === "episodic" ? e.content : e.text}`
+                ).join("\n"))
             } catch (err) {
                 Logger.error(err.message, "MEMORY QUERY")
                 return finish("No relevant information found in memory.")
@@ -278,9 +285,8 @@ class ChatToolExecutor {
 
         Logger.info(`Queried memory: "${query}" from ${daysAgo ?? "any"} days ago`, "MEMORY QUERY")
         try {
-            const k = daysAgo !== null ? 25 : 10
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
-                query, k, min_score: this.opts.memoryQueryMinScore, include_private: includePrivate,
+                query, k: daysAgo !== null ? 25 : 10, min_score: this.opts.memoryQueryMinScore, include_private: includePrivate,
                 // One-hop expansion only for plain lookups: a dated search wants dated hits.
                 include_related: daysAgo === null,
                 related_limit: getSection('memory').searchRelatedLimit ?? 2,
@@ -293,22 +299,14 @@ class ChatToolExecutor {
             if (!results.length) return finish("No relevant information found in memory.")
 
             if (daysAgo !== null) {
-                const nowSecs = Date.now() / 1000
-                const targetTs = nowSecs - daysAgo * 86400
                 const windowSecs = Math.max(windowDays, 0) * 86400
-                const lo = targetTs - windowSecs
-                const hi = targetTs + windowSecs
-                results = results.filter(e => e.timestamp >= lo && e.timestamp <= hi)
+                const targetTs = Date.now() / 1000 - daysAgo * 86400
+                results = results.filter(e => e.timestamp >= targetTs - windowSecs && e.timestamp <= targetTs + windowSecs)
                 if (!results.length) return finish(`No relevant information found from around ${daysAgo} days ago.`)
             }
 
-            const lines = results.slice(0, 10).map(e => {
-                if (e.type === "episodic") {
-                    const date = new Date(e.timestamp * 1000).toLocaleDateString()
-                    return `[${date}] ${e.content}`
-                }
-                return e.text
-            })
+            const lines = results.slice(0, 10).map(e =>
+                e.type === "episodic" ? `[${fmtDate(e.timestamp)}] ${e.content}` : e.text)
             for (const r of related) lines.push(this._relatedLine(r))
             return finish(lines.join("\n"))
         } catch (err) {
@@ -325,10 +323,8 @@ class ChatToolExecutor {
                 return `(about ${name}, from ${hit.from ?? "other"}'s notes) ${hit.text}`
             case "summary":
                 return `(about ${name}, summary of what's known) ${hit.text}`
-            case "conversation": {
-                const date = hit.timestamp ? new Date(hit.timestamp * 1000).toLocaleDateString() : "earlier"
-                return `(past conversation with ${name}, ${date}) ${hit.text}`
-            }
+            case "conversation":
+                return `(past conversation with ${name}, ${fmtDate(hit.timestamp)}) ${hit.text}`
             default:
                 return `(about ${name}) ${hit.text}`
         }
@@ -337,6 +333,7 @@ class ChatToolExecutor {
     _relatedLine(hit) {
         return `(related, about ${hit.from ?? "other"}) ${hit.text}`
     }
+
     // Every name/alias the vault has a note for. Cached; on failure keeps the last good list.
     async _vaultNames() {
         const ttl = this.opts.memoryAutoInjectNamesTtlMs ?? 60000
@@ -345,7 +342,6 @@ class ChatToolExecutor {
         try {
             const { data } = await axios.get(`${this.opts.memoryDbUrl}/entities`, { timeout: this.opts.dbTimeout })
             const names = (data?.names ?? []).filter(n => typeof n === "string" && n.trim().length >= 3)
-            Logger.info(`fetched ${names.length} name(s) from /entities`, "MEMORY AUTOINJECT NAMES")
             if (names.length) this._entityNames = { at: Date.now(), names }
             return names.length ? names : cached.names
         } catch (err) {
@@ -353,27 +349,31 @@ class ChatToolExecutor {
             return cached.names   // keep last good list, retry next turn
         }
     }
-    async _lookupMentioned(name, includePrivate) {
+
+    // Exact lookup of a person named in the message. `query` makes the server return only
+    // backlinks/conversations relevant to what was said. Empty results are remembered for a minute.
+    async _lookupMentioned(name, includePrivate, query) {
         const key = name.toLowerCase()
-        if (Date.now() - (this._missCache.get(key) ?? 0) < 5 * 60 * 1000) return []
+        if (Date.now() - (this._missCache.get(key) ?? 0) < 60 * 1000) return []
         try {
-            const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+            const hits = await this._getEntity({
                 person_name: name,
+                query,
                 limit: this.opts.memoryAutoInjectMentionedLimit ?? 4,
                 include_private: includePrivate,
                 include_related: true,
                 related_limit: this.opts.memoryAutoInjectMentionedRelatedLimit ?? 2,
                 summary_mode: "replace",
-            }, { timeout: this.opts.dbTimeout })
-            const hits = data?.results ?? []
+                conversation_limit: this.opts.memoryAutoInjectMentionedConversationLimit ?? 1,
+            })
             if (!hits.length) this._missCache.set(key, Date.now())
-            Logger.info(`[mentioned] ${name}: ${hits.length} row(s)`, "MEMORY AUTOINJECT")
             return hits.map(h => this._entityLine(name, h))
         } catch (err) {
             Logger.error(`${name}: ${err.message}`, "MEMORY AUTOINJECT MENTIONED")
             return []
         }
     }
+
     // Names from `candidates` that appear in `text` as whole words, longest first.
     _namesIn(text, candidates) {
         const found = new Map()
@@ -386,6 +386,13 @@ class ChatToolExecutor {
         }
         return [...found.values()].sort((a, b) => b.length - a.length)
     }
+
+    _senderCandidates(authorName, text) {
+        const handle = text.match(/^\[([^\]]+)\]/)?.[1]?.trim()
+        const first = authorName?.split(/[^\p{L}\p{N}_.-]+/u)[0]
+        return [...new Set([handle, authorName?.trim(), first].filter(n => n && n.length >= 2))]
+    }
+
     // Auto-injection (passive, not a tool call). Each turn pulls, in order:
     //   0. pinned server knowledge (Server/pinned.md)
     //   1. the speaker's own file (exact lookup) + a few facts others wrote about them
@@ -395,35 +402,6 @@ class ChatToolExecutor {
     // `known`: names currently in the room (working memory) — only these can
     // be matched as "mentioned", so a random word never becomes a lookup.
     // `includePrivate`: true on DM / voice turns so private facts are visible.
-    _senderCandidates(authorName, text) {
-        const handle = text.match(/^\[([^\]]+)\]/)?.[1]?.trim()
-        const first = authorName?.split(/[^\p{L}\p{N}_.-]+/u)[0]
-        return [...new Set([handle, authorName?.trim(), first].filter(n => n && n.length >= 2))]
-    }
-
-
-    async _lookupMentioned(name, includePrivate) {
-        const key = name.toLowerCase()
-        if (Date.now() - (this._missCache.get(key) ?? 0) < 60 * 1000) return []
-        try {
-            const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
-                person_name: name,
-                limit: this.opts.memoryAutoInjectMentionedLimit ?? 4,
-                include_private: includePrivate,
-                include_related: true,
-                related_limit: this.opts.memoryAutoInjectMentionedRelatedLimit ?? 2,
-                summary_mode: "replace",
-            }, { timeout: this.opts.dbTimeout })
-            const hits = data?.results ?? []
-            if (!hits.length) this._missCache.set(key, Date.now())
-            Logger.info(`[mentioned] ${name}: ${hits.length} row(s)`, "MEMORY AUTOINJECT")
-            return hits.map(h => this._entityLine(name, h))
-        } catch (err) {
-            Logger.error(`${name}: ${err.message}`, "MEMORY AUTOINJECT MENTIONED")
-            return []
-        }
-    }
-
     async autoInjectMemory(rawText, { authorName = null, authorId = null, known = [], includePrivate = true } = {}) {
         if (!this.opts.memoryAutoInjectEnabled) return null
         const raw = (rawText ?? "").trim()
@@ -434,7 +412,7 @@ class ChatToolExecutor {
         const parts = []
         const seen = new Set()
         const push = (text) => {
-            const key = (text ?? "").trim().toLowerCase()
+            const key = (text ?? "").replace(/^\([^)]*\)\s*/, "").trim().toLowerCase()
             if (!key || seen.has(key)) return
             seen.add(key)
             parts.push(text)
@@ -453,18 +431,17 @@ class ChatToolExecutor {
         if (this.opts.memoryAutoInjectPersonEnabled && (senders.length || authorId)) {
             for (const name of senders.length ? senders : [null]) {
                 try {
-                    const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+                    const hits = await this._getEntity({
                         subject_id: authorId ?? null,
                         person_name: name,
+                        query: trimmed || null,
                         limit: this.opts.memoryAutoInjectPersonLimit ?? 6,
                         include_private: includePrivate,
                         include_related: true,
                         related_limit: this.opts.memoryAutoInjectRelatedLimit ?? 3,
                         summary_mode: "replace",
-                        conversation_limit: this.opts.memoryAutoInjectConversationLimit ?? 0,
-                    }, { timeout: this.opts.dbTimeout })
-                    const hits = data?.results ?? []
-                    Logger.info(`[person] tried "${name}": ${hits.length} row(s)`, "MEMORY AUTOINJECT")
+                        conversation_limit: this.opts.memoryAutoInjectConversationLimit ?? 1,
+                    })
                     if (hits.length) {
                         for (const h of hits) push(this._entityLine(name ?? "them", h))
                         break
@@ -477,17 +454,18 @@ class ChatToolExecutor {
 
         if (!trimmed) return done()
 
-        // 1b. Mentioned people: vault/room names plus every word in the message, exact lookup each.
+        // 1b. Mentioned people: vault/room names found in the message, exact lookup each.
         {
             const selfNames = new Set(senders.flatMap(s => [s.toLowerCase(), s.toLowerCase().replace(/^_+|_+$/g, "")]))
             const vault = [...(await this._vaultNames()), ...(known ?? [])]
             const names = this._namesIn(trimmed, vault)
                 .filter(n => !selfNames.has(n.toLowerCase()))
                 .slice(0, this.opts.memoryAutoInjectMentionedMax ?? 6)
-            Logger.info(`${vault.length} vault name(s), mentioned: ${names.join(", ") || "(none)"}`, "MEMORY AUTOINJECT")
-            const results = await Promise.all(names.map(n => this._lookupMentioned(n, includePrivate)))
+            if (names.length) Logger.info(`mentioned: ${names.join(", ")}`, "MEMORY AUTOINJECT")
+            const results = await Promise.all(names.map(n => this._lookupMentioned(n, includePrivate, trimmed)))
             for (const lines of results) for (const l of lines) push(l)
         }
+
         // 2. Topic facts, one hop through links.
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/search`, {
@@ -500,10 +478,7 @@ class ChatToolExecutor {
                 related_limit: this.opts.memoryAutoInjectSearchRelatedLimit ?? 2,
                 max_related: this.opts.memoryAutoInjectSearchRelatedMax ?? 4,
             }, { timeout: this.opts.dbTimeout })
-            for (const h of data?.results ?? []) {
-                Logger.info(`[${h.relation === "linked" ? `linked via "${h.via}"` : `fact, score ${h.score}`}] "${h.text}"`, "MEMORY AUTOINJECT")
-                push(h.relation === "linked" ? this._relatedLine(h) : h.text)
-            }
+            for (const h of data?.results ?? []) push(h.relation === "linked" ? this._relatedLine(h) : h.text)
         } catch (err) {
             Logger.error(err.message, "MEMORY AUTOINJECT FACT")
         }
@@ -518,25 +493,24 @@ class ChatToolExecutor {
                     types: ["episodic"],
                     include_private: includePrivate,
                 }, { timeout: this.opts.dbTimeout })
-                for (const h of data?.results ?? []) {
-                    Logger.info(`[episodic, score ${h.score}] "${h.text}"`, "MEMORY AUTOINJECT")
-                    push(`(past conversation) ${h.content}`)
-                }
+                for (const h of data?.results ?? []) push(`(past conversation) ${h.text}`)
             } catch (err) {
                 Logger.error(err.message, "MEMORY AUTOINJECT EPISODIC")
             }
         }
 
-        if (!parts.length) Logger.info(`No hits for: "${trimmed}"`, "MEMORY AUTOINJECT")
+        Logger.info(`${parts.length} item(s) injected for: "${trimmed.slice(0, 80)}"`, "MEMORY AUTOINJECT")
         return done()
     }
+
     async memoryAdd(factText, source = "user", meta = {}) {
         const limitErr = this._checkLimit('memoryWrite', LIMITS.memoryWrite, 'a memory write — add/update/remove share one slot')
         if (limitErr) return limitErr
-        this._requireQuery(factText, 2, "ShinyShadow_ said their favorite color is teal")
+        const argErr = this._requireQuery(factText, 2, "ShinyShadow_ said their favorite color is teal")
+        if (argErr) return argErr
         this.turnUsage.memoryWrite++
 
-        Logger.info(` Added memory: "${factText}"`, "MEMORY ADD")
+        Logger.info(`Added memory: "${factText}"`, "MEMORY ADD")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_fact`, {
                 text: factText,
@@ -547,8 +521,7 @@ class ChatToolExecutor {
                 visibility: meta.visibility ?? "server",
             }, { timeout: this.opts.dbTimeout })
 
-            const failed = data?.status === "error" || data?.ok === false
-            if (failed) {
+            if (data?.status === "error" || data?.ok === false) {
                 Logger.error(`add_fact returned failure: ${JSON.stringify(data)}`, "MEMORY ADD")
                 return this._err(data.message ?? "Failed to store information.")
             }
@@ -579,7 +552,7 @@ class ChatToolExecutor {
 
         Logger.info(`Entity lookup: ${person_name ?? subject_id}`, "MEMORY ENTITY")
         try {
-            const { data } = await axios.post(`${this.opts.memoryDbUrl}/get_entity`, {
+            const results = await this._getEntity({
                 person_name, subject_id, category,
                 limit: getSection('memory').lookupEntityLimit,
                 include_private: includePrivate,
@@ -587,17 +560,13 @@ class ChatToolExecutor {
                 related_limit: getSection('memory').lookupEntityRelatedLimit ?? 5,
                 summary_mode: "prepend",
                 conversation_limit: getSection('memory').lookupEntityConversationLimit ?? 3,
-            }, { timeout: this.opts.dbTimeout })
+            })
 
-            const results = data?.results ?? []
             const line = (r) => {
                 switch (r.relation) {
                     case "mentioned": return `[mentioned in ${r.from ?? "other"}'s notes] ${r.text}`
                     case "summary": return `[summary] ${r.text}`
-                    case "conversation": {
-                        const date = r.timestamp ? new Date(r.timestamp * 1000).toLocaleDateString() : "earlier"
-                        return `[past conversation, ${date}] ${r.text}`
-                    }
+                    case "conversation": return `[past conversation, ${fmtDate(r.timestamp)}] ${r.text}`
                     default: return `[${r.category}] ${r.text}`
                 }
             }
@@ -694,11 +663,11 @@ class ChatToolExecutor {
 
     // Not part of the live chat-turn budget — called out-of-band by a
     // batch/summarizer process, not by the model mid-conversation.
-    async addEpisodicMemory({ summary, raw, participants = [], emotions = [], importance = 0.5, channel = null, source = "conversation_batch" }) {
+    async addEpisodicMemory({ summary, raw, participants = [], emotions = [], importance = 0.5, channel = null, visibility = "server", source = "conversation_batch" }) {
         Logger.info(`"${summary}"`, "EPISODIC BATCH ADD")
         try {
             const { data } = await axios.post(`${this.opts.memoryDbUrl}/add_episodic`, {
-                summary, raw, participants, emotions, importance, channel, source,
+                summary, raw, participants, emotions, importance, channel, visibility, source,
             }, { timeout: this.opts.dbTimeout })
             return JSON.stringify({ status: data.status, message: data.message })
         } catch (err) {
@@ -707,73 +676,50 @@ class ChatToolExecutor {
         }
     }
 
-    async searchGif(query) {
+    // Shared by send_gif / send_meme. kind: "gifs" | "static-memes".
+    async _searchKlipy(kind, query) {
+        const isGif = kind === "gifs"
+        const label = isGif ? "GIF" : "MEME"
+        const noun = isGif ? "gif" : "meme"
+
         const limitErr = this._checkLimit('media', LIMITS.media, 'sending a gif or meme — they share one slot')
         if (limitErr) return limitErr
-        const argErr = this._requireQuery(query, 2, "excited anime girl jumping")
+        const argErr = this._requireQuery(query, 2, isGif ? "excited anime girl jumping" : "drake approving")
         if (argErr) return argErr
         this.turnUsage.media++
 
-        Logger.info(`Querying Klipy API: "${query}"`, "GIF")
+        Logger.info(`Querying Klipy API: "${query}"`, label)
         try {
-            const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/gifs/search`, {
-                params: { q: query, per_page: getSection('search').klipyPerPage, page: 1, customer_id: getSection('search').klipyCustomerId },
-                timeout: this.opts.dbTimeout
-            })
-            const results = data?.data?.data ?? []
-            if (!results.length) {
-                this.markFlawed('gif_not_found')
-                return JSON.stringify({ status: "not_found", message: "No GIF found — don't retry with a near-identical query, just reply without a gif." })
-            }
-            const pick = results[Math.floor(Math.random() * Math.min(results.length, getSection('search').klipyPickPool))]
-            const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
-            if (!url) {
-                this.markFlawed('gif_no_url')
-                return JSON.stringify({ status: "not_found", message: "No GIF URL — don't retry, just reply without a gif." })
-            }
-            Logger.success(`Gif found, URL: ${url}`, "GIF")
-            return this._ok("Gif found and already queued to send — do NOT put the url in your text, just reply naturally to the user.", { url })
-        } catch (err) {
-            Logger.error(err.message, "GIF")
-            return this._err("Gif not found, ignore this and reply naturally to the user. Do NOT attempt to send another gif this turn.")
-        }
-    }
-
-    async searchMeme(query) {
-        const limitErr = this._checkLimit('media', LIMITS.media, 'sending a gif or meme — they share one slot')
-        if (limitErr) return limitErr
-        const argErr = this._requireQuery(query, 2, "drake approving")
-        if (argErr) return argErr
-        this.turnUsage.media++
-
-        Logger.info(`Querying Klipy API: "${query}"`, "MEME")
-        try {
-            const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/static-memes/search`, {
-                params: { q: query, per_page: getSection('search').klipyPerPage, page: 1, customer_id: getSection('search').klipyCustomerId },
+            const search = getSection('search')
+            const { data } = await axios.get(`https://api.klipy.com/api/v1/${process.env.KLIPY_API_KEY}/${kind}/search`, {
+                params: { q: query, per_page: search.klipyPerPage, page: 1, customer_id: search.klipyCustomerId },
                 timeout: this.opts.dbTimeout
             })
 
             const results = data?.data?.data ?? []
             if (!results.length) {
-                this.markFlawed('meme_not_found')
-                return JSON.stringify({ status: "not_found", message: "No meme found — don't retry with a near-identical query, just reply without a meme." })
+                this.markFlawed(`${noun}_not_found`)
+                return JSON.stringify({ status: "not_found", message: `No ${noun} found — don't retry with a near-identical query, just reply without a ${noun}.` })
             }
 
-            const pick = results[Math.floor(Math.random() * Math.min(results.length, getSection('search').klipyPickPool))]
+            const pick = results[Math.floor(Math.random() * Math.min(results.length, search.klipyPickPool))]
             const url = pick?.file?.hd?.gif?.url ?? pick?.file?.hd?.webp?.url ?? pick?.file?.gif?.url
             if (!url) {
-                this.markFlawed('meme_no_url')
-                return JSON.stringify({ status: "not_found", message: "No meme URL — don't retry, just reply without a meme." })
+                this.markFlawed(`${noun}_no_url`)
+                return JSON.stringify({ status: "not_found", message: `No ${noun} URL — don't retry, just reply without a ${noun}.` })
             }
 
-            Logger.success(`Meme found, URL: ${url}`, "MEME")
-            return this._ok("Meme found and already queued to send — do NOT put the url in your text, just reply to the user message naturally.", { url })
+            Logger.success(`${noun} found, URL: ${url}`, label)
+            return this._ok(`${isGif ? "Gif" : "Meme"} found and already queued to send — do NOT put the url in your text, just reply naturally to the user.`, { url })
         } catch (err) {
-            Logger.error(err.message, "MEME")
-            if (err.response) Logger.error(JSON.stringify(err.response.data), "MEME RESPONSE")
-            return this._err("Meme not found, ignore this and reply naturally to the user. Do NOT attempt to send another meme this turn.")
+            Logger.error(err.message, label)
+            if (err.response) Logger.error(JSON.stringify(err.response.data), `${label} RESPONSE`)
+            return this._err(`${isGif ? "Gif" : "Meme"} not found, ignore this and reply naturally to the user. Do NOT attempt to send another ${noun} this turn.`)
         }
     }
+
+    searchGif(query) { return this._searchKlipy("gifs", query) }
+    searchMeme(query) { return this._searchKlipy("static-memes", query) }
 
     _usageState(c) {
         if (!this._usage || this._usage.month !== monthKey()) this._usage = loadUsage(c.usagePath)

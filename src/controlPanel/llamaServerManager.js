@@ -32,9 +32,36 @@ const LLAMA_BIN = '/home/izansola/llama.cpp/build/bin/llama-server'
 
 ]*/
 
+// const LLAMA_ARGS = [
+//     '--model', '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf',
+//     '--mmproj', '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf',
+//     '--jinja',
+//     '--parallel', '1',
+//     '--cache-type-k', 'q8_0',
+//     '--cache-type-v', 'q8_0',
+//     '--no-kv-unified',
+//     '--port', '11435',
+//     '-c', '64000',
+//     '--context-shift',
+//     '--host', '0.0.0.0',
+//     '--reasoning', 'off',
+//     '--reasoning-budget', '0',
+//     '--reasoning-format', 'none',
+//     '-ngl', '999',
+//     '--flash-attn', 'on',
+//     '--cache-reuse', '256',
+//     '--cache-ram', '4096',
+
+//     // --- Speculative decoding (MTP, uses the head inside the model) ---
+//     '--spec-type', 'draft-mtp',
+//     '--spec-draft-p-min', '0.4',
+//     '--spec-draft-n-max', '4',
+//     '--spec-draft-n-min', '1',
+// ];
+
 const LLAMA_ARGS = [
-    '--model', '/home/izansola/models/Qwen3.5-9B.Q6_K.gguf',
-    '--mmproj', '/home/izansola/models/mmproj-Qwen3.5-9B-Q8_0.gguf',
+    '--model', '/home/izansola/models/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic.Q6_K.gguf',
+    '--mmproj', '/home/izansola/models/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic.mmproj-Q8_0.gguf',
     '--jinja',
     '--parallel', '1',
     '--cache-type-k', 'q8_0',
@@ -44,9 +71,10 @@ const LLAMA_ARGS = [
     '-c', '64000',
     '--context-shift',
     '--host', '0.0.0.0',
-    '--reasoning', 'off',
-    '--reasoning-budget', '0',
-    '--reasoning-format', 'none',
+    '--reasoning', 'on',
+    '--reasoning-budget', '512',
+    '--reasoning-format', 'deepseek',
+
     '-ngl', '999',
     '--flash-attn', 'on',
     '--cache-reuse', '256',

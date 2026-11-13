@@ -223,44 +223,11 @@ export class Lily {
         return (msg?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim() || null
     }
 
-    // ---------- fact extraction (runs after the summarizer) ----------
-    // Called by the Summarizer with the named chat lines collected since the last summary.
-    async _extractFacts({ channelId, lines, context, isPrivate }) {
-        if (this.opts.autoFactExtraction === false) {
-            Logger.info(`disabled by config`, "FACT EXTRACT")
-            return 0
-        }
-        Logger.info(`batch of ${lines.length} line(s) for ${channelId} (private: ${!!isPrivate})`, "FACT EXTRACT")
-        const stored = await extractAndStoreFacts({
-            lines,
-            context,
-            known: this.workingMemory.presentNames(channelId),
-            tools: this.tools,
-            opts: this.opts,
-            idLookup: name => this.workingMemory.idFor(channelId, name),
-            visibility: isPrivate ? 'private' : 'server',
-        })
-        Logger.info(`stored ${stored ?? 0} fact(s)`, "FACT EXTRACT")
-        return stored
-    }
-    // Per-turn extraction, run right after a reply:
-    //   context: Lily's message being replied to (if any)
-    //   lines:   <user>: <message>, then Lily: <reply>
-    // Fire-and-forget. The batch path still runs later; the vault's dedupe absorbs repeats.
-    async _extractFactsForTurn({ channelId, authorName, userText, repliedTo, replyText, isPrivate }) {
-        if (this.opts.autoFactExtraction === false) return 0
-        if (this.opts.perTurnFactExtraction === false) return 0
-        if (!userText || !replyText) return 0
-
-        const clip = s => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, 400)
-        const context = repliedTo ? [{ name: "Lily", text: clip(repliedTo) }] : []
-        const lines = [
-            { name: authorName ?? "User", text: clip(userText) },
-            { name: "Lily", text: clip(replyText) },
-        ]
-
-        Logger.info(`${lines.length} line(s) + ${context.length} context for ${channelId} (private: ${!!isPrivate})`, "FACT EXTRACT TURN")
-        const stored = await extractAndStoreFacts({
+    // ---------- fact extraction ----------
+    // Shared by the batch path (Summarizer) and the per-turn path. Disabled entirely by `autoFactExtraction: false`.
+    async _storeFacts({ channelId, lines, context, isPrivate, label }) {
+        Logger.info(`${lines.length} line(s) + ${context.length} context for ${channelId} (private: ${!!isPrivate})`, label)
+        return extractAndStoreFacts({
             lines,
             context,
             known: this.workingMemory.presentNames(channelId) ?? [],
@@ -269,9 +236,35 @@ export class Lily {
             idLookup: name => this.workingMemory.idFor(channelId, name),
             visibility: isPrivate ? 'private' : 'server',
         })
-        Logger.info(`stored ${stored ?? 0} fact(s)`, "FACT EXTRACT TURN")
-        return stored
     }
+
+    // Called by the Summarizer with the named chat lines collected since the last summary.
+    async _extractFacts({ channelId, lines, context, isPrivate }) {
+        if (this.opts.autoFactExtraction === false) return 0
+        return this._storeFacts({ channelId, lines, context, isPrivate, label: "FACT EXTRACT" })
+    }
+
+    // Per-turn extraction, run right after a reply:
+    //   context: Lily's message being replied to (if any)
+    //   lines:   <user>: <message>, then Lily: <reply>
+    // Fire-and-forget. The batch path still runs later; the vault's dedupe absorbs repeats.
+    async _extractFactsForTurn({ channelId, authorName, userText, repliedTo, replyText, isPrivate }) {
+        if (this.opts.autoFactExtraction === false || this.opts.perTurnFactExtraction === false) return 0
+        if (!userText || !replyText) return 0
+
+        const clip = s => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, 400)
+        return this._storeFacts({
+            channelId,
+            context: repliedTo ? [{ name: "Lily", text: clip(repliedTo) }] : [],
+            lines: [
+                { name: authorName ?? "User", text: clip(userText) },
+                { name: "Lily", text: clip(replyText) },
+            ],
+            isPrivate,
+            label: "FACT EXTRACT TURN",
+        })
+    }
+
     // ---------- turn endings ----------
     // Every way a loop can end goes through here (voice GIF hook + result).
     _end(ctx, result) {

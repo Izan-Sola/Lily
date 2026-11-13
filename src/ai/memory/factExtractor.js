@@ -29,15 +29,13 @@ Format: {"facts":[{"person":"","text":"","category":""}]}
 If there is nothing to save: {"facts":[]}
 
 Rules:
-- Facts come ONLY from lines written by people. Lines written by "Lily" are the bot: use them to understand what people are answering, but NEVER save something that only Lily said, and never save facts about Lily.
 - The log can contain SEVERAL people and SEVERAL facts. Return one entry per separate fact, about whichever person it concerns. Split lists and compound sentences ("X likes A and B" is two facts). Never merge different facts into one entry.
 - Output ONLY facts that are NEW. Skip anything already in ALREADY STORED, even if worded differently, and skip a fact that is just a part of, or a combination of, stored facts.
 - "I / me / my" means the person who wrote that line. "person" must be a real name, never a pronoun. Resolve "he/she/they" from nearby lines. If you cannot tell who it is, skip it.
 - "person" must be the name exactly as written in the CHAT LOG or Known people. Never use a variant, nickname or typo of it from the stored facts.
 - "text" is one short standalone sentence containing the person's name, 3-20 words. Drop framing like "did you know", "btw", "also". Fill in missing detail from the previous line when an answer depends on it.
-- A lasting fact is: likes/dislikes, job, skills, possessions, plans, history, relationships, opinions, habits, identity.
-- Skip: questions, commands, greetings, jokes with no real fact, temporary states (hungry, tired, brb), general world facts not about a person.
-- Never invent anything that was not said. At most ${MAX_FACTS_PER_CHUNK} facts.
+- A lasting fact is: likes/dislikes, job, skills, possessions, plans, history, relationships, opinions, habits, identity, etc...
+- At most ${MAX_FACTS_PER_CHUNK} facts.
 - "category" is one of: person, project, place, object, preference, goal, decision, event, general.
 
 Examples:
@@ -57,20 +55,10 @@ Kai: yeah she got it, and she's starting next week
 Lily: good for her (≧◡≦)
 {"facts":[{"person":"Mia","text":"Mia got the job she applied for","category":"event"},{"person":"Mia","text":"Mia starts her new job next week","category":"event"}]}
 
-Known people: Kai, Mia
-ALREADY STORED:
-- Mia: Mia lives in Madrid
-CHAT LOG:
-Mia: I live in Madrid and I work as a nurse
-{"facts":[{"person":"Mia","text":"Mia works as a nurse","category":"person"}]}
+`
 
-Known people: Kai
-CHAT LOG:
-Lily: i love pizza, it's the best
-Kai: lol ok
-Kai: lily what's the capital of france?
-Lily: paris, duh (눈_눈)
-{"facts":[]}`
+const isLily = name => String(name ?? '').toLowerCase() === 'lily'
+const render = arr => arr.map(l => `${l.name}: ${l.text}`).join('\n')
 
 function parseFacts(raw) {
     const match = (raw ?? '').match(/\{[\s\S]*\}/)
@@ -82,9 +70,6 @@ function parseFacts(raw) {
         return []
     }
 }
-
-const isLily = name => String(name ?? '').toLowerCase() === 'lily'
-const render = arr => arr.map(l => `${l.name}: ${l.text}`).join('\n')
 
 function hasHumanText(chunk) {
     return chunk.some(l => !isLily(l.name) && l.text.replace(/[^\p{L}]/gu, '').length >= MIN_LETTERS)
@@ -116,6 +101,28 @@ function buildUserContent({ chunk, context, known, stored }) {
     return parts.join('\n')
 }
 
+// Validates one model-proposed fact. Returns { person, text, category } or null.
+// `canonical` maps lowercase name -> name as written in the log; `haystack` is the lowercase log.
+function validateFact(f, canonical, haystack) {
+    const rawPerson = String(f?.person ?? '').trim()
+    const text = String(f?.text ?? '').trim()
+    if (!rawPerson || NOT_A_NAME.has(rawPerson.toLowerCase())) return null
+    if (text.split(/\s+/).filter(Boolean).length < 3 || text.length > 150) return null
+
+    const person = canonical.get(rawPerson.toLowerCase()) ?? rawPerson
+    const key = person.toLowerCase()
+    if (!text.toLowerCase().includes(key)) {
+        Logger.warning(`Dropped, text lacks the name "${person}": "${text}"`, 'FACT EXTRACT')
+        return null
+    }
+    // Guard against invented names: the person must actually appear in the log.
+    // if (!haystack.includes(key)) {
+    //     Logger.warning(`Dropped, "${person}" never appears in the log: "${text}"`, 'FACT EXTRACT')
+    //     return null
+    // }
+    return { person, text, category: CATEGORIES.has(f?.category) ? f.category : 'general' }
+}
+
 /**
  * Extracts facts from a batch of named chat lines and stores them. Never throws.
  * @param {object} p
@@ -134,13 +141,8 @@ export async function extractAndStoreFacts({
     try {
         if (!lines?.length) return 0
 
-        const llmOpts = {
-            ...opts,
-            think: false,
-            model: opts.factExtractionModel ?? opts.model,
-        }
+        const llmOpts = { ...opts, think: false, model: opts.factExtractionModel ?? opts.model }
         const includePrivate = visibility === 'private'
-
         const seen = new Set()
         let stored = 0
 
@@ -167,38 +169,16 @@ export async function extractAndStoreFacts({
                 ],
                 { overrides: { temperature: 0, max_tokens: 900, presence_penalty: 0, repeat_penalty: 1 } },
             )
-            const facts = parseFacts(msg?.content)
 
-            for (const f of facts.slice(0, MAX_FACTS_PER_CHUNK)) {
-                const rawPerson = String(f?.person ?? '').trim()
-                const text = String(f?.text ?? '').trim()
-                if (!rawPerson || NOT_A_NAME.has(rawPerson.toLowerCase())) continue
+            for (const raw of parseFacts(msg?.content).slice(0, MAX_FACTS_PER_CHUNK)) {
+                const fact = validateFact(raw, canonical, haystack)
+                if (!fact) continue
+                const { person, text, category } = fact
 
-                const wordCount = text.split(/\s+/).filter(Boolean).length
-                if (wordCount < 3 || text.length > 150) continue
-
-                const person = canonical.get(rawPerson.toLowerCase()) ?? rawPerson
-                if (!text.toLowerCase().includes(person.toLowerCase())) {
-                    Logger.warning(`Dropped, text lacks the name "${person}": "${text}"`, 'FACT EXTRACT')
-                    continue
-                }
-                // Guard against invented names: the person must actually appear in the log.
-                if (!haystack.includes(person.toLowerCase())) {
-                    Logger.warning(`Dropped, "${person}" never appears in the log: "${text}"`, 'FACT EXTRACT')
-                    continue
-                }
-
-                const key = `${person.toLowerCase()}|${text.toLowerCase()}`
-                if (seen.has(key)) continue
+                const key = `${person}: ${text}`.toLowerCase()
+                if (seen.has(key) || storedSet.has(key)) continue   // repeat: skip without a server round trip
                 seen.add(key)
 
-                // Exact repeat of something already stored: skip without a server round trip.
-                if (storedSet.has(`${person}: ${text}`.toLowerCase())) {
-                    Logger.info(`${person}: "${text}" -> already stored`, 'FACT EXTRACT')
-                    continue
-                }
-
-                const category = CATEGORIES.has(f?.category) ? f.category : 'general'
                 // Sequential on purpose: keeps the backend's dedupe/similarity check from racing itself.
                 const res = await tools.addFactOutOfBand({
                     text,

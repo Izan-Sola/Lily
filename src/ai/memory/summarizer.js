@@ -6,6 +6,8 @@ import { getSection } from '../config.js'
 const NAMED_CAP = 120       // max named lines kept per channel while waiting for extraction
 const TAIL_LINES = 3        // last lines of the previous batch, handed over as context
 
+const isRealSpeaker = name => name && name !== 'User' && name.toLowerCase() !== 'lily'
+
 // Strips model artifacts and JSON-escaped angle brackets from text about to be
 // stored as a memory, so "<think>" junk never reaches episodic memory.
 export function cleanMemoryText(text) {
@@ -24,12 +26,14 @@ export function cleanMemoryText(text) {
 }
 
 // Periodic conversation summaries and batched "observe" summaries, both
-// stored as episodic memories. After each summarization, the chat lines collected
-// since the last one (with speaker names) are handed to `onExtract` for fact extraction.
+// stored as episodic memories (with channel, visibility and participants, so the
+// memory server can link each conversation to the people in it). After each
+// summarization, the chat lines collected since the last one (with speaker names)
+// are handed to `onExtract` for fact extraction.
 export class Summarizer {
     #counts = new Map()          // channelId -> messages handled
     #observed = new Map()        // channelId -> lines awaiting a batch
-    #participants = new Map()    // channelId -> Set of speaker names
+    #participants = new Map()    // channelId -> Set of speaker names (observe batches)
     #named = new Map()           // channelId -> [{ name, text, isPrivate }] awaiting extraction
     #tail = new Map()            // channelId -> last lines of the previous extracted batch
     #pending = new Set()         // channels whose extraction is deferred until after the reply
@@ -47,7 +51,10 @@ export class Summarizer {
         this.onExtract = onExtract
     }
 
-    async summarize(lines, { maxTokens = getSection('llm').summaryMaxTokens, source = 'conversation_batch', participants = [], emotions = [], importance = 0.5 } = {}) {
+    async summarize(lines, {
+        maxTokens = getSection('llm').summaryMaxTokens, source = 'conversation_batch',
+        participants = [], emotions = [], importance = 0.5, channel = null, visibility = 'server',
+    } = {}) {
         if (lines.length < 2) return
         Logger.info(`Summarizing ${lines.length} entries...`, 'SUMMARIZE')
         const opts = this.getOpts()
@@ -64,17 +71,28 @@ export class Summarizer {
             const raw = lines.map(cleanMemoryText).filter(Boolean).join('\n')
             if (!summary || !raw) return
 
-            await this.store({ summary, raw, participants, emotions, importance, source })
+            await this.store({ summary, raw, participants, emotions, importance, source, channel, visibility })
         } catch (err) {
             Logger.error(err.message, 'SUMMARIZE')
         }
     }
 
+    // Summarizes the named lines collected since the last summary (so the summary and the
+    // stored raw text know WHO said what). Falls back to the plain history when there are none.
     async summarizeConversation(channelId) {
-        const lines = this.getHistory(channelId).lastN(this.getOpts().summarizeLastN)
-            .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-            .map(m => `${m.role === 'user' ? 'User' : 'Lily'}: ${m.content}`)
-        return this.summarize(lines, { maxTokens: 150 })
+        const named = (this.#named.get(channelId) ?? []).slice(-this.getOpts().summarizeLastN)
+        const lines = named.length >= 2
+            ? named.map(l => `${l.name}: ${l.text}`)
+            : this.getHistory(channelId).lastN(this.getOpts().summarizeLastN)
+                .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+                .map(m => `${m.role === 'user' ? 'User' : 'Lily'}: ${m.content}`)
+
+        return this.summarize(lines, {
+            maxTokens: 150,
+            participants: [...new Set(named.map(l => l.name).filter(isRealSpeaker))],
+            channel: channelId,
+            visibility: named.some(l => l.isPrivate) ? 'private' : 'server',
+        })
     }
 
     // ---------- named lines for fact extraction ----------
@@ -130,10 +148,10 @@ export class Summarizer {
     observe(channelId, line, authorName = null) {
         const buffer = this.#observed.get(channelId) ?? []
         this.#observed.set(channelId, buffer)
-        buffer.push(line)
+        buffer.push(authorName ? `${authorName}: ${line}` : line)
         this.record(channelId, authorName ?? 'User', line)
 
-        if (authorName && authorName.toLowerCase() !== 'lily') {
+        if (isRealSpeaker(authorName)) {
             const who = this.#participants.get(channelId) ?? new Set()
             this.#participants.set(channelId, who.add(authorName))
         }
@@ -142,7 +160,7 @@ export class Summarizer {
         if (every > 0 && buffer.length >= every) {
             const participants = [...(this.#participants.get(channelId) ?? [])]
             this.#participants.delete(channelId)
-            this.summarize(buffer.splice(0, every), { maxTokens: 100, source: 'observe', importance: 0.3, participants })
+            this.summarize(buffer.splice(0, every), { maxTokens: 100, source: 'observe', importance: 0.3, participants, channel: channelId })
                 .finally(() => this.#extract(channelId))
         }
     }
